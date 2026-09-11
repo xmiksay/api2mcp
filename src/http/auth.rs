@@ -2,11 +2,12 @@
 //! request is [`Secret::into_header_value`] — nothing in this module ever turns a credential
 //! into a `String` it could format, log, or return.
 //!
-//! `value_template` is used exactly as `Secret::into_header_value`'s `prefix` argument (e.g.
-//! `"Bearer "`), with the credential value appended after it by `Secret` itself. That is a
-//! narrower reading than "template with a `{token}` placeholder" — see this crate's chunk report
-//! for why: `Secret` only exposes a prefix-based renderer by design (I4), so a provider's
-//! configured value must always take the form `"<literal prefix><credential>"`.
+//! `value_template` accepts both spellings that exist in this codebase: `"Bearer {token}"`
+//! substitutes the credential for the placeholder, and `"Bearer "` appends it. They render
+//! identically, which matters because the field's own documentation and every test fixture used
+//! the placeholder form while the code treated it as a prefix — following the docs would have
+//! produced the header `Bearer {token}<credential>`. The substitution happens inside [`Secret`],
+//! so the credential never becomes a `String` this module could hold (I4).
 
 use serde::Serialize;
 use thiserror::Error;

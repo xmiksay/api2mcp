@@ -9,7 +9,10 @@ use super::slug::Slug;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthKind {
     /// A static credential, read from `credential_env_key`, rendered into `value_template`, and
-    /// written into the `header_name` header (e.g. `Authorization: Bearer {token}`).
+    /// written into the `header_name` header. `{token}` is replaced by the credential; a value
+    /// with no placeholder is treated as a literal prefix, so `"Bearer {token}"` and `"Bearer "`
+    /// render the same header. The credential itself is never stored here — only
+    /// `credential_env_key`, the name of the environment variable holding it.
     StaticHeader,
     /// A credential obtained and refreshed via OAuth2 client-credentials. Refreshed by a
     /// background task on a cached token, never inside a run — see plan note "OAuth token

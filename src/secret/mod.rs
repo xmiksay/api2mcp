@@ -66,13 +66,27 @@ impl Secret {
         Secret(Zeroizing::new(value))
     }
 
-    /// The one exit from this type: renders `{prefix}{value}` (e.g. `prefix = "Bearer "`) into
-    /// an `http::HeaderValue` marked sensitive. `pub(crate)` — the only intended caller is
-    /// `http::send`'s `apply_auth` (C4); nothing in C3 calls this outside of tests, which is why
-    /// this carries `#[allow(dead_code)]` until C4 wires up the real caller.
-    #[allow(dead_code)]
-    pub(crate) fn into_header_value(self, prefix: &str) -> Result<::http::HeaderValue, CredError> {
-        let rendered = format!("{prefix}{}", self.0.as_str());
+    /// The one exit from this type: renders `template` into a sensitive `http::HeaderValue` with
+    /// the credential substituted in.
+    ///
+    /// `{token}` is replaced by the credential wherever it appears; a template with no `{token}`
+    /// is treated as a literal prefix, so both `"Bearer {token}"` and `"Bearer "` produce the
+    /// same header. Both spellings exist in the wild here — the field's own doc and every test
+    /// fixture used the placeholder form while the code treated it as a prefix, which would have
+    /// rendered `Bearer {token}<credential>` for anyone who followed the documentation.
+    ///
+    /// The substitution happens *inside* this type and its result goes straight into a sensitive
+    /// `HeaderValue`, so the credential never becomes a `String` a caller can hold (I4).
+    pub(crate) fn into_header_value(
+        self,
+        template: &str,
+    ) -> Result<::http::HeaderValue, CredError> {
+        const PLACEHOLDER: &str = "{token}";
+        let rendered = if template.contains(PLACEHOLDER) {
+            template.replace(PLACEHOLDER, self.0.as_str())
+        } else {
+            format!("{template}{}", self.0.as_str())
+        };
         let mut value =
             ::http::HeaderValue::from_str(&rendered).map_err(|_| CredError::InvalidHeaderValue)?;
         value.set_sensitive(true);
@@ -144,6 +158,31 @@ mod tests {
         let header = secret.into_header_value("").expect("valid header");
         assert!(header.is_sensitive());
         unsafe { env::remove_var("A2M_TEST_SECRET_SENSITIVE") };
+    }
+
+    #[test]
+    fn a_token_placeholder_is_substituted_not_appended() {
+        let secret = Secret::from_raw("s3cr3t".to_owned());
+        let header = secret
+            .into_header_value("Bearer {token}")
+            .expect("valid header");
+        assert_eq!(header.to_str().expect("ascii"), "Bearer s3cr3t");
+    }
+
+    #[test]
+    fn a_template_without_a_placeholder_is_a_prefix() {
+        let secret = Secret::from_raw("s3cr3t".to_owned());
+        let header = secret.into_header_value("Bearer ").expect("valid header");
+        assert_eq!(header.to_str().expect("ascii"), "Bearer s3cr3t");
+    }
+
+    #[test]
+    fn a_placeholder_can_sit_mid_template() {
+        let secret = Secret::from_raw("k".to_owned());
+        let header = secret
+            .into_header_value("token={token}; v=1")
+            .expect("valid header");
+        assert_eq!(header.to_str().expect("ascii"), "token=k; v=1");
     }
 
     #[test]
