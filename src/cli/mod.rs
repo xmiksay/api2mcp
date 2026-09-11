@@ -7,6 +7,8 @@ use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 
 pub mod migrate;
+pub mod token;
+pub mod user;
 
 #[derive(Parser, Debug)]
 #[command(name = "api2mcp", version = crate::version::LONG_VERSION, about = "MCP Tool Factory")]
@@ -80,8 +82,15 @@ pub enum TokenAction {
         label: String,
         #[arg(long, default_value = "mcp")]
         scope: String,
+        /// Email of the token's owner. Defaults to the sole user account when omitted —
+        /// only needed once more than one user exists.
+        #[arg(long)]
+        owner: Option<String>,
     },
-    List,
+    List {
+        #[arg(long)]
+        owner: Option<String>,
+    },
     Revoke {
         id: String,
     },
@@ -102,9 +111,8 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Export { .. } | Command::Import { .. } => {
             bail!("pack: not implemented yet (chunk C13)")
         }
-        Command::Token { .. } | Command::User { .. } => {
-            bail!("token/user: not implemented yet (chunk C10)")
-        }
+        Command::Token { action } => token::run(action).await,
+        Command::User { action } => user::run(action).await,
     }
 }
 
