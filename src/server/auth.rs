@@ -19,27 +19,23 @@
 //! small. Putting a KDF on every MCP call would tax every request for a property tokens
 //! already have for free.
 //!
-//! **No `store::session` module exists yet** (only `store::user`, `store::service_token`
-//! and `store::oauth` are implemented so far, and this chunk may not add to `src/store/`).
-//! [`create_session`]/[`resolve_session`]/[`delete_session`] therefore talk to
-//! `entity::sessions`/`entity::users` directly with `sea_orm`, which is a deliberate,
-//! narrow exception to the crate's "sea_orm lives in exactly three modules" layering rule
-//! (see `src/lib.rs`). A follow-up chunk should land a proper `SessionStore` façade and
-//! fold this back in.
+//! [`create_session`]/[`resolve_session`]/[`delete_session`] are thin wrappers over
+//! [`crate::store::SessionStore`], which is where the queries live.
 
 use axum::http::{HeaderMap, header};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
 use rand::RngCore;
-use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
+use sea_orm::DatabaseConnection;
 use uuid::Uuid;
 
 use anyhow::{Context, Result};
 
 use crate::config::Config;
-use crate::entity::{sessions, users};
 use crate::store::ServiceTokenStore;
+
+use crate::store::SessionStore;
 
 use super::identity::{Caller, CallerKind};
 
@@ -125,8 +121,8 @@ pub fn hash_token(token: &str) -> String {
     crate::store::sha256_hex(token.as_bytes())
 }
 
-/// Creates a session row for `user_id` and returns the plaintext cookie value — never
-/// stored, only its hash is. `ttl` is `cfg.session_ttl`.
+/// Creates a session for `user_id` and returns the plaintext cookie value. Only its hash is
+/// stored; see [`crate::store::SessionStore`].
 pub async fn create_session(
     db: &DatabaseConnection,
     user_id: Uuid,
@@ -134,56 +130,33 @@ pub async fn create_session(
 ) -> Result<String> {
     let plaintext = new_token();
     let ttl = chrono::Duration::from_std(ttl).context("session TTL out of range")?;
-    let expires_at = Utc::now() + ttl;
-    sessions::ActiveModel {
-        token_hash: Set(hash_token(&plaintext)),
-        user_id: Set(user_id),
-        expires_at: Set(expires_at.into()),
-        ..Default::default()
-    }
-    .insert(db)
-    .await
-    .context("inserting session row")?;
+    SessionStore::new(db.clone())
+        .create(&plaintext, user_id, Utc::now() + ttl)
+        .await
+        .context("creating session")?;
     Ok(plaintext)
 }
 
-/// Resolves a caller-presented session cookie value to its [`Caller`]. `Ok(None)` for "no
-/// such session" and "expired" alike, and also when the session's `user_id` no longer
-/// resolves (a deleted user) — same "don't let a caller distinguish the failure modes"
-/// reasoning as `ServiceTokenStore::resolve`.
+/// Resolves a caller-presented session cookie value to its [`Caller`]. `Ok(None)` covers "no
+/// such session", "expired" and "the user has since been deleted" alike — a caller must not be
+/// able to tell those apart.
 pub async fn resolve_session(db: &DatabaseConnection, plaintext: &str) -> Result<Option<Caller>> {
-    let hash = hash_token(plaintext);
-    let Some(row) = sessions::Entity::find_by_id(hash)
-        .one(db)
+    let found = SessionStore::new(db.clone())
+        .resolve(plaintext)
         .await
-        .context("querying session")?
-    else {
-        return Ok(None);
-    };
-    if row.expires_at.with_timezone(&Utc) <= Utc::now() {
-        return Ok(None);
-    }
-    let Some(user) = users::Entity::find_by_id(row.user_id)
-        .one(db)
-        .await
-        .context("querying session user")?
-    else {
-        return Ok(None);
-    };
-    Ok(Some(Caller {
+        .context("resolving session")?;
+    Ok(found.map(|u| Caller {
         kind: CallerKind::Session,
-        id: user.id,
-        is_admin: user.is_admin,
+        id: u.user_id,
+        is_admin: u.is_admin,
         scopes: Vec::new(),
     }))
 }
 
-/// Deletes a session row (logout). Deleting a row that doesn't exist (already expired,
-/// already logged out elsewhere) is not an error — logout is idempotent.
+/// Logout. Deleting a session that is already gone is not an error — logout is idempotent.
 pub async fn delete_session(db: &DatabaseConnection, plaintext: &str) -> Result<()> {
-    let hash = hash_token(plaintext);
-    sessions::Entity::delete_by_id(hash)
-        .exec(db)
+    SessionStore::new(db.clone())
+        .delete(plaintext)
         .await
         .context("deleting session")?;
     Ok(())

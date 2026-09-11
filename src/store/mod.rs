@@ -25,6 +25,7 @@ mod run;
 mod script;
 mod service;
 mod service_token;
+mod session;
 mod tag;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -40,6 +41,7 @@ pub use run::{NewRun, NewRunCall, RunCall, RunStore, RunSummary};
 pub use script::{ScriptStore, TaggedScript};
 pub use service::ServiceStore;
 pub use service_token::{MintedServiceToken, ServiceTokenRecord, ServiceTokenStore};
+pub use session::{SessionStore, SessionUser};
 pub use tag::TagStore;
 pub use user::{NewUser, UserRecord, UserStore};
 

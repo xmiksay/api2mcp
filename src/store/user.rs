@@ -11,6 +11,7 @@ use argon2::Argon2;
 use argon2::password_hash::phc::PasswordHash;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use chrono::{DateTime, Utc};
+use sea_orm::sea_query::Expr;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
 };
@@ -101,6 +102,23 @@ impl UserStore {
             .exec(&self.db)
             .await
             .map_err(db_err("user::delete"))?;
+        if res.rows_affected == 0 {
+            return Err(StoreError::NotFound);
+        }
+        Ok(())
+    }
+
+    /// Replaces `email`'s password hash. Returns [`StoreError::NotFound`] when no such user
+    /// exists — unlike [`Self::verify_password`], which deliberately cannot distinguish that
+    /// case, an administrator changing a password needs to know the account was not found.
+    pub async fn set_password(&self, email: &str, password: &str) -> Result<(), StoreError> {
+        let hash = hash_password(password)?;
+        let res = users::Entity::update_many()
+            .col_expr(users::Column::PasswordHash, Expr::value(hash))
+            .filter(users::Column::Email.eq(email))
+            .exec(&self.db)
+            .await
+            .map_err(db_err("user::set_password"))?;
         if res.rows_affected == 0 {
             return Err(StoreError::NotFound);
         }
