@@ -12,7 +12,7 @@ use crate::server::state::AppState;
 use super::convert::{parse_slug, service_from_pack, service_to_pack};
 use super::dto::{ServiceCreate, ServiceView};
 use super::validate_write::{PendingChange, validate_change};
-use super::{ApiError, Caller, require_admin};
+use super::{ApiError, Caller};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -29,9 +29,8 @@ fn to_view(s: &Service) -> ServiceView {
 
 async fn list(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
 ) -> Result<Json<Vec<ServiceView>>, ApiError> {
-    require_admin(&caller)?;
     let services = state
         .stores()
         .service()
@@ -43,10 +42,9 @@ async fn list(
 
 async fn get_one(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<Json<ServiceView>, ApiError> {
-    require_admin(&caller)?;
     let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     let svc = state
         .stores()
@@ -60,10 +58,9 @@ async fn get_one(
 
 async fn create(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Json(body): Json<ServiceCreate>,
 ) -> Result<(StatusCode, Json<ServiceView>), ApiError> {
-    require_admin(&caller)?;
     let parsed = parse_slug(&body.slug).map_err(ApiError::BadRequest)?;
     validate_change(
         &state.stores(),
@@ -83,11 +80,10 @@ async fn create(
 
 async fn update(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Path(slug): Path<String>,
     Json(body): Json<PackService>,
 ) -> Result<Json<ServiceView>, ApiError> {
-    require_admin(&caller)?;
     let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     validate_change(
         &state.stores(),
@@ -107,10 +103,9 @@ async fn update(
 
 async fn remove(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    require_admin(&caller)?;
     let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     validate_change(&state.stores(), PendingChange::RemoveService(slug))
         .await

@@ -21,12 +21,13 @@ fn test_config() -> Config {
         port: 8080,
         base_url: "http://test.local:8080".into(),
         default_endpoint: "default".into(),
-        admin_email: None,
-        admin_password: None,
+        seed_email: None,
+        seed_password: None,
         run_retention_days: 30,
         allow_loopback_upstream: false,
         session_ttl: std::time::Duration::from_secs(3600),
         max_request_bytes: 1024 * 1024,
+        oidc: None,
     }
 }
 
@@ -54,13 +55,12 @@ async fn minted_token_resolves_revoked_and_expired_do_not() -> Result<()> {
         .create(NewUser {
             email: "admin@example.com".into(),
             password: "hunter2hunter2".into(),
-            is_admin: true,
         })
         .await?;
 
     let minted = stores
         .service_token()
-        .mint(user.id, "ci".into(), vec!["mcp".into()], None)
+        .mint(user.id, "ci".into(), None)
         .await?;
     let headers = bearer_headers(&minted.plaintext);
 
@@ -68,8 +68,6 @@ async fn minted_token_resolves_revoked_and_expired_do_not() -> Result<()> {
         .await
         .map_err(|_| anyhow::anyhow!("expected the minted token to authenticate"))?;
     assert_eq!(caller.id, user.id);
-    assert!(caller.has_scope("mcp"));
-    assert!(!caller.has_scope("admin"));
 
     // Revoked: the same token no longer resolves.
     stores.service_token().revoke(minted.record.id).await?;
@@ -85,7 +83,6 @@ async fn minted_token_resolves_revoked_and_expired_do_not() -> Result<()> {
         .mint(
             user.id,
             "expiring".into(),
-            vec!["mcp".into()],
             Some(Utc::now() - ChronoDuration::seconds(1)),
         )
         .await?;
@@ -114,12 +111,11 @@ async fn service_tokens_row_never_contains_the_plaintext() -> Result<()> {
         .create(NewUser {
             email: "dump@example.com".into(),
             password: "whatever12345".into(),
-            is_admin: true,
         })
         .await?;
     let minted = stores
         .service_token()
-        .mint(user.id, "dump-test".into(), vec!["admin".into()], None)
+        .mint(user.id, "dump-test".into(), None)
         .await?;
 
     let row = service_tokens::Entity::find_by_id(minted.record.id)
@@ -188,7 +184,6 @@ async fn password_verification_succeeds_and_fails_and_the_stored_hash_is_not_the
         .create(NewUser {
             email: "pw@example.com".into(),
             password: password.into(),
-            is_admin: false,
         })
         .await?;
 
@@ -211,8 +206,9 @@ async fn password_verification_succeeds_and_fails_and_the_stored_hash_is_not_the
         .one(&db.conn)
         .await?
         .expect("user was just created");
-    assert_ne!(row.password_hash, password);
-    assert!(!row.password_hash.contains(password));
+    let stored_hash = row.password_hash.expect("password-based user has a hash");
+    assert_ne!(stored_hash, password);
+    assert!(!stored_hash.contains(password));
 
     db.teardown().await?;
     Ok(())
@@ -232,7 +228,6 @@ async fn a_session_round_trips_and_logout_invalidates_it() -> Result<()> {
         .create(NewUser {
             email: "session@example.com".into(),
             password: "whatever12345".into(),
-            is_admin: true,
         })
         .await?;
 
@@ -243,7 +238,7 @@ async fn a_session_round_trips_and_logout_invalidates_it() -> Result<()> {
         .await?
         .expect("freshly created session resolves");
     assert_eq!(caller.id, user.id);
-    assert!(caller.is_admin);
+    assert_eq!(caller.kind, api2mcp::server::identity::CallerKind::Session);
 
     auth::delete_session(&db.conn, &cookie).await?;
     assert!(auth::resolve_session(&db.conn, &cookie).await?.is_none());

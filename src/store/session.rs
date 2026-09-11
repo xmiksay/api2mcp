@@ -12,11 +12,12 @@ use crate::entity::{sessions, users};
 
 use super::{StoreError, db_err, sha256_hex};
 
-/// The user behind a resolved session.
+/// The user behind a resolved session. Just the id: there is no admin/non-admin distinction
+/// left for this to carry (see `entity::users`'s own doc) — a resolved session already implies
+/// full read/write access to every definition.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionUser {
     pub user_id: Uuid,
-    pub is_admin: bool,
 }
 
 #[derive(Clone)]
@@ -70,10 +71,7 @@ impl SessionStore {
         else {
             return Ok(None);
         };
-        Ok(Some(SessionUser {
-            user_id: user.id,
-            is_admin: user.is_admin,
-        }))
+        Ok(Some(SessionUser { user_id: user.id }))
     }
 
     /// Logout. Deleting a session that is already gone is not an error — logout is idempotent,

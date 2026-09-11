@@ -1,5 +1,6 @@
-//! `GET /api/health` — version, migration level, DB connectivity, and endpoint count. Admin-only
-//! like every other route in this module (see `super`'s doc); this is not a load-balancer probe.
+//! `GET /api/health` — version, migration level, DB connectivity, and endpoint count.
+//! Session-only like every other route in this module (see `super`'s doc); this is not a
+//! load-balancer probe.
 
 use axum::Json;
 use axum::extract::State;
@@ -10,7 +11,7 @@ use crate::migration::Migrator;
 use crate::server::state::AppState;
 use crate::version;
 
-use super::{ApiError, Caller, require_admin};
+use super::{ApiError, Caller};
 
 #[derive(Debug, Serialize)]
 pub struct HealthView {
@@ -24,10 +25,8 @@ pub struct HealthView {
 
 pub async fn health(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
 ) -> Result<Json<HealthView>, ApiError> {
-    require_admin(&caller)?;
-
     let db_connected = state.db.ping().await.is_ok();
     // A migration query only makes sense once connectivity is established — probing it on a
     // dead connection would just be a second, redundant way to observe the same failure.

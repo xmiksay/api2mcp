@@ -1,9 +1,8 @@
 //! Integration tests for the read routes of chunk C14's admin JSON API — `GET /api/health`,
 //! `/api/me`, `/api/tags`, `/api/runs[/{id}]`, `/api/endpoints/{slug}/plan` — plus the structural
-//! authentication check every route in `server::api` shares: no route accepts a bearer token,
-//! whatever its scope, because [`api2mcp::server::identity::Caller`] only ever extracts from a
-//! session cookie. CRUD write flows live in `tests/api_write.rs`; the test-run routes in
-//! `tests/api_test_run.rs`.
+//! authentication check every route in `server::api` shares: no route accepts a bearer service
+//! token because [`api2mcp::server::identity::Caller`] only ever extracts from a session cookie.
+//! CRUD write flows live in `tests/api_write.rs`; the test-run routes in `tests/api_test_run.rs`.
 
 mod api_support;
 mod common;
@@ -91,14 +90,16 @@ async fn health_reports_version_and_db_connectivity() -> Result<()> {
 }
 
 #[tokio::test]
-async fn me_reports_the_calling_admin_session() -> Result<()> {
+async fn me_reports_the_calling_session() -> Result<()> {
     let Some(h) = setup().await? else {
         return Ok(());
     };
     let (status, body) = admin(&h, Method::GET, "/api/me", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["kind"], json!("session"));
-    assert_eq!(body["is_admin"], json!(true));
+    // No `is_admin` any more (Decision 1): a session reaching this route is already, by
+    // construction, a caller who can read and write every definition.
+    assert!(body.get("is_admin").is_none());
 
     h.db.teardown().await
 }
@@ -117,14 +118,7 @@ async fn no_route_in_this_module_accepts_a_bearer_token_or_no_credential() -> Re
         assert_eq!(
             status,
             StatusCode::UNAUTHORIZED,
-            "mcp-scoped bearer GET {path} — a service token must never construct a Caller"
-        );
-
-        let (status, _) = bearer(&h, Method::GET, path, &h.admin_scoped_token, None).await;
-        assert_eq!(
-            status,
-            StatusCode::UNAUTHORIZED,
-            "admin-scoped bearer GET {path} — scope doesn't matter, only the credential shape does"
+            "a service token GET {path} must never construct a Caller"
         );
     }
 

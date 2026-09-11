@@ -25,7 +25,7 @@ use super::convert_items::{api_call_from_pack, api_call_to_pack};
 use super::dto::{ApiCallCreate, ApiCallView};
 use super::test_run::{ApiCallTestResult, run_api_call_test};
 use super::validate_write::{PendingChange, validate_change};
-use super::{ApiError, Caller, require_admin};
+use super::{ApiError, Caller};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -55,9 +55,8 @@ async fn find(state: &AppState, slug: &str) -> Result<TaggedApiCall, ApiError> {
 
 async fn list(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
 ) -> Result<Json<Vec<ApiCallView>>, ApiError> {
-    require_admin(&caller)?;
     let all = state
         .stores()
         .api_call()
@@ -71,20 +70,18 @@ async fn list(
 
 async fn get_one(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<Json<ApiCallView>, ApiError> {
-    require_admin(&caller)?;
     let t = find(&state, &slug).await?;
     Ok(Json(to_view(&t.api_call, &t.tags)))
 }
 
 async fn create(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Json(body): Json<ApiCallCreate>,
 ) -> Result<(StatusCode, Json<ApiCallView>), ApiError> {
-    require_admin(&caller)?;
     let slug = parse_slug(&body.slug).map_err(ApiError::BadRequest)?;
     let service_slug = parse_slug(&body.def.service).map_err(ApiError::BadRequest)?;
     let auth_provider_slug = body
@@ -114,11 +111,10 @@ async fn create(
 
 async fn update(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Path(slug): Path<String>,
     Json(body): Json<PackApiCall>,
 ) -> Result<Json<ApiCallView>, ApiError> {
-    require_admin(&caller)?;
     let existing = find(&state, &slug).await?;
     if existing.api_call.service_slug.as_str() != body.service {
         return Err(ApiError::BadRequest(
@@ -158,10 +154,9 @@ async fn update(
 
 async fn remove(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    require_admin(&caller)?;
     let existing = find(&state, &slug).await?;
     validate_change(&state.stores(), PendingChange::RemoveApiCall(slug))
         .await
@@ -187,7 +182,6 @@ async fn test(
     Path(slug): Path<String>,
     Json(body): Json<TestBody>,
 ) -> Result<Json<ApiCallTestResult>, ApiError> {
-    require_admin(&caller)?;
     let api_call_slug = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     let endpoint_slug = parse_slug(&body.endpoint).map_err(ApiError::BadRequest)?;
     let result =

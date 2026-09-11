@@ -14,7 +14,7 @@ use crate::server::state::AppState;
 use crate::store::{RunCall, RunFilter, RunStatus, RunSummary};
 
 use super::convert::parse_slug;
-use super::{ApiError, Caller, require_admin};
+use super::{ApiError, Caller};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -96,10 +96,9 @@ fn summary_view(s: &RunSummary) -> RunSummaryView {
 
 async fn list(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Query(q): Query<RunsQuery>,
 ) -> Result<Json<Vec<RunSummaryView>>, ApiError> {
-    require_admin(&caller)?;
     let endpoint_slug = q
         .endpoint
         .as_deref()
@@ -159,10 +158,9 @@ struct RunDetailView {
 
 async fn get_one(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Path(id): Path<Uuid>,
 ) -> Result<Json<RunDetailView>, ApiError> {
-    require_admin(&caller)?;
     let (summary, calls) = state
         .stores()
         .run()

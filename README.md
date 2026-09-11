@@ -37,7 +37,7 @@ guard permits a loopback upstream — it refuses one by default, which is the po
 Mint a token and try it:
 
 ```bash
-api2mcp token mint --label demo --scope mcp
+api2mcp token mint --label demo
 curl -s -X POST http://127.0.0.1:8080/mcp/demo \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",

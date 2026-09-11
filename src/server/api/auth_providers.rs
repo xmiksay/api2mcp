@@ -22,7 +22,7 @@ use crate::server::state::AppState;
 use super::convert::{auth_provider_from_pack, auth_provider_to_pack, parse_slug};
 use super::dto::{AuthProviderCreate, AuthProviderView};
 use super::validate_write::{PendingChange, validate_change};
-use super::{ApiError, Caller, require_admin};
+use super::{ApiError, Caller};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -54,9 +54,8 @@ async fn find(state: &AppState, slug: &str) -> Result<AuthProvider, ApiError> {
 
 async fn list(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
 ) -> Result<Json<Vec<AuthProviderView>>, ApiError> {
-    require_admin(&caller)?;
     let all = state
         .stores()
         .auth_provider()
@@ -68,20 +67,18 @@ async fn list(
 
 async fn get_one(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<Json<AuthProviderView>, ApiError> {
-    require_admin(&caller)?;
     let provider = find(&state, &slug).await?;
     Ok(Json(to_view(&provider)))
 }
 
 async fn create(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Json(body): Json<AuthProviderCreate>,
 ) -> Result<(StatusCode, Json<AuthProviderView>), ApiError> {
-    require_admin(&caller)?;
     let slug = parse_slug(&body.slug).map_err(ApiError::BadRequest)?;
     let service_slug = parse_slug(&body.def.service).map_err(ApiError::BadRequest)?;
     validate_change(
@@ -103,11 +100,10 @@ async fn create(
 
 async fn update(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Path(slug): Path<String>,
     Json(body): Json<PackAuthProvider>,
 ) -> Result<Json<AuthProviderView>, ApiError> {
-    require_admin(&caller)?;
     let existing = find(&state, &slug).await?;
     if existing.service_slug.as_str() != body.service {
         return Err(ApiError::BadRequest(
@@ -135,10 +131,9 @@ async fn update(
 
 async fn remove(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    require_admin(&caller)?;
     let existing = find(&state, &slug).await?;
     validate_change(&state.stores(), PendingChange::RemoveAuthProvider(slug))
         .await

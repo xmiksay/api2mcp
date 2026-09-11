@@ -1,4 +1,8 @@
-//! Server-rendered login: `GET /login`, `POST /login`, `GET /logout`.
+//! Server-rendered login: `GET /login`, `POST /login`, `GET /logout`. The OIDC half of the
+//! flow — `GET /login/oidc/start` and `GET /login/oidc/callback` (Decision 2) — lives in
+//! [`super::login_oidc`], a separate module purely to keep this file under the workspace's
+//! 400-line cap; conceptually it's the same "server-rendered login" surface, and `GET /login`
+//! below is what decides whether to offer it at all.
 //!
 //! **This is deliberately not an SPA view**, and there is no `LoginView.vue`. Two
 //! independent reasons, either one would be enough on its own:
@@ -35,6 +39,11 @@ use super::auth;
 pub struct LoginQuery {
     #[serde(default)]
     pub next: Option<String>,
+    /// Presence (any value, including empty) means `super::login_oidc` bounced back here after
+    /// a failed OIDC attempt — see that module's doc for why the failure detail itself never
+    /// survives the redirect. Not surfaced anywhere except this one generic message.
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,10 +54,42 @@ pub struct LoginForm {
     pub next: Option<String>,
 }
 
-/// `GET /login` — renders the form, honouring a validated `next=`.
-pub fn get_login(next: Option<&str>) -> Response {
+/// `GET /login` — renders the password form, plus a link to the OIDC provider when one is
+/// configured (`cfg.oidc.is_some()`) — the fallback Decision 2 requires: a deployment with no
+/// provider configured still has a way in via the password form alone.
+pub fn get_login(cfg: &Config, next: Option<&str>, oidc_failed: bool) -> Response {
     let next = validate_next(next).unwrap_or("/");
-    Html(render_page(next, None)).into_response()
+    let error = oidc_failed.then_some("sign-in with the identity provider failed, try again");
+    Html(render_login_page(cfg, next, error)).into_response()
+}
+
+/// Shared by [`get_login`] and [`post_login`]'s failure paths: every rendering of the login
+/// page offers the same OIDC link (or none), so there is exactly one place that decides
+/// whether to show it.
+fn render_login_page(cfg: &Config, next: &str, error: Option<&str>) -> String {
+    let oidc_link = cfg
+        .oidc
+        .as_ref()
+        .map(|o| (provider_label(&o.issuer), oidc_start_url(next)));
+    render_page(next, error, oidc_link.as_ref())
+}
+
+/// A short, human-readable label for the provider link — the issuer's own hostname, since
+/// Decision 3 deliberately adds no separate "display name" env var for this. Falls back to the
+/// generic "identity provider" for a malformed issuer, which `Config::validate` already makes
+/// unreachable in practice (an issuer without a scheme never gets this far).
+fn provider_label(issuer: &str) -> String {
+    url::Url::parse(issuer)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_owned))
+        .unwrap_or_else(|| "identity provider".to_owned())
+}
+
+fn oidc_start_url(next: &str) -> String {
+    format!(
+        "/login/oidc/start?next={}",
+        percent_encoding::utf8_percent_encode(next, percent_encoding::NON_ALPHANUMERIC)
+    )
 }
 
 /// `POST /login` — argon2 verify, set the session cookie, redirect to `next` (or `/`).
@@ -68,7 +109,11 @@ pub async fn post_login(db: &DatabaseConnection, cfg: &Config, form: LoginForm) 
         Ok(None) => {
             return (
                 StatusCode::UNAUTHORIZED,
-                Html(render_page(&next, Some("invalid email or password"))),
+                Html(render_login_page(
+                    cfg,
+                    &next,
+                    Some("invalid email or password"),
+                )),
             )
                 .into_response();
         }
@@ -76,7 +121,11 @@ pub async fn post_login(db: &DatabaseConnection, cfg: &Config, form: LoginForm) 
             tracing::error!(error = %e, "login: password verification failed");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Html(render_page(&next, Some("something went wrong, try again"))),
+                Html(render_login_page(
+                    cfg,
+                    &next,
+                    Some("something went wrong, try again"),
+                )),
             )
                 .into_response();
         }
@@ -88,7 +137,11 @@ pub async fn post_login(db: &DatabaseConnection, cfg: &Config, form: LoginForm) 
             tracing::error!(error = %e, "login: session creation failed");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Html(render_page(&next, Some("something went wrong, try again"))),
+                Html(render_login_page(
+                    cfg,
+                    &next,
+                    Some("something went wrong, try again"),
+                )),
             )
                 .into_response();
         }
@@ -127,7 +180,10 @@ pub async fn get_logout(
 /// `cfg.base_url` is `https://` — checked against the server's own configured origin
 /// rather than a per-request, spoofable `X-Forwarded-Proto` header, since this decision is
 /// security-relevant (an attacker who can flip it downgrades the cookie).
-fn set_cookie_header(cfg: &Config, value: &str, max_age_secs: u64) -> HeaderValue {
+///
+/// `pub(super)`: `super::login_oidc` sets this exact session cookie on a successful callback,
+/// same as the password path does here — one function, so the two can never drift apart.
+pub(super) fn set_cookie_header(cfg: &Config, value: &str, max_age_secs: u64) -> HeaderValue {
     let secure = if cfg.base_url.starts_with("https://") {
         "; Secure"
     } else {
@@ -163,9 +219,19 @@ fn html_escape(s: &str) -> String {
         .replace('\'', "&#39;")
 }
 
-fn render_page(next: &str, error: Option<&str>) -> String {
+/// `oidc_link` is `Some((provider_label, start_url))` when a provider is configured — rendered
+/// above the password form with a divider, never in its place (Decision 2's fallback).
+fn render_page(next: &str, error: Option<&str>, oidc_link: Option<&(String, String)>) -> String {
     let error_html = match error {
         Some(e) => format!(r#"<p class="error">{}</p>"#, html_escape(e)),
+        None => String::new(),
+    };
+    let oidc_html = match oidc_link {
+        Some((label, url)) => format!(
+            r#"<a class="oidc-btn" href="{}">Sign in with {}</a><p class="divider">or</p>"#,
+            html_escape(url),
+            html_escape(label)
+        ),
         None => String::new(),
     };
     format!(
@@ -179,13 +245,16 @@ fn render_page(next: &str, error: Option<&str>) -> String {
   body {{ font-family: system-ui, sans-serif; max-width: 22rem; margin: 4rem auto; padding: 0 1rem; }}
   label {{ display: block; margin-bottom: 1rem; font-size: 0.9rem; }}
   input {{ display: block; width: 100%; padding: 0.5rem; margin-top: 0.25rem; box-sizing: border-box; font-size: 1rem; }}
-  button {{ padding: 0.5rem 1rem; font-size: 1rem; }}
+  button, .oidc-btn {{ padding: 0.5rem 1rem; font-size: 1rem; }}
+  .oidc-btn {{ display: block; text-align: center; text-decoration: none; border: 1px solid #ccc; border-radius: 0.25rem; }}
+  .divider {{ text-align: center; color: #888; }}
   .error {{ color: #b00020; }}
 </style>
 </head>
 <body>
 <h1>api2mcp</h1>
 {error_html}
+{oidc_html}
 <form method="post" action="/login">
   <input type="hidden" name="next" value="{next}">
   <label>Email<input type="email" name="email" required autofocus></label>
@@ -202,6 +271,37 @@ fn render_page(next: &str, error: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::OidcConfig;
+    use crate::secret::Secret;
+
+    fn cfg() -> Config {
+        Config {
+            database_url: String::new(),
+            host: "127.0.0.1".into(),
+            port: 8080,
+            base_url: "http://test.local:8080".into(),
+            default_endpoint: "default".into(),
+            seed_email: None,
+            seed_password: None,
+            run_retention_days: 30,
+            allow_loopback_upstream: false,
+            session_ttl: std::time::Duration::from_secs(3600),
+            max_request_bytes: 1024 * 1024,
+            oidc: None,
+        }
+    }
+
+    fn cfg_with_oidc() -> Config {
+        Config {
+            oidc: Some(OidcConfig {
+                issuer: "https://idp.example.com".into(),
+                client_id: "client-1".into(),
+                client_secret: Secret::from_raw("shh".into()),
+                redirect_uri: "http://test.local:8080/login/oidc/callback".into(),
+            }),
+            ..cfg()
+        }
+    }
 
     #[test]
     fn validate_next_accepts_a_same_site_path() {
@@ -232,15 +332,66 @@ mod tests {
 
     #[test]
     fn render_page_escapes_a_reflected_error_and_next() {
-        let html = render_page("/a\"onmouseover=alert(1)", Some("<script>steal()</script>"));
+        let html = render_page(
+            "/a\"onmouseover=alert(1)",
+            Some("<script>steal()</script>"),
+            None,
+        );
         assert!(!html.contains("<script>steal()"));
         assert!(!html.contains(r#""onmouseover"#));
         assert!(html.contains("&lt;script&gt;"));
     }
 
     #[test]
+    fn render_page_omits_the_oidc_link_when_none() {
+        let html = render_page("/runs", None, None);
+        // The `.oidc-btn` *rule* is always in the static <style> block; what must be absent is
+        // an element actually using it.
+        assert!(!html.contains(r#"class="oidc-btn""#));
+    }
+
+    #[test]
+    fn render_page_shows_the_oidc_link_when_configured() {
+        let html = render_page(
+            "/runs",
+            None,
+            Some(&("idp.example.com".to_owned(), "/login/oidc/start".to_owned())),
+        );
+        assert!(html.contains(r#"class="oidc-btn""#));
+        assert!(html.contains("idp.example.com"));
+        assert!(html.contains("/login/oidc/start"));
+    }
+
+    #[test]
     fn get_login_renders_the_form() {
-        let response = get_login(Some("/runs"));
+        let response = get_login(&cfg(), Some("/runs"), false);
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn get_login_offers_the_provider_when_configured() {
+        let response = get_login(&cfg_with_oidc(), Some("/runs"), false);
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn provider_label_uses_the_issuer_host() {
+        assert_eq!(
+            provider_label("https://idp.example.com/"),
+            "idp.example.com"
+        );
+    }
+
+    #[test]
+    fn provider_label_falls_back_on_a_malformed_issuer() {
+        assert_eq!(provider_label("not a url"), "identity provider");
+    }
+
+    #[test]
+    fn oidc_start_url_percent_encodes_next() {
+        assert_eq!(
+            oidc_start_url("/runs?x=1"),
+            "/login/oidc/start?next=%2Fruns%3Fx%3D1"
+        );
     }
 }

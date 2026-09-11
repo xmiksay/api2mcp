@@ -18,7 +18,7 @@ use super::convert_items::{script_from_pack, script_to_pack};
 use super::dto::{ScriptCreate, ScriptView};
 use super::test_run::{ScriptTestResult, run_script_test};
 use super::validate_write::{PendingChange, validate_change};
-use super::{ApiError, Caller, require_admin};
+use super::{ApiError, Caller};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -36,9 +36,8 @@ fn to_view(s: &ScriptDef, tags: &BTreeSet<Tag>) -> ScriptView {
 
 async fn list(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
 ) -> Result<Json<Vec<ScriptView>>, ApiError> {
-    require_admin(&caller)?;
     let all = state
         .stores()
         .script()
@@ -52,10 +51,9 @@ async fn list(
 
 async fn get_one(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<Json<ScriptView>, ApiError> {
-    require_admin(&caller)?;
     let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     let t = state
         .stores()
@@ -69,10 +67,9 @@ async fn get_one(
 
 async fn create(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Json(body): Json<ScriptCreate>,
 ) -> Result<(StatusCode, Json<ScriptView>), ApiError> {
-    require_admin(&caller)?;
     let slug = parse_slug(&body.slug).map_err(ApiError::BadRequest)?;
     let tags = tags_from_pack(&body.def.tags).map_err(ApiError::BadRequest)?;
     validate_change(
@@ -93,11 +90,10 @@ async fn create(
 
 async fn update(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Path(slug): Path<String>,
     Json(body): Json<PackScript>,
 ) -> Result<Json<ScriptView>, ApiError> {
-    require_admin(&caller)?;
     let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     let tags = tags_from_pack(&body.tags).map_err(ApiError::BadRequest)?;
     validate_change(
@@ -118,10 +114,9 @@ async fn update(
 
 async fn remove(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    require_admin(&caller)?;
     let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     validate_change(&state.stores(), PendingChange::RemoveScript(slug))
         .await
@@ -147,7 +142,6 @@ async fn test(
     Path(slug): Path<String>,
     Json(body): Json<TestBody>,
 ) -> Result<Json<ScriptTestResult>, ApiError> {
-    require_admin(&caller)?;
     let script_slug = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     let endpoint_slug = parse_slug(&body.endpoint).map_err(ApiError::BadRequest)?;
     let result = run_script_test(&state, &endpoint_slug, &script_slug, body.args, &caller).await?;

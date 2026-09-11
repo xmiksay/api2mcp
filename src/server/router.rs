@@ -22,7 +22,7 @@ use std::time::Duration;
 use axum::extract::{DefaultBodyLimit, Query, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
-use axum::response::{IntoResponse, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum::{Form, Router};
 use tower_http::catch_panic::CatchPanicLayer;
@@ -34,6 +34,7 @@ use crate::observe;
 use super::api;
 use super::embed;
 use super::login::{self, LoginForm, LoginQuery};
+use super::login_oidc::{self, OidcCallbackQuery};
 use super::mcp;
 use super::oauth;
 use super::state::AppState;
@@ -47,6 +48,8 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .merge(mcp::router())
         .route("/login", get(get_login).post(post_login))
+        .route("/login/oidc/start", get(get_oidc_start))
+        .route("/login/oidc/callback", get(get_oidc_callback))
         .route("/logout", get(get_logout))
         .nest("/api", api::router())
         .merge(oauth::router())
@@ -85,12 +88,13 @@ async fn request_timeout(req: Request, next: Next) -> Response {
     }
 }
 
-// `server::login`'s handlers take plain arguments rather than axum extractors bound to
-// `AppState` — it predates this module and says so in its own doc. These three are the "one-line
-// real handler that does the axum-specific extraction and calls straight through" it asked for.
+// `server::login`/`server::login_oidc`'s handlers take plain arguments rather than axum
+// extractors bound to `AppState` — `login` predates this module and says so in its own doc, and
+// `login_oidc` follows the same shape for consistency. These are the "one-line real handler that
+// does the axum-specific extraction and calls straight through" that doc asked for.
 
-async fn get_login(Query(query): Query<LoginQuery>) -> Response {
-    login::get_login(query.next.as_deref())
+async fn get_login(State(state): State<AppState>, Query(query): Query<LoginQuery>) -> Response {
+    login::get_login(&state.cfg, query.next.as_deref(), query.error.is_some())
 }
 
 async fn post_login(State(state): State<AppState>, Form(form): Form<LoginForm>) -> Response {
@@ -102,17 +106,39 @@ async fn get_logout(State(state): State<AppState>, headers: axum::http::HeaderMa
     login::get_logout(&state.db, &state.cfg, cookie_header).await
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Not a redirect loop: `get_logout`'s inner `login::get_logout` always redirects to
-    /// `/login` regardless of whether a session cookie was present — pinning the extraction
-    /// glue here rather than re-testing `login`'s own already-tested behaviour.
-    #[tokio::test]
-    async fn get_login_extraction_glue_calls_through_without_panicking() {
-        let query = Query(LoginQuery { next: None });
-        let response = get_login(query).await;
-        assert_eq!(response.status(), StatusCode::OK);
+/// `GET /login/oidc/start` and `.../callback` are no-ops (redirect straight back to `/login`)
+/// when no provider is configured — the router always registers the routes, but there is
+/// nothing for them to do without `state.cfg.oidc`, and a 404 here would be a worse signal than
+/// "there's nothing to sign in with" for a browser that somehow still reaches this URL.
+async fn get_oidc_start(
+    State(state): State<AppState>,
+    Query(query): Query<LoginQuery>,
+) -> Response {
+    match &state.cfg.oidc {
+        Some(oidc_cfg) => {
+            login_oidc::get_oidc_start(&state.cfg, oidc_cfg, query.next.as_deref()).await
+        }
+        None => Redirect::to("/login").into_response(),
     }
 }
+
+async fn get_oidc_callback(
+    State(state): State<AppState>,
+    Query(query): Query<OidcCallbackQuery>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    match &state.cfg.oidc {
+        Some(oidc_cfg) => {
+            let cookie_header = headers.get(header::COOKIE).and_then(|v| v.to_str().ok());
+            login_oidc::get_oidc_callback(&state.db, &state.cfg, oidc_cfg, query, cookie_header)
+                .await
+        }
+        None => Redirect::to("/login").into_response(),
+    }
+}
+
+// `get_login`/`get_oidc_start`/`get_oidc_callback` all now take `State<AppState>`, which needs a
+// real `DatabaseConnection` to construct — not available to a `src/`-local unit test. The
+// extraction glue these functions add over `login`/`login_oidc`'s own (already-tested) logic is
+// covered end-to-end instead, through the real router, by `tests/auth.rs` and
+// `tests/oidc_login.rs`.

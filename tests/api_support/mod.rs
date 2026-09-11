@@ -25,16 +25,17 @@ use super::common::ScratchDb;
 use super::fixture::harness::loopback_pool;
 
 /// Everything a test needs: the scratch db (kept alive so post-request store assertions and
-/// `teardown` both still work), the built router, and three ways in — an admin session cookie, an
-/// `mcp`-scoped service token, and an `admin`-scoped one (I5's sharpest edge: even this must be
-/// refused on a write route).
+/// `teardown` both still work), the built router, and two ways in — a session cookie (which,
+/// per Decision 1, can read and write everything — there is no separate "admin" tier any more)
+/// and a service token (I5's sharpest edge: even this must be refused on a write route — a
+/// bearer token is structurally unable to reach `server::api` at all, regardless of which
+/// token; there is only one kind now that `service_tokens.scopes` is gone).
 pub struct Harness {
     pub db: ScratchDb,
     pub stores: Stores,
     pub router: Router,
     pub admin_cookie: String,
     pub mcp_token: String,
-    pub admin_scoped_token: String,
 }
 
 pub async fn setup() -> Result<Option<Harness>> {
@@ -50,7 +51,6 @@ pub async fn setup() -> Result<Option<Harness>> {
         .create(NewUser {
             email: "api-test-admin@example.com".to_owned(),
             password: "correct horse battery staple".to_owned(),
-            is_admin: true,
         })
         .await?;
     let cookie_value = create_session(&db.conn, admin.id, Duration::from_secs(3600)).await?;
@@ -61,26 +61,11 @@ pub async fn setup() -> Result<Option<Harness>> {
         .create(NewUser {
             email: "api-test-token-owner@example.com".to_owned(),
             password: "correct horse battery staple".to_owned(),
-            is_admin: false,
         })
         .await?;
     let mcp_minted = stores
         .service_token()
-        .mint(
-            token_owner.id,
-            "api test mcp token".to_owned(),
-            vec!["mcp".to_owned()],
-            None,
-        )
-        .await?;
-    let admin_minted = stores
-        .service_token()
-        .mint(
-            token_owner.id,
-            "api test admin-scoped token".to_owned(),
-            vec!["admin".to_owned()],
-            None,
-        )
+        .mint(token_owner.id, "api test mcp token".to_owned(), None)
         .await?;
 
     let cfg = Config::from_lookup(|k| match k {
@@ -103,7 +88,6 @@ pub async fn setup() -> Result<Option<Harness>> {
         router,
         admin_cookie,
         mcp_token: mcp_minted.plaintext,
-        admin_scoped_token: admin_minted.plaintext,
     }))
 }
 

@@ -2,14 +2,18 @@
 //! read-only surfaces (health, `me`, runs, a resolved endpoint's plan) and the two test-run
 //! routes that execute a definition for real and show its raw and projected output side by side.
 //!
-//! **Every route here is admin-session only.** Each handler takes [`Caller`] as an extractor and
-//! calls [`require_admin`] first. [`Caller`]'s own `FromRequestParts` impl (`server::identity`)
-//! resolves *only* from the session cookie — it never even inspects the `Authorization` header —
-//! so a bearer service token cannot construct a `Caller` at all, regardless of its scopes. That
-//! is what makes "a service token never reaches a write route" (and, in particular, never reaches
-//! `POST /api/auth_providers` — I5) a structural property of this router rather than a per-route
-//! checklist item: there is no code path from a bearer token to a passing extraction here. MCP
-//! credentials keep authorizing tool *calls* through `server::mcp`, entirely separately.
+//! **Every route here is session-only, and any session may use it.** There is no admin/non-admin
+//! distinction among users (Decision 1) — a valid [`Caller`] can read and write every definition,
+//! full stop — so a route in this module needs no per-caller authorization check at all; it only
+//! needs *a* `Caller` to have been extracted, which [`Caller`]'s own `FromRequestParts` impl
+//! (`server::identity`) already guarantees resolves *only* from the session cookie. It never even
+//! inspects the `Authorization` header, so a bearer service token cannot construct a `Caller` at
+//! all, regardless of its scopes. That is what makes "a service token never reaches a route in
+//! this module" (and, in particular, never reaches `POST /api/auth_providers` — I5) a structural
+//! property of this router rather than a per-route checklist item: there is no code path from a
+//! bearer token to a passing extraction here. MCP credentials keep authorizing tool *calls*
+//! through `server::mcp`, entirely separately. Handlers still take `Caller` as an extractor
+//! (`_caller` where the value itself is unused) purely to force that extraction to run.
 //!
 //! Module layout: [`dto`] (wire shapes, reusing `pack::Pack*` types), [`convert`]/
 //! [`convert_items`] (`model::` <-> those shapes), [`validate_write`] (the pre-write
@@ -35,16 +39,8 @@ use axum::Router;
 use axum::routing::get;
 
 use super::error::ApiError;
-use super::identity::{Caller, assert_admin};
+use super::identity::Caller;
 use super::state::AppState;
-
-/// The one shared gate every handler in this module calls before doing anything user-visible —
-/// see this module's own doc for why the extractor upstream of this call already does the hard
-/// part (excluding a service token structurally) and this is only the human-vs-non-admin-human
-/// check on top of that.
-fn require_admin(caller: &Caller) -> Result<(), ApiError> {
-    assert_admin(caller).map_err(|(_, message)| ApiError::Forbidden(message.to_owned()))
-}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -65,22 +61,16 @@ mod tests {
     use crate::server::identity::CallerKind;
     use uuid::Uuid;
 
+    /// Pins the structural claim this module's doc makes: a `Caller` built directly (as the
+    /// `ServiceToken` variant, bypassing the cookie-only extractor) is still a perfectly usable
+    /// `Caller` value — the actual guarantee lives in the extractor never producing one from a
+    /// bearer token in the first place, not in any per-route check on the value once extracted.
     #[test]
-    fn require_admin_rejects_a_non_admin_caller() {
+    fn a_caller_of_any_kind_is_a_valid_value_once_constructed() {
         let caller = Caller {
-            kind: CallerKind::Session,
+            kind: CallerKind::ServiceToken,
             id: Uuid::new_v4(),
-            is_admin: false,
-            scopes: Vec::new(),
         };
-        assert!(matches!(
-            require_admin(&caller),
-            Err(ApiError::Forbidden(_))
-        ));
-    }
-
-    #[test]
-    fn require_admin_accepts_an_admin_caller() {
-        assert!(require_admin(&Caller::cli()).is_ok());
+        assert_eq!(caller.kind, CallerKind::ServiceToken);
     }
 }

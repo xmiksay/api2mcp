@@ -6,8 +6,10 @@ pub mod embed;
 pub mod error;
 pub mod identity;
 pub mod login;
+pub mod login_oidc;
 pub mod mcp;
 pub mod oauth;
+pub mod oidc;
 pub mod router;
 pub mod state;
 

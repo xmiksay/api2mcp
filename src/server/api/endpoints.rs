@@ -20,7 +20,7 @@ use super::convert_items::{endpoint_from_pack, endpoint_to_pack};
 use super::dto::{EndpointCreate, EndpointView};
 use super::test_run::resolve_plan;
 use super::validate_write::{PendingChange, validate_change};
-use super::{ApiError, Caller, require_admin};
+use super::{ApiError, Caller};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -38,9 +38,8 @@ fn to_view(e: &EndpointDef) -> EndpointView {
 
 async fn list(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
 ) -> Result<Json<Vec<EndpointView>>, ApiError> {
-    require_admin(&caller)?;
     let all = state
         .stores()
         .endpoint()
@@ -52,10 +51,9 @@ async fn list(
 
 async fn get_one(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<Json<EndpointView>, ApiError> {
-    require_admin(&caller)?;
     let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     let endpoint = state
         .stores()
@@ -69,10 +67,9 @@ async fn get_one(
 
 async fn create(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Json(body): Json<EndpointCreate>,
 ) -> Result<(StatusCode, Json<EndpointView>), ApiError> {
-    require_admin(&caller)?;
     let slug = parse_slug(&body.slug).map_err(ApiError::BadRequest)?;
     validate_change(
         &state.stores(),
@@ -92,11 +89,10 @@ async fn create(
 
 async fn update(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Path(slug): Path<String>,
     Json(body): Json<PackEndpoint>,
 ) -> Result<Json<EndpointView>, ApiError> {
-    require_admin(&caller)?;
     let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     validate_change(
         &state.stores(),
@@ -116,10 +112,9 @@ async fn update(
 
 async fn remove(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    require_admin(&caller)?;
     let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     validate_change(&state.stores(), PendingChange::RemoveEndpoint(slug))
         .await
@@ -176,10 +171,9 @@ struct PlanView {
 
 async fn plan(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<Json<PlanView>, ApiError> {
-    require_admin(&caller)?;
     let endpoint_slug = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     let plan = resolve_plan(&state, &endpoint_slug).await?;
 

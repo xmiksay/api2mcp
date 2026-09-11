@@ -1,6 +1,6 @@
-//! `api2mcp serve` — connects, migrates under the advisory lock (which also seeds the admin
-//! user — see `migration::m0007_seed_admin`, idempotent and a no-op once one exists), builds
-//! [`AppState`], binds, and serves until ctrl-c.
+//! `api2mcp serve` — connects, migrates under the advisory lock (which also seeds the first
+//! user — see `migration::m0007_seed_first_user`, idempotent and a no-op once one exists),
+//! builds [`AppState`], binds, and serves until ctrl-c.
 
 use std::sync::Arc;
 

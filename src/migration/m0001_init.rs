@@ -1,15 +1,30 @@
-//! m0001 — identity scaffold: `users` (admin accounts), `sessions` (server-rendered
-//! login, I5's "login and consent are server-rendered" design corner), `service_tokens`
-//! (long-lived MCP bearer tokens) and `meta` (the `definitions_generation` counter the
-//! plan cache is keyed on).
+//! m0001 — identity scaffold: `users` (accounts for the server-rendered login — no admin/
+//! non-admin distinction, see `entity::users`'s own doc), `sessions` (server-rendered login,
+//! I5's "login and consent are server-rendered" design corner), `service_tokens` (long-lived
+//! MCP bearer tokens) and `meta` (the `definitions_generation` counter the plan cache is keyed
+//! on).
 //!
-//! Deviation from the plan's literal schema text: `service_tokens.scopes` is `TEXT[]`
-//! there. `sea-orm`'s Postgres array (de)serialization is gated behind the
-//! `postgres-array` feature, which is not enabled in `Cargo.toml` (out of this chunk's
-//! file ownership) — a native array column would panic decoding rows. Stored as
-//! `JSONB` holding a JSON array of strings instead; same two values (`mcp`, `admin`)
-//! this iteration, same `Vec<String>` shape at the entity boundary.
+//! Deviation from the plan's literal schema text: it gives `service_tokens` a `scopes` column
+//! (`TEXT[]`, since `sea-orm`'s Postgres array support needs a `postgres-array` feature this
+//! crate doesn't enable). This migration has none: `scopes` used to distinguish `"mcp"` from
+//! `"admin"` tokens, and once the admin/non-admin distinction was removed (see
+//! `server::identity`'s module doc) the column could only ever hold one value — which encodes
+//! nothing, so it never existed here rather than being added and dropped in the same
+//! unmerged branch. A resolved, unrevoked, unexpired token may call tools over `/mcp`; that's
+//! the whole rule.
+//!
+//! `users.password_hash` is nullable and `oidc_issuer`/`oidc_subject` are new. A user typically
+//! has exactly one of a local password or a linked external OIDC identity, but a third state is
+//! also valid: both `NULL` — a pending account `api2mcp user add --oidc-only` pre-provisions,
+//! with no working login yet until a follow-up chunk adds a way to link it to a real sign-in
+//! (`entity::users`'s own doc has the full reasoning). The `CHECK` constraint below therefore
+//! only enforces that `oidc_issuer`/`oidc_subject` are set *together or not at all* — it does
+//! not require a password or an identity to be present — and the partial unique index on the
+//! OIDC pair still guarantees `(issuer, subject)` uniqueness whenever both are set. This
+//! migration is amended in place rather than followed by a corrective one — the branch is
+//! unmerged and nothing is deployed yet.
 
+use sea_orm::ConnectionTrait;
 use sea_orm_migration::prelude::*;
 
 use super::helpers::{timestamptz_now, timestamptz_null, uuid_col, uuid_pk};
@@ -28,7 +43,8 @@ enum Users {
     Id,
     Email,
     PasswordHash,
-    IsAdmin,
+    OidcIssuer,
+    OidcSubject,
     CreatedAt,
 }
 
@@ -49,7 +65,6 @@ enum ServiceTokens {
     TokenPrefix,
     OwnerId,
     Label,
-    Scopes,
     LastUsedAt,
     ExpiresAt,
     RevokedAt,
@@ -73,13 +88,9 @@ impl MigrationTrait for Migration {
                     .if_not_exists()
                     .col(uuid_pk(Users::Id))
                     .col(ColumnDef::new(Users::Email).text().not_null())
-                    .col(ColumnDef::new(Users::PasswordHash).text().not_null())
-                    .col(
-                        ColumnDef::new(Users::IsAdmin)
-                            .boolean()
-                            .not_null()
-                            .default(false),
-                    )
+                    .col(ColumnDef::new(Users::PasswordHash).text().null())
+                    .col(ColumnDef::new(Users::OidcIssuer).text().null())
+                    .col(ColumnDef::new(Users::OidcSubject).text().null())
                     .col(timestamptz_now(Users::CreatedAt))
                     .to_owned(),
             )
@@ -92,6 +103,27 @@ impl MigrationTrait for Migration {
                     .col(Users::Email)
                     .unique()
                     .to_owned(),
+            )
+            .await?;
+        // `oidc_issuer`/`oidc_subject` are a pair: either both set (a linked identity) or both
+        // `NULL` (a local-password account, or a pending `user add --oidc-only` row with no
+        // login yet — see this file's module doc for why that third state is intentional). The
+        // `sea_query` builder has no portable `CHECK` support, so this (and the partial unique
+        // index below, which `sea_query::Index` cannot express either — it has no `WHERE`) are
+        // raw SQL, same as m0007's seed does for the same reason.
+        manager
+            .get_connection()
+            .execute_unprepared(
+                "ALTER TABLE users ADD CONSTRAINT ck_users_oidc_pair CHECK ( \
+                    (oidc_issuer IS NULL) = (oidc_subject IS NULL) \
+                )",
+            )
+            .await?;
+        manager
+            .get_connection()
+            .execute_unprepared(
+                "CREATE UNIQUE INDEX ux_users_oidc_identity ON users (oidc_issuer, oidc_subject) \
+                 WHERE oidc_issuer IS NOT NULL AND oidc_subject IS NOT NULL",
             )
             .await?;
 
@@ -134,12 +166,6 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(ServiceTokens::TokenPrefix).text().not_null())
                     .col(uuid_col(ServiceTokens::OwnerId))
                     .col(ColumnDef::new(ServiceTokens::Label).text().not_null())
-                    .col(
-                        ColumnDef::new(ServiceTokens::Scopes)
-                            .json_binary()
-                            .not_null()
-                            .default(Expr::cust("'[]'::jsonb")),
-                    )
                     .col(timestamptz_null(ServiceTokens::LastUsedAt))
                     .col(timestamptz_null(ServiceTokens::ExpiresAt))
                     .col(timestamptz_null(ServiceTokens::RevokedAt))

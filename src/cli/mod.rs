@@ -66,7 +66,7 @@ pub enum Command {
         #[command(subcommand)]
         action: TokenAction,
     },
-    /// Manage admin users.
+    /// Manage user accounts.
     User {
         #[command(subcommand)]
         action: UserAction,
@@ -101,8 +101,6 @@ pub enum TokenAction {
     Mint {
         #[arg(long)]
         label: String,
-        #[arg(long, default_value = "mcp")]
-        scope: String,
         /// Email of the token's owner. Defaults to the sole user account when omitted —
         /// only needed once more than one user exists.
         #[arg(long)]
@@ -120,7 +118,26 @@ pub enum TokenAction {
 #[derive(Subcommand, Debug)]
 pub enum UserAction {
     List,
-    Passwd { email: String },
+    /// Create a user. Password from `A2M_CLI_PASSWORD` or an interactive prompt (same as
+    /// `passwd`), unless `--oidc-only`.
+    Add {
+        email: String,
+        /// No password: the account is created with `password_hash` left `null`, awaiting a
+        /// future sign-in to attach an OIDC identity. See `cli::user`'s module doc for the
+        /// current limits of that (there is no linking step yet).
+        #[arg(long)]
+        oidc_only: bool,
+    },
+    Passwd {
+        email: String,
+    },
+    /// Delete a user. Refused on the last remaining user unless `--force` — a deployment with
+    /// zero users has no way back in except editing the database by hand.
+    Delete {
+        email: String,
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 pub async fn run(cli: Cli) -> Result<()> {

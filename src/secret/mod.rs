@@ -14,11 +14,16 @@
 use std::env;
 use std::fmt;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde::Serialize;
 use zeroize::Zeroizing;
 
 /// A credential value read from the environment. See the module docs for what's deliberately
-/// *not* implemented on this type.
+/// *not* implemented on this type. `Clone` is safe to derive: it duplicates the wrapped
+/// `Zeroizing<String>` (each copy still zeroizes its own memory on drop) without adding any new
+/// way to read the value out as a plain `String`.
+#[derive(Clone)]
 pub struct Secret(Zeroizing<String>);
 
 impl fmt::Debug for Secret {
@@ -48,7 +53,17 @@ impl Secret {
         let value = env::var(env_key).map_err(|_| CredError::MissingEnvVar {
             env_key: env_key.to_owned(),
         })?;
-        Ok(Secret(Zeroizing::new(value)))
+        Ok(Secret::from_raw(value))
+    }
+
+    /// Wraps an already-obtained value (e.g. one a caller resolved through its own
+    /// testable env-lookup indirection, like `config::Config::from_lookup`) without going
+    /// through [`Self::load`]'s own `std::env::var` call. `pub(crate)`: every value that
+    /// reaches this still traces back to a real environment variable somewhere, just read by
+    /// a caller that needed to mock that read for a unit test — this is not a second, looser
+    /// way to construct a `Secret` from arbitrary application data.
+    pub(crate) fn from_raw(value: String) -> Secret {
+        Secret(Zeroizing::new(value))
     }
 
     /// The one exit from this type: renders `{prefix}{value}` (e.g. `prefix = "Bearer "`) into
@@ -60,6 +75,24 @@ impl Secret {
         let rendered = format!("{prefix}{}", self.0.as_str());
         let mut value =
             ::http::HeaderValue::from_str(&rendered).map_err(|_| CredError::InvalidHeaderValue)?;
+        value.set_sensitive(true);
+        Ok(value)
+    }
+
+    /// Renders `Basic base64(client_id:secret)` (RFC 6749 §2.3.1, `client_secret_basic`)
+    /// directly into a sensitive `Authorization` header value — `server::oidc`'s token-exchange
+    /// authentication. Chosen over `client_secret_post` (the secret as a form field) because a
+    /// header value has an established sensitive-marking mechanism here
+    /// ([`::http::HeaderValue::set_sensitive`]); a request body does not. `client_id` is not
+    /// itself secret, only ever this method's other half.
+    pub(crate) fn into_basic_auth_header(
+        self,
+        client_id: &str,
+    ) -> Result<::http::HeaderValue, CredError> {
+        let raw = format!("{client_id}:{}", self.0.as_str());
+        let encoded = BASE64_STANDARD.encode(raw.as_bytes());
+        let mut value = ::http::HeaderValue::from_str(&format!("Basic {encoded}"))
+            .map_err(|_| CredError::InvalidHeaderValue)?;
         value.set_sensitive(true);
         Ok(value)
     }
@@ -111,6 +144,24 @@ mod tests {
         let header = secret.into_header_value("").expect("valid header");
         assert!(header.is_sensitive());
         unsafe { env::remove_var("A2M_TEST_SECRET_SENSITIVE") };
+    }
+
+    #[test]
+    fn from_raw_roundtrips_like_load() {
+        let secret = Secret::from_raw("raw-value".to_owned());
+        let header = secret.into_header_value("").expect("valid header");
+        assert_eq!(header.to_str().expect("ascii"), "raw-value");
+    }
+
+    #[test]
+    fn basic_auth_header_encodes_client_id_and_secret_and_is_sensitive() {
+        let secret = Secret::from_raw("s3cr3t".to_owned());
+        let header = secret
+            .into_basic_auth_header("client-1")
+            .expect("valid header");
+        assert!(header.is_sensitive());
+        let expected = format!("Basic {}", BASE64_STANDARD.encode(b"client-1:s3cr3t"));
+        assert_eq!(header.to_str().expect("ascii"), expected);
     }
 
     #[test]

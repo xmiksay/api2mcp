@@ -209,14 +209,11 @@ async fn service_token_mint_resolve_revoke_and_expiry() -> Result<()> {
         .create(NewUser {
             email: "owner@example.com".to_owned(),
             password: "hunter2-hunter2".to_owned(),
-            is_admin: true,
         })
         .await?;
 
     let tokens = ServiceTokenStore::new(db.conn.clone());
-    let minted = tokens
-        .mint(user.id, "ci token".to_owned(), vec!["mcp".to_owned()], None)
-        .await?;
+    let minted = tokens.mint(user.id, "ci token".to_owned(), None).await?;
 
     // The plaintext must not appear anywhere in the persisted row.
     let raw = service_tokens::Entity::find_by_id(minted.record.id)
@@ -237,7 +234,6 @@ async fn service_token_mint_resolve_revoke_and_expiry() -> Result<()> {
         .mint(
             user.id,
             "already expired".to_owned(),
-            vec![],
             Some(Utc::now() - ChronoDuration::seconds(1)),
         )
         .await?;

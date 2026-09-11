@@ -185,7 +185,7 @@ async fn deleting_a_service_still_referenced_by_an_api_call_is_rejected() -> Res
 }
 
 #[tokio::test]
-async fn auth_providers_post_rejects_a_service_token_even_admin_scoped() -> Result<()> {
+async fn auth_providers_post_rejects_a_service_token() -> Result<()> {
     let Some(h) = setup().await? else {
         return Ok(());
     };
@@ -212,22 +212,8 @@ async fn auth_providers_post_rejects_a_service_token_even_admin_scoped() -> Resu
     assert_eq!(
         status,
         StatusCode::UNAUTHORIZED,
-        "an mcp-scoped service token must never reach a write route: {resp:?}"
-    );
-
-    let (status, resp) = bearer(
-        &h,
-        Method::POST,
-        "/api/auth_providers",
-        &h.admin_scoped_token,
-        Some(body.clone()),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::UNAUTHORIZED,
-        "I5: even an admin-scoped service token must never bind an auth provider — only a human \
-         session may: {resp:?}"
+        "I5: a service token must never bind an auth provider — only a human session may: \
+         {resp:?}"
     );
 
     // The admin session, in contrast, succeeds.
@@ -290,6 +276,43 @@ async fn a_credential_shaped_value_is_rejected_and_never_echoed() -> Result<()> 
             .iter()
             .any(|&k| k == "value" || k == "credential_value" || k.contains("secret"))
     );
+
+    h.db.teardown().await
+}
+
+/// Decision 1: there is no admin/non-admin distinction any more — a session that reaches this
+/// router at all (which every helper in `api_support` already required) can read and write
+/// *every* definition kind, not just the ones with a dedicated CRUD test file. Services and
+/// api_calls get their own full roundtrip tests above; auth_providers gets its own I5 test
+/// below; this covers the one entity kind neither does: scripts.
+#[tokio::test]
+async fn a_session_can_create_a_script() -> Result<()> {
+    let Some(h) = setup().await? else {
+        return Ok(());
+    };
+    seed_service(&h, "svc-for-script-write").await;
+    let call_body = json!({
+        "slug": "call-for-script-write",
+        "service": "svc-for-script-write",
+        "method": "GET",
+        "path_template": "/things",
+        "access": "read"
+    });
+    let (status, resp) = admin(&h, Method::POST, "/api/api_calls", Some(call_body)).await;
+    assert_eq!(status, StatusCode::CREATED, "seeding api_call: {resp:?}");
+
+    let script_body = json!({
+        "slug": "script-write",
+        "source": "let r = api(\"first\", #{}); r",
+        "callable": {"first": "call-for-script-write"}
+    });
+    let (status, body) = admin(&h, Method::POST, "/api/scripts", Some(script_body)).await;
+    assert_eq!(status, StatusCode::CREATED, "body: {body:?}");
+    assert_eq!(body["slug"], json!("script-write"));
+
+    let (status, body) = admin(&h, Method::GET, "/api/scripts/script-write", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["callable"]["first"], json!("call-for-script-write"));
 
     h.db.teardown().await
 }

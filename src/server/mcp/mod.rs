@@ -34,7 +34,7 @@ use crate::model::Slug;
 use crate::resolve::EndpointPlan;
 use crate::runtime::Executor;
 use crate::server::auth::{BearerChallenge, authenticate_mcp};
-use crate::server::identity::{Caller, SCOPE_MCP};
+use crate::server::identity::Caller;
 use crate::server::state::AppState;
 
 use instructions::INSTRUCTIONS;
@@ -110,13 +110,11 @@ async fn dispatch_method(
             Err(resp) => resp,
         },
         "tools/list" | "tools/call" => {
-            if !caller.has_scope(SCOPE_MCP) {
-                return JsonRpcResponse::error(
-                    req.id,
-                    -32001,
-                    "this credential cannot call MCP tools",
-                );
-            }
+            // No scope check: `caller` already passed `authenticate_mcp` to get here — an
+            // OAuth access token or a resolved, unrevoked, unexpired service token, either of
+            // which *is* "may call tools" in full. The admin-only service token that used to
+            // fail a narrower check here is gone (Decision 1; see `server::identity`'s module
+            // doc) — there is no longer a distinct credential kind to exclude.
             let plan = match resolve_plan(state, endpoint_slug, &req.id).await {
                 Ok(plan) => plan,
                 Err(resp) => return resp,

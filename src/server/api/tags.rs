@@ -7,7 +7,7 @@ use axum::{Json, Router};
 
 use crate::server::state::AppState;
 
-use super::{ApiError, Caller, require_admin};
+use super::{ApiError, Caller};
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/tags", get(list))
@@ -15,9 +15,8 @@ pub fn router() -> Router<AppState> {
 
 async fn list(
     State(state): State<AppState>,
-    caller: Caller,
+    _caller: Caller,
 ) -> Result<Json<Vec<String>>, ApiError> {
-    require_admin(&caller)?;
     let tags = state
         .stores()
         .tag()

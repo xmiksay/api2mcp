@@ -91,12 +91,13 @@ mod tests {
             port: 8080,
             base_url: "http://h:8080".into(),
             default_endpoint: "default".into(),
-            admin_email: None,
-            admin_password: None,
+            seed_email: None,
+            seed_password: None,
             run_retention_days: 30,
             allow_loopback_upstream: allow_loopback,
             session_ttl: Duration::from_secs(3600),
             max_request_bytes: 1024 * 1024,
+            oidc: None,
         }
     }
 

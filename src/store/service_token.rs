@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::entity::service_tokens;
 
-use super::{StoreError, db_err, json_string_array, sha256_hex, strings_to_json};
+use super::{StoreError, db_err, sha256_hex};
 
 /// A freshly minted token. `plaintext` exists only in this struct — it is never stored, and
 /// this is the only place in the crate it is ever produced.
@@ -28,13 +28,19 @@ pub struct MintedServiceToken {
 
 /// Never carries `token_hash`: [`ServiceTokenStore::list`] must not be able to leak anything
 /// secret-adjacent, even a hash, so the type it returns simply has nowhere to put one.
+///
+/// No `scopes` any more: it used to hold `"mcp"` or `"admin"`, but the admin/non-admin
+/// distinction is gone (see `server::identity`'s module doc), which left exactly one possible
+/// value — a column that can only ever hold one value encodes nothing, so it was dropped
+/// (`migration::m0001_init`) rather than kept as a decoration. A resolved, unrevoked,
+/// unexpired service token may call tools over `/mcp`, full stop; that's the only rule left,
+/// and it needs no columns of its own to express.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceTokenRecord {
     pub id: Uuid,
     pub token_prefix: String,
     pub owner_id: Uuid,
     pub label: String,
-    pub scopes: Vec<String>,
     pub last_used_at: Option<DateTime<Utc>>,
     pub expires_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
@@ -55,7 +61,6 @@ impl ServiceTokenStore {
         &self,
         owner_id: Uuid,
         label: String,
-        scopes: Vec<String>,
         expires_at: Option<DateTime<Utc>>,
     ) -> Result<MintedServiceToken, StoreError> {
         let plaintext = generate_plaintext();
@@ -66,7 +71,6 @@ impl ServiceTokenStore {
             token_prefix: Set(display_prefix(&plaintext)),
             owner_id: Set(owner_id),
             label: Set(label),
-            scopes: Set(strings_to_json(&scopes)),
             last_used_at: Set(None),
             expires_at: Set(expires_at.map(Into::into)),
             revoked_at: Set(None),
@@ -114,7 +118,7 @@ impl ServiceTokenStore {
             .await
             .map_err(db_err("service_token::resolve"))?;
 
-        let mut record = to_model(row)?;
+        let mut record = to_model(row);
         record.last_used_at = Some(now);
         Ok(Some(record))
     }
@@ -129,7 +133,7 @@ impl ServiceTokenStore {
             .all(&self.db)
             .await
             .map_err(db_err("service_token::list_for_owner"))?;
-        rows.into_iter().map(to_model).collect()
+        Ok(rows.into_iter().map(to_model).collect())
     }
 
     pub async fn revoke(&self, id: Uuid) -> Result<(), StoreError> {
@@ -152,7 +156,7 @@ impl ServiceTokenStore {
             .one(&self.db)
             .await
             .map_err(db_err("service_token::get"))?;
-        row.map(to_model).transpose()
+        Ok(row.map(to_model))
     }
 }
 
@@ -169,18 +173,17 @@ fn display_prefix(plaintext: &str) -> String {
     plaintext.chars().take(8).collect()
 }
 
-fn to_model(row: service_tokens::Model) -> Result<ServiceTokenRecord, StoreError> {
-    Ok(ServiceTokenRecord {
+fn to_model(row: service_tokens::Model) -> ServiceTokenRecord {
+    ServiceTokenRecord {
         id: row.id,
         token_prefix: row.token_prefix,
         owner_id: row.owner_id,
         label: row.label,
-        scopes: json_string_array(&row.scopes, "service_tokens.scopes")?,
         last_used_at: row.last_used_at.map(|d| d.with_timezone(&Utc)),
         expires_at: row.expires_at.map(|d| d.with_timezone(&Utc)),
         revoked_at: row.revoked_at.map(|d| d.with_timezone(&Utc)),
         created_at: row.created_at.with_timezone(&Utc),
-    })
+    }
 }
 
 #[cfg(test)]
