@@ -40,6 +40,20 @@ pub enum BudgetAxis {
     Pages,
 }
 
+impl BudgetAxis {
+    /// The same spelling `Serialize` produces, for the places that need it as a plain string —
+    /// a script-visible error object, a log field. Kept beside the derive so the two cannot
+    /// drift apart.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Calls => "calls",
+            Self::Bytes => "bytes",
+            Self::WallClock => "wall_clock",
+            Self::Pages => "pages",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error, Serialize)]
 #[error("budget exceeded: {axis:?}")]
 pub struct BudgetTrip {

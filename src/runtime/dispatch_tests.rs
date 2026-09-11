@@ -38,6 +38,7 @@ fn api_call(slug: &str) -> ApiCall {
         timeout_ms: None,
         max_response_bytes: None,
         params: vec![],
+        description: None,
     }
 }
 

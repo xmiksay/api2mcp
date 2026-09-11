@@ -118,8 +118,11 @@ impl DispatchOutcome {
 
 /// Errors from [`dispatch`]. `thiserror` + `Serialize` — never `anyhow` — because a per-item
 /// dispatch failure can land directly in a run's `errors[]` column.
+/// The `kind` tag is a **stable contract**: a script branches on it (`if e.kind == "http_status"`)
+/// and a run's persisted `errors[]` records it, so renaming a variant is a breaking change to
+/// both surfaces at once.
 #[derive(Debug, Clone, Error, Serialize)]
-#[serde(tag = "error", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DispatchError {
     #[error("{name:?} is not declared for this caller")]
     NotDeclared { name: String },
@@ -133,6 +136,15 @@ pub enum DispatchError {
     Send(#[from] PaginateError),
     #[error("building the upstream client: {0}")]
     Client(String),
+    #[error("upstream returned {status} {reason}: {detail}")]
+    HttpStatus {
+        status: u16,
+        reason: String,
+        /// A short, redacted excerpt of the upstream's own error body. Upstreams explain a 422
+        /// far better than we can, and a model that can read that explanation can often fix its
+        /// own arguments and retry.
+        detail: String,
+    },
     #[error("response was not valid JSON: {message}")]
     ResponseNotJson { message: String },
     #[error("projection: {0}")]
@@ -235,6 +247,13 @@ pub async fn dispatch(
     )
     .await?;
 
+    // A non-2xx upstream response is a failure, not a value. Projecting an error body and
+    // handing it back as a successful result is the worst outcome available: the model cannot
+    // tell it apart from real data, and the projection will usually "succeed" on it — an error
+    // payload is still JSON. This is the plan's `kind: "http_status"` per-item failure.
+    if let Some(bad) = pages.iter().find(|p| !p.status.is_success()) {
+        return Err(http_status_error(bad));
+    }
     let value = project_pages(planned, &pages)?;
 
     Ok(DispatchOutcome {
@@ -261,6 +280,24 @@ pub async fn dispatch(
 /// already-parsed form would need a small `pub(crate)` seam on one of those two chunks' types;
 /// this chunk owns neither `resolve/` nor `project/`, so it re-parses instead. See the chunk
 /// report for the follow-up.
+/// Builds the failure for a non-2xx page, carrying a bounded excerpt of the upstream's body.
+/// Truncated because an upstream error page can be a megabyte of HTML, and redacted because it
+/// is about to cross into a model's context and an audit row (I4).
+fn http_status_error(page: &CallResponse) -> DispatchError {
+    const DETAIL_CAP: usize = 512;
+    let body = String::from_utf8_lossy(&page.body);
+    let mut detail = crate::http::redact_message(body.trim());
+    if detail.len() > DETAIL_CAP {
+        detail.truncate(DETAIL_CAP);
+        detail.push('\u{2026}');
+    }
+    DispatchError::HttpStatus {
+        status: page.status.as_u16(),
+        reason: page.status.canonical_reason().unwrap_or("").to_owned(),
+        detail,
+    }
+}
+
 fn project_pages(planned: &PlannedApiCall, pages: &[CallResponse]) -> Result<Value, DispatchError> {
     let compiled = planned
         .api_call
