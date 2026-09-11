@@ -23,6 +23,7 @@
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -86,6 +87,14 @@ pub struct BudgetMeter {
     bytes_used: AtomicU64,
     pages_used: AtomicU32,
     deadline: Option<Instant>,
+    /// Wall-clock "run start", captured here rather than threaded in as a parameter: every
+    /// caller of `new` already builds this a few CPU cycles after its own `Instant::now()`
+    /// (`Executor::run_tool`'s `started`, mirrored in `cli::script`/`server::api::test_run`), so
+    /// stamping it here needs no signature change and no new caller-side plumbing. This is the
+    /// source of truth `script::dates::execution_start()` reads (via `script::run_script`
+    /// threading it into `engine::build_engine`) — a single instant constant across every call
+    /// within one run, which is what makes a script that derives its time from it reproducible.
+    execution_start: DateTime<Utc>,
 }
 
 impl BudgetMeter {
@@ -100,7 +109,14 @@ impl BudgetMeter {
             bytes_used: AtomicU64::new(0),
             pages_used: AtomicU32::new(0),
             deadline,
+            execution_start: Utc::now(),
         }
+    }
+
+    /// The instant this meter was constructed, i.e. this run's "start" — see the field's own doc
+    /// comment for why this (rather than a constructor parameter) is the source of truth.
+    pub fn execution_start(&self) -> DateTime<Utc> {
+        self.execution_start
     }
 
     /// Whether the wall-clock deadline has already passed. Checked before every reservation so a

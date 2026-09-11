@@ -26,13 +26,18 @@
 
 pub mod bindings;
 pub mod bridge;
+pub mod dates;
 pub mod engine;
 pub mod errors;
 pub mod marshal;
+pub mod regex_lib;
+pub mod serde_stdlib;
+pub mod text;
 
 use std::sync::Mutex;
 use std::time::Instant;
 
+use chrono::{DateTime, Utc};
 use rhai::{Dynamic, Scope};
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -78,10 +83,12 @@ pub async fn run_script(
 
     let (tx, rx) = mpsc::unbounded_channel::<bridge::BindingCall>();
     let deadline = wall_clock_deadline(meter);
+    let execution_start = meter.execution_start();
     let source = script.source.clone();
 
-    let handle =
-        tokio::task::spawn_blocking(move || run_blocking(&source, scope_vars, deadline, tx));
+    let handle = tokio::task::spawn_blocking(move || {
+        run_blocking(&source, scope_vars, deadline, execution_start, tx)
+    });
 
     let audit = Mutex::new(Vec::new());
     bridge::service(rx, plan, ctx, limits, meter, caller_script, &audit).await;
@@ -105,9 +112,10 @@ fn run_blocking(
     source: &str,
     scope_vars: Vec<(String, Value)>,
     deadline: Option<Instant>,
+    execution_start: DateTime<Utc>,
     tx: mpsc::UnboundedSender<bridge::BindingCall>,
 ) -> Result<Value, ScriptFailure> {
-    let mut eng = engine::build_engine(deadline);
+    let mut eng = engine::build_engine(deadline, execution_start);
     bindings::register(&mut eng, tx);
 
     let ast = engine::compile(&eng, source)?;

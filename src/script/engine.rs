@@ -13,6 +13,7 @@
 
 use std::time::Instant;
 
+use chrono::{DateTime, Utc};
 use rhai::packages::{
     BasicArrayPackage, BasicBlobPackage, BasicMapPackage, BasicMathPackage, BitFieldPackage,
     CorePackage, LogicPackage, MoreStringPackage, Package,
@@ -20,6 +21,7 @@ use rhai::packages::{
 use rhai::{AST, Dynamic, Engine};
 
 use super::errors::ScriptFailure;
+use super::{dates, regex_lib, serde_stdlib, text};
 
 const MAX_OPERATIONS: u64 = 2_000_000;
 const MAX_CALL_LEVELS: usize = 64;
@@ -37,10 +39,17 @@ const MAX_STRINGS_INTERNED: usize = 1_024;
 /// `EvalAltResult::ErrorTerminated`, the one error class a script's `try`/`catch` cannot swallow.
 /// `None` means the run has no wall-clock opinion at all; [`MAX_OPERATIONS`] is still a hard,
 /// deterministic backstop regardless.
-pub fn build_engine(deadline: Option<Instant>) -> Engine {
+///
+/// `execution_start` is this run's single frozen instant — [`crate::runtime::budget::BudgetMeter`]
+/// captures it at construction time and [`super::run_script`] threads it through here (the same
+/// plumbing already used for `deadline`) so [`dates::register`] can hand scripts a
+/// `execution_start()` that's constant for the run's whole lifetime. See `dates`'s module docs for
+/// why that's a different function from `now()`, and never named `timestamp`.
+pub fn build_engine(deadline: Option<Instant>, execution_start: DateTime<Utc>) -> Engine {
     let mut engine = Engine::new_raw();
     register_packages(&mut engine);
     apply_limits(&mut engine);
+    register_stdlib(&mut engine, execution_start);
 
     engine.on_progress(move |_ops| {
         if deadline.is_some_and(|dl| Instant::now() >= dl) {
@@ -76,6 +85,19 @@ fn register_packages(engine: &mut Engine) {
     engine.register_global_module(BasicBlobPackage::new().as_shared_module());
     engine.register_global_module(BasicMapPackage::new().as_shared_module());
     engine.register_global_module(MoreStringPackage::new().as_shared_module());
+}
+
+/// The data-transformation standard library this chunk adds on top of the eight `StandardPackage`
+/// sub-packages above: dates/spans, JSON/YAML, regex, and the numeric/text gap-fillers. Unlike
+/// `bindings::register` (which needs a bridge channel and so is only ever called from
+/// `run_script`'s `run_blocking`), none of these four need anything beyond the engine itself, so
+/// registering them here — rather than one layer up — is what makes them visible to this file's
+/// own golden-probe test, which only ever constructs an [`Engine`] through [`build_engine`].
+fn register_stdlib(engine: &mut Engine, execution_start: DateTime<Utc>) {
+    dates::register(engine, execution_start);
+    serde_stdlib::register(engine);
+    regex_lib::register(engine);
+    text::register(engine);
 }
 
 fn apply_limits(engine: &mut Engine) {
@@ -166,6 +188,73 @@ mod tests {
         // whole registered/excluded picture at once.
         "timestamp()",
         "let t = timestamp(); t.elapsed()",
+        // dates::register — clock functions
+        "execution_start()",
+        "now()",
+        // dates::register — Timestamp parsing/validation
+        "parse_timestamp(\"2024-01-01T00:00:00Z\")",
+        "parse_date(\"2024-01-01\", \"%Y-%m-%d\")",
+        "is_valid_timestamp(\"2024-01-01T00:00:00Z\")",
+        "is_valid_date(\"2024-01-01\", \"%Y-%m-%d\")",
+        // dates::register — Timestamp methods
+        "parse_timestamp(\"2024-01-01T00:00:00Z\").to_rfc3339()",
+        "parse_timestamp(\"2024-01-01T00:00:00Z\").format(\"%Y\")",
+        "parse_timestamp(\"2024-01-01T00:00:00Z\").year()",
+        "parse_timestamp(\"2024-01-01T00:00:00Z\").month()",
+        "parse_timestamp(\"2024-01-01T00:00:00Z\").day()",
+        "parse_timestamp(\"2024-01-01T00:00:00Z\").hour()",
+        "parse_timestamp(\"2024-01-01T00:00:00Z\").minute()",
+        "parse_timestamp(\"2024-01-01T00:00:00Z\").second()",
+        "parse_timestamp(\"2024-01-01T00:00:00Z\").weekday()",
+        "parse_timestamp(\"2024-01-01T00:00:00Z\").unix_seconds()",
+        "parse_timestamp(\"2024-01-01T00:00:00Z\").is_between(parse_timestamp(\"2023-01-01T00:00:00Z\"), parse_timestamp(\"2025-01-01T00:00:00Z\"))",
+        // dates::register — Timestamp comparisons
+        "parse_timestamp(\"2024-01-01T00:00:00Z\") == parse_timestamp(\"2024-01-01T00:00:00Z\")",
+        "parse_timestamp(\"2024-01-01T00:00:00Z\") != parse_timestamp(\"2023-01-01T00:00:00Z\")",
+        "parse_timestamp(\"2024-01-01T00:00:00Z\") < parse_timestamp(\"2025-01-01T00:00:00Z\")",
+        "parse_timestamp(\"2024-01-01T00:00:00Z\") <= parse_timestamp(\"2024-01-01T00:00:00Z\")",
+        "parse_timestamp(\"2025-01-01T00:00:00Z\") > parse_timestamp(\"2024-01-01T00:00:00Z\")",
+        "parse_timestamp(\"2024-01-01T00:00:00Z\") >= parse_timestamp(\"2024-01-01T00:00:00Z\")",
+        // dates::register — Timestamp <-> Span arithmetic
+        "parse_timestamp(\"2024-01-01T00:00:00Z\") + days(1)",
+        "parse_timestamp(\"2024-01-01T00:00:00Z\") - days(1)",
+        "parse_timestamp(\"2024-01-02T00:00:00Z\") - parse_timestamp(\"2024-01-01T00:00:00Z\")",
+        // dates::register — Span constructors/accessors/arithmetic
+        "days(1)",
+        "hours(1)",
+        "minutes(1)",
+        "seconds(1)",
+        "millis(1)",
+        "days(1).whole_days()",
+        "hours(1).whole_hours()",
+        "minutes(1).whole_minutes()",
+        "seconds(1).whole_seconds()",
+        "millis(1).whole_millis()",
+        "days(1) + hours(1)",
+        "days(2) - hours(1)",
+        // serde_stdlib::register
+        "json_parse(\"{}\")",
+        "json_stringify(#{})",
+        "json_stringify_pretty(#{})",
+        "yaml_parse(\"a: 1\")",
+        "yaml_stringify(#{a: 1})",
+        // regex_lib::register
+        "regex_is_match(\"a\", \"a\")",
+        "regex_find(\"a\", \"a\")",
+        "regex_captures(\"a\", \"a\")",
+        "regex_replace(\"a\", \"a\", \"b\")",
+        "regex_replace_all(\"a\", \"a\", \"b\")",
+        "regex_split(\",\", \"a,b\")",
+        // text::register
+        "parse_int_or(\"1\", 0)",
+        "parse_float_or(\"1.0\", 0.0)",
+        "round_to(1.005, 2)",
+        "clamp(1, 0, 2)",
+        "format_thousands(1000)",
+        "format_precision(1.0, 2)",
+        "pad_start(\"1\", 3, \"0\")",
+        "pad_end(\"1\", 3, \"0\")",
+        "safe_slice(\"hello\", 0, 2)",
     ];
 
     fn probe(engine: &Engine, expr: &str) -> bool {
@@ -177,7 +266,7 @@ mod tests {
 
     #[test]
     fn registered_functions_match_the_committed_golden_file() {
-        let engine = build_engine(None);
+        let engine = build_engine(None, Utc::now());
         let mut sorted: Vec<&str> = PROBES.to_vec();
         sorted.sort_unstable();
 
@@ -207,7 +296,7 @@ mod tests {
 
     #[test]
     fn timestamp_is_an_unknown_function() {
-        let engine = build_engine(None);
+        let engine = build_engine(None, Utc::now());
         let err = engine.eval::<Dynamic>("timestamp()").unwrap_err();
         assert!(
             matches!(*err, rhai::EvalAltResult::ErrorFunctionNotFound(..)),
@@ -217,7 +306,7 @@ mod tests {
 
     #[test]
     fn eval_and_import_are_disabled() {
-        let engine = build_engine(None);
+        let engine = build_engine(None, Utc::now());
         let _ = engine
             .eval::<Dynamic>(r#"eval("1")"#)
             .expect_err("eval must be disabled");
@@ -228,7 +317,7 @@ mod tests {
 
     #[test]
     fn fail_on_invalid_map_property_and_strict_variables_are_set() {
-        let engine = build_engine(None);
+        let engine = build_engine(None, Utc::now());
         let _ = engine
             .eval::<Dynamic>("let m = #{a: 1}; m.b")
             .expect_err("reading an absent map key must error, not yield ()");
@@ -239,7 +328,7 @@ mod tests {
 
     #[test]
     fn operation_limit_terminates_a_runaway_loop() {
-        let engine = build_engine(None);
+        let engine = build_engine(None, Utc::now());
         let err = engine
             .eval::<Dynamic>("let i = 0; loop { i += 1; }")
             .unwrap_err();
@@ -251,7 +340,7 @@ mod tests {
 
     #[test]
     fn wall_clock_deadline_terminates_and_is_not_catchable() {
-        let engine = build_engine(Some(Instant::now()));
+        let engine = build_engine(Some(Instant::now()), Utc::now());
         let err = engine
             .eval::<Dynamic>(r#"try { let i = 0; loop { i += 1; } } catch(e) { 0 }"#)
             .unwrap_err();
@@ -263,7 +352,7 @@ mod tests {
 
     #[test]
     fn no_wall_clock_deadline_never_trips_on_its_own() {
-        let engine = build_engine(None);
+        let engine = build_engine(None, Utc::now());
         // Bounded loop, well under MAX_OPERATIONS — must simply finish.
         let v = engine
             .eval::<i64>("let i = 0; while i < 100 { i += 1; } i")
@@ -273,7 +362,7 @@ mod tests {
 
     #[test]
     fn compile_reports_the_syntax_errors_position() {
-        let engine = build_engine(None);
+        let engine = build_engine(None, Utc::now());
         let source = "let x = 1;\nlet y = ;\n";
         let failure = compile(&engine, source).unwrap_err();
         assert_eq!(failure.line, Some(2));
