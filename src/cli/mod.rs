@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand};
 
 pub mod migrate;
 pub mod pack;
+pub mod serve;
 pub mod token;
 pub mod user;
 
@@ -105,7 +106,7 @@ pub enum UserAction {
 
 pub async fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::Serve => bail!("serve: not implemented yet (chunk C11)"),
+        Command::Serve => serve::run().await,
         Command::Migrate { action } => migrate::run(action).await,
         Command::Call { .. } => bail!("call: not implemented yet (chunk C8)"),
         Command::Script { .. } => bail!("script: not implemented yet (chunk C9)"),
