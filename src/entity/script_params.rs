@@ -1,7 +1,7 @@
 //! `script_params` — a script's typed inputs. Same `data_type`/`required`/`default_value`/
-//! `enum_values`/`position` shape as `api_call_params`, minus `location`/`fixed_value`/
-//! `body_path`: those describe where a value lands in an HTTP request, which doesn't apply
-//! to a script input bound as a plain Rhai variable.
+//! `enum_values`/`position`/`description` shape as `api_call_params`, minus
+//! `location`/`fixed_value`/`body_path`: those describe where a value lands in an HTTP
+//! request, which doesn't apply to a script input bound as a plain Rhai variable.
 
 use sea_orm::entity::prelude::*;
 
@@ -21,6 +21,8 @@ pub struct Model {
     pub enum_values: Option<Json>,
     /// Stable schema-generation order (I7), same role as `api_call_params.position`.
     pub position: i32,
+    /// Same role and NOT-NULL-DEFAULT-'' convention as `api_call_params.description`.
+    pub description: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

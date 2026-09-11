@@ -1,6 +1,8 @@
 //! `scripts` — a Rhai program exposed as a tool. `source` is the Rhai text;
 //! `script_api_calls` (I1's declarative half) is the only way its `api()`/`api_many()`
-//! calls can reach HTTP.
+//! calls can reach HTTP. No `projection` column: a script returns its own
+//! already-composed value, so there is nothing for a declarative JSONPath projection to
+//! act on — that is strictly an `api_call` concept.
 
 use sea_orm::entity::prelude::*;
 
@@ -12,9 +14,14 @@ pub struct Model {
     pub slug: String,
     pub description: Option<String>,
     pub source: String,
-    #[sea_orm(column_type = "JsonBinary", nullable)]
-    pub projection: Option<Json>,
-    pub timeout_ms: Option<i32>,
+    /// A script's own budget opinion (I6) — see `model::budget::Budgets` for why `None`
+    /// means "no opinion on this axis", never "unlimited", and why that asymmetry is what
+    /// keeps `Budgets::fold` narrowing-only.
+    pub max_calls: Option<i32>,
+    pub max_bytes: Option<i64>,
+    pub wall_clock_ms: Option<i32>,
+    pub max_pages: Option<i32>,
+    pub max_concurrency: Option<i32>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
 }

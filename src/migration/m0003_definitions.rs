@@ -7,6 +7,14 @@
 //! `services.origin_allowlist` and `auth_providers.scopes` are `JSONB` rather than the
 //! plan's literal `TEXT[]`, for the same `postgres-array`-feature reason as m0001's
 //! `service_tokens.scopes`.
+//!
+//! `auth_providers.slug` and `api_calls.slug` are `UNIQUE` globally, not per-service: a
+//! bare slug is what `script_api_calls`, `endpoint_aliases.target_slug` and
+//! `endpoint_auth_providers` all reference, and pack import/export round-trips the same
+//! bare form. A per-service index would make that reference ambiguous whenever two
+//! services defined the same slug — a runtime failure standing in for a constraint the
+//! database can enforce outright. Slugs are already service-qualified by convention
+//! (`gitlab.mr.list`), so global uniqueness costs nothing in practice.
 
 use sea_orm_migration::prelude::*;
 
@@ -88,6 +96,7 @@ enum ApiCallParams {
     EnumValues,
     BodyPath,
     Position,
+    Description,
 }
 
 #[async_trait::async_trait]
@@ -183,9 +192,8 @@ impl MigrationTrait for Migration {
         manager
             .create_index(
                 Index::create()
-                    .name("ux_auth_providers_service_slug")
+                    .name("ux_auth_providers_slug")
                     .table(AuthProviders::Table)
-                    .col(AuthProviders::ServiceId)
                     .col(AuthProviders::Slug)
                     .unique()
                     .to_owned(),
@@ -252,9 +260,8 @@ impl MigrationTrait for Migration {
         manager
             .create_index(
                 Index::create()
-                    .name("ux_api_calls_service_slug")
+                    .name("ux_api_calls_slug")
                     .table(ApiCalls::Table)
-                    .col(ApiCalls::ServiceId)
                     .col(ApiCalls::Slug)
                     .unique()
                     .to_owned(),
@@ -296,6 +303,17 @@ impl MigrationTrait for Migration {
                     // Stable schema-generation order (I7): input_schema and fan-out both
                     // iterate params by this column, never by insertion or name order.
                     .col(ColumnDef::new(ApiCallParams::Position).integer().not_null())
+                    // What `schema::input_schema` emits as the property's `description` —
+                    // the only per-param documentation a model sees. `NOT NULL DEFAULT ''`
+                    // rather than nullable: "no description" and "empty description" are
+                    // the same thing to a schema consumer, so there's no reason to carry a
+                    // third (NULL) state through the store layer.
+                    .col(
+                        ColumnDef::new(ApiCallParams::Description)
+                            .text()
+                            .not_null()
+                            .default(""),
+                    )
                     .check(
                         Expr::col(ApiCallParams::Location)
                             .is_in(["path", "query", "header", "body"]),

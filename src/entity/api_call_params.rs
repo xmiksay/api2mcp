@@ -29,6 +29,11 @@ pub struct Model {
     pub body_path: Option<String>,
     /// Stable schema-generation and fan-out order (I7) — see the module doc.
     pub position: i32,
+    /// What `schema::input_schema` emits as the property's `description`. `NOT NULL
+    /// DEFAULT ''` — "no description" and "empty description" are the same thing to a
+    /// schema consumer, so the store layer collapses `''` to `None` rather than carrying a
+    /// third state through `model::Param::description`.
+    pub description: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

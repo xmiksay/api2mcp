@@ -81,6 +81,7 @@ fn to_active_model(
         enum_values: Set(enum_values_to_json(&p.enum_values)),
         body_path: Set(body_path),
         position: Set(p.position),
+        description: Set(p.description.clone().unwrap_or_default()),
     })
 }
 
@@ -114,7 +115,10 @@ fn to_model(row: api_call_params::Model) -> Result<Param, StoreError> {
         default: row.default_value,
         fixed: row.fixed_value,
         enum_values: json_to_enum_values(row.enum_values, "api_call_params.enum_values")?,
-        description: None,
+        // `''` and "no description" are the same thing to a schema consumer (see the
+        // column's migration comment) — collapse the empty-string default back to `None`
+        // here rather than exposing a third state to `model::Param`.
+        description: (!row.description.is_empty()).then_some(row.description),
         position: row.position,
     })
 }

@@ -3,18 +3,9 @@
 //! half — the fixed, human-curated set of api_calls a script may reach, resolved here into
 //! [`crate::model::ScriptDef::callable`]) and its tags.
 //!
-//! Two documented, load-bearing gaps between `model::ScriptDef` and the schema shipped by
-//! chunk C1 (migrations/entities are out of this chunk's file ownership, so these are
-//! reported rather than silently patched over):
-//! - `scripts` has no `budgets` column, only `timeout_ms`. Only `Budgets::wall_clock` is
-//!   ever populated from a stored script; `max_calls`/`max_bytes`/`max_pages`/
-//!   `max_concurrency` always read back `None` for a script's own budget opinion (they're
-//!   still enforceable at the endpoint level and folded in via `Budgets::fold`, I6 — a
-//!   script just can't independently narrow those four axes today).
-//! - `scripts.projection` exists in the schema but `ScriptDef` has no `projection` field, so
-//!   this store never reads or writes that column.
-//! - `script_params` (like `api_call_params`) has no `description` column, so
-//!   `Param::description` never round-trips for a script param either.
+//! `scripts` stores its own [`crate::model::Budgets`] opinion (I6) as five nullable
+//! columns, one per axis, rather than one JSONB blob — see the migration's module doc for
+//! why every axis needs to be independently representable here.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -172,7 +163,7 @@ impl ScriptStore {
             .map_err(db_err("script::replace_callable"))?;
         let api_calls = ApiCallStore::new(self.db.clone());
         for (alias, api_call_slug) in callable {
-            let api_call_id = api_calls.id_by_slug_any_service(api_call_slug).await?;
+            let api_call_id = api_calls.id_by_slug_global(api_call_slug).await?;
             script_api_calls::ActiveModel {
                 id: Set(Uuid::new_v4()),
                 script_id: Set(script_id),
@@ -188,16 +179,19 @@ impl ScriptStore {
 }
 
 fn to_active_model(script: &ScriptDef, id: Uuid) -> scripts::ActiveModel {
+    let b = &script.budgets;
     scripts::ActiveModel {
         id: Set(id),
         slug: Set(script.slug.as_str().to_owned()),
         description: Set(script.description.clone()),
         source: Set(script.source.clone()),
-        projection: Set(None),
-        timeout_ms: Set(script
-            .budgets
+        max_calls: Set(b.max_calls.map(|v| v as i32)),
+        max_bytes: Set(b.max_bytes.map(|v| v as i64)),
+        wall_clock_ms: Set(b
             .wall_clock
             .map(|d| d.as_millis().min(i32::MAX as u128) as i32)),
+        max_pages: Set(b.max_pages.map(|v| v as i32)),
+        max_concurrency: Set(b.max_concurrency.map(|v| v as i32)),
         ..Default::default()
     }
 }
@@ -213,10 +207,13 @@ fn to_model(
         params,
         callable,
         budgets: crate::model::Budgets {
+            max_calls: row.max_calls.map(|v| v.max(0) as u32),
+            max_bytes: row.max_bytes.map(|v| v.max(0) as u64),
             wall_clock: row
-                .timeout_ms
+                .wall_clock_ms
                 .map(|ms| Duration::from_millis(ms.max(0) as u64)),
-            ..Default::default()
+            max_pages: row.max_pages.map(|v| v.max(0) as u32),
+            max_concurrency: row.max_concurrency.map(|v| v.max(0) as u32),
         },
         description: row.description,
     })
@@ -252,6 +249,7 @@ async fn replace_params<C: ConnectionTrait>(
             default_value: Set(p.default.clone()),
             enum_values: Set(enum_values_to_json(&p.enum_values)),
             position: Set(p.position),
+            description: Set(p.description.clone().unwrap_or_default()),
         }
         .insert(conn)
         .await
@@ -280,7 +278,7 @@ async fn load_script_params<C: ConnectionTrait>(
                 default: row.default_value,
                 fixed: None,
                 enum_values: json_to_enum_values(row.enum_values, "script_params.enum_values")?,
-                description: None,
+                description: (!row.description.is_empty()).then_some(row.description),
                 position: row.position,
             })
         })

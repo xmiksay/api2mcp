@@ -156,25 +156,19 @@ impl AuthProviderStore {
             .ok_or(StoreError::NotFound)
     }
 
-    /// Resolves a bare auth-provider slug to its primary key, without a service to
-    /// disambiguate — needed by `store::endpoint`, since `EndpointDef::auth_providers` (a
-    /// fixed part of the model) is a `BTreeSet<Slug>`, not a set of `(service, slug)` pairs.
-    /// Errors [`StoreError::Conflict`] if more than one service defines a provider with this
-    /// slug, since the model has no way to express which one was meant.
-    pub(crate) async fn id_by_slug_any_service(&self, slug: &Slug) -> Result<Uuid, StoreError> {
-        let mut rows = auth_providers::Entity::find()
+    /// Resolves a bare auth-provider slug to its primary key, with no service to scope by —
+    /// needed by `store::endpoint`, since `EndpointDef::auth_providers` (a fixed part of the
+    /// model) is a `BTreeSet<Slug>`, not a set of `(service, slug)` pairs. Safe because
+    /// `auth_providers.slug` is `UNIQUE` globally (`ux_auth_providers_slug`), so at most one
+    /// row can ever match.
+    pub(crate) async fn id_by_slug_global(&self, slug: &Slug) -> Result<Uuid, StoreError> {
+        auth_providers::Entity::find()
             .filter(auth_providers::Column::Slug.eq(slug.as_str()))
-            .all(&self.db)
+            .one(&self.db)
             .await
-            .map_err(db_err("auth_provider::id_by_slug_any_service"))?;
-        match rows.len() {
-            0 => Err(StoreError::NotFound),
-            1 => Ok(rows.remove(0).id),
-            n => Err(StoreError::Conflict(format!(
-                "auth provider slug {:?} is ambiguous: {n} services define it",
-                slug.as_str()
-            ))),
-        }
+            .map_err(db_err("auth_provider::id_by_slug_global"))?
+            .map(|r| r.id)
+            .ok_or(StoreError::NotFound)
     }
 
     /// Resolves an auth provider's `(service_slug, slug)` from its primary key — used by

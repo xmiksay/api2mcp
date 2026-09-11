@@ -1,6 +1,15 @@
 //! A stopgap parser/printer for `endpoints.tag_expr` — see the module doc on
 //! `super` (`store::endpoint`) for why this exists here instead of in `resolve::tag_expr`
-//! (chunk C6). Grammar, lowest to highest precedence:
+//! (chunk C6).
+//!
+//! **For chunk C6**: promote this module verbatim into `resolve::tag_expr` rather than
+//! writing a second parser for the same grammar next to it — two implementations of one
+//! grammar are a bug waiting to happen the moment either one gains a feature the other
+//! doesn't. If `resolve::tag_expr` needs something this parser doesn't do, extend this one
+//! (or replace it outright) and have `store::endpoint` depend on the result, instead of
+//! leaving both to drift.
+//!
+//! Grammar, lowest to highest precedence:
 //!
 //! ```text
 //! expr  := or

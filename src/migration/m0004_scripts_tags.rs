@@ -5,10 +5,18 @@
 //! `endpoints` select over.
 //!
 //! `script_params` mirrors `api_call_params`'s typed-input shape (`data_type`, `required`,
-//! `default_value`, `enum_values`, `position`) but drops `location`/`fixed_value`/
-//! `body_path`: those describe *where in an HTTP request* a value lands, which is
-//! meaningless for a script input — a script receives its params as plain Rhai
+//! `default_value`, `enum_values`, `position`, `description`) but drops `location`/
+//! `fixed_value`/`body_path`: those describe *where in an HTTP request* a value lands,
+//! which is meaningless for a script input — a script receives its params as plain Rhai
 //! bindings, not something bound into a template.
+//!
+//! `scripts` has no `projection` column: a script returns its own already-composed Rhai
+//! value, so there is nothing here for a declarative JSONPath projection to act on — that
+//! is strictly an `api_call` concept. Its budget is five nullable columns
+//! (`max_calls`/`max_bytes`/`wall_clock_ms`/`max_pages`/`max_concurrency`), not one
+//! `timeout_ms`: `Budgets::fold` (I6) is element-wise `min` across all five axes, so a
+//! script that can only narrow `wall_clock` could never narrow the other four — the
+//! invariant needs every axis representable here, not just one.
 
 use sea_orm_migration::prelude::*;
 
@@ -35,8 +43,11 @@ enum Scripts {
     Slug,
     Description,
     Source,
-    Projection,
-    TimeoutMs,
+    MaxCalls,
+    MaxBytes,
+    WallClockMs,
+    MaxPages,
+    MaxConcurrency,
     CreatedAt,
     UpdatedAt,
 }
@@ -52,6 +63,7 @@ enum ScriptParams {
     DefaultValue,
     EnumValues,
     Position,
+    Description,
 }
 
 #[derive(DeriveIden)]
@@ -97,8 +109,14 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Scripts::Slug).text().not_null())
                     .col(ColumnDef::new(Scripts::Description).text().null())
                     .col(ColumnDef::new(Scripts::Source).text().not_null())
-                    .col(ColumnDef::new(Scripts::Projection).json_binary().null())
-                    .col(ColumnDef::new(Scripts::TimeoutMs).integer().null())
+                    // A script's own budget opinion (I6) — `None`/NULL means "no opinion
+                    // on this axis", never "unlimited"; see `model::budget` for why that
+                    // asymmetry is what keeps `Budgets::fold` narrowing-only.
+                    .col(ColumnDef::new(Scripts::MaxCalls).integer().null())
+                    .col(ColumnDef::new(Scripts::MaxBytes).big_integer().null())
+                    .col(ColumnDef::new(Scripts::WallClockMs).integer().null())
+                    .col(ColumnDef::new(Scripts::MaxPages).integer().null())
+                    .col(ColumnDef::new(Scripts::MaxConcurrency).integer().null())
                     .col(timestamptz_now(Scripts::CreatedAt))
                     .col(timestamptz_now(Scripts::UpdatedAt))
                     .to_owned(),
@@ -141,6 +159,15 @@ impl MigrationTrait for Migration {
                             .null(),
                     )
                     .col(ColumnDef::new(ScriptParams::Position).integer().not_null())
+                    // Same role and default as `api_call_params.description` (m0003) — see
+                    // that column's comment for why `NOT NULL DEFAULT ''` rather than
+                    // nullable.
+                    .col(
+                        ColumnDef::new(ScriptParams::Description)
+                            .text()
+                            .not_null()
+                            .default(""),
+                    )
                     .check(
                         Expr::col(ScriptParams::DataType)
                             .is_in(["string", "integer", "number", "boolean", "array", "object"]),

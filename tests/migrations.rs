@@ -7,8 +7,12 @@
 
 mod common;
 
+use std::collections::BTreeSet;
+
 use anyhow::{Context, Result};
 use api2mcp::migration::Migrator;
+use api2mcp::model::{Access, ApiCall, Origin, Pagination, Service, Slug};
+use api2mcp::store::{StoreError, Stores};
 use common::ScratchDb;
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 use sea_orm_migration::MigratorTrait;
@@ -96,6 +100,71 @@ async fn up_down_up_round_trips() -> Result<()> {
     }
 
     db.teardown().await
+}
+
+/// `api_calls.slug` is `UNIQUE` globally (`ux_api_calls_slug`), not per-service — a bare
+/// slug is what `script_api_calls`, `endpoint_aliases.target_slug` and pack import/export
+/// all reference, so two services defining the same slug must be a constraint violation,
+/// not a runtime ambiguity `store::api_call` has to resolve after the fact.
+#[tokio::test]
+async fn api_call_slug_is_unique_across_services() -> Result<()> {
+    let Some(db) = ScratchDb::create().await? else {
+        eprintln!("TEST_DATABASE_URL unset — skipping");
+        return Ok(());
+    };
+    db.migrate_up().await?;
+    let stores = Stores::new(db.conn.clone());
+
+    let a = sample_service("dup-slug-svc-a");
+    let b = sample_service("dup-slug-svc-b");
+    stores.service().create(&a).await?;
+    stores.service().create(&b).await?;
+
+    stores
+        .api_call()
+        .create(&sample_api_call(&a.slug, "shared"), &BTreeSet::new())
+        .await?;
+    let err = stores
+        .api_call()
+        .create(&sample_api_call(&b.slug, "shared"), &BTreeSet::new())
+        .await
+        .expect_err("a globally-unique slug must reject a second service reusing it");
+    assert!(matches!(err, StoreError::Db), "got {err:?} instead");
+
+    db.teardown().await
+}
+
+fn sample_service(name: &str) -> Service {
+    let base_url: url::Url = format!("https://{name}.example.com/").parse().unwrap();
+    Service {
+        slug: name.parse().unwrap(),
+        base_url: base_url.clone(),
+        origin_allowlist: BTreeSet::from([Origin::of(&base_url).unwrap()]),
+        default_headers: Default::default(),
+        timeout_ms: 5_000,
+        max_concurrency: 4,
+        rate_limit_per_min: None,
+        max_response_bytes: 1_000_000,
+    }
+}
+
+fn sample_api_call(service_slug: &Slug, name: &str) -> ApiCall {
+    ApiCall {
+        slug: name.parse().unwrap(),
+        service_slug: service_slug.clone(),
+        auth_provider_slug: None,
+        method: http::Method::GET,
+        path_template: "/things".to_owned(),
+        query_fixed: Default::default(),
+        body_template: None,
+        access: Access::Read,
+        idempotent: true,
+        projection: None,
+        pagination: Pagination::None,
+        timeout_ms: None,
+        max_response_bytes: None,
+        params: vec![],
+    }
 }
 
 async fn table_exists(conn: &impl ConnectionTrait, table: &str) -> Result<bool> {

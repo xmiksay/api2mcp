@@ -210,7 +210,7 @@ impl EndpointStore {
             .map_err(db_err("endpoint::replace_auth_providers"))?;
         let providers = AuthProviderStore::new(self.db.clone());
         for slug in wanted {
-            let auth_provider_id = providers.id_by_slug_any_service(slug).await?;
+            let auth_provider_id = providers.id_by_slug_global(slug).await?;
             endpoint_auth_providers::ActiveModel {
                 endpoint_id: Set(endpoint_id),
                 auth_provider_id: Set(auth_provider_id),

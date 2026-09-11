@@ -153,15 +153,26 @@ async fn script_declared_call_allowlist_round_trips() -> Result<()> {
     let mut callable = BTreeMap::new();
     callable.insert("first".to_string(), call_a.slug.clone());
     callable.insert("second".to_string(), call_b.slug.clone());
+    // A script's own budget opinion (I6) and its param descriptions round-trip through
+    // five nullable columns and `script_params.description` respectively — see
+    // `src/store/script.rs`.
+    let budgets = Budgets {
+        max_calls: Some(3),
+        max_bytes: Some(50_000),
+        wall_clock: Some(std::time::Duration::from_millis(1_500)),
+        max_pages: Some(2),
+        max_concurrency: Some(1),
+    };
     let script = api2mcp::model::ScriptDef {
         slug: slug("aggregate"),
         source: "let r = api(\"first\", #{}); r".to_owned(),
         params: vec![Param {
             location: ParamLocation::Local,
+            description: Some("how many rows to fetch".to_owned()),
             ..plain_param("limit", 0)
         }],
         callable: callable.clone(),
-        budgets: Budgets::default(),
+        budgets,
         description: Some("aggregates two calls".to_owned()),
     };
     stores.script().create(&script, &BTreeSet::new()).await?;
@@ -174,6 +185,11 @@ async fn script_declared_call_allowlist_round_trips() -> Result<()> {
     assert_eq!(fetched.script.callable, callable);
     assert_eq!(fetched.script.params.len(), 1);
     assert_eq!(fetched.script.params[0].location, ParamLocation::Local);
+    assert_eq!(
+        fetched.script.params[0].description.as_deref(),
+        Some("how many rows to fetch")
+    );
+    assert_eq!(fetched.script.budgets, budgets);
 
     db.teardown().await
 }
@@ -320,6 +336,41 @@ async fn endpoint_round_trips_tag_expr_and_budgets() -> Result<()> {
         .await?
         .expect("endpoint exists");
     assert_eq!(fetched, endpoint);
+
+    db.teardown().await
+}
+
+#[tokio::test]
+async fn api_call_param_description_round_trips() -> Result<()> {
+    let Some(db) = ScratchDb::create().await? else {
+        eprintln!("TEST_DATABASE_URL unset — skipping");
+        return Ok(());
+    };
+    db.migrate_up().await?;
+    let stores = Stores::new(db.conn.clone());
+
+    let service = sample_service("param-desc-svc");
+    stores.service().create(&service).await?;
+
+    let param = Param {
+        description: Some("the search query".to_owned()),
+        ..plain_param("q", 0)
+    };
+    let api_call = sample_api_call(&service.slug, "search", vec![param]);
+    stores
+        .api_call()
+        .create(&api_call, &BTreeSet::new())
+        .await?;
+
+    let fetched = stores
+        .api_call()
+        .get(&service.slug, &api_call.slug)
+        .await?
+        .expect("api_call exists");
+    assert_eq!(
+        fetched.api_call.params[0].description.as_deref(),
+        Some("the search query")
+    );
 
     db.teardown().await
 }

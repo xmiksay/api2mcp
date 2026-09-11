@@ -6,12 +6,6 @@
 //! `projection`/`pagination` are JSONB; decoding them into
 //! [`crate::model::Projection`]/[`crate::model::Pagination`] (and reporting a malformed
 //! shape as [`StoreError::Malformed`]) is this module's job, not a caller's.
-//!
-//! `Param::description` has nowhere to live: `api_call_params` has no `description` column
-//! (see the migration/entity as shipped by chunk C1). A param written through this store
-//! therefore always reads back with `description: None`, regardless of what was set before
-//! the write — a real, load-bearing gap between `model::Param` and the schema, not a bug in
-//! this file. Flagged in the chunk report for the schema owner.
 
 use std::collections::BTreeSet;
 use std::str::FromStr;
@@ -164,25 +158,19 @@ impl ApiCallStore {
             .ok_or(StoreError::NotFound)
     }
 
-    /// Resolves a bare api_call slug to its primary key, without a service to disambiguate
-    /// — needed by `script_api_calls` writes, since `ScriptDef::callable` (a fixed part of
-    /// the model) maps an alias to a bare [`Slug`], not a `(service, slug)` pair. Errors
-    /// [`StoreError::Conflict`] if more than one service defines an api_call with this slug,
-    /// since the model has no way to express which one was meant.
-    pub(crate) async fn id_by_slug_any_service(&self, slug: &Slug) -> Result<Uuid, StoreError> {
-        let mut rows = api_calls::Entity::find()
+    /// Resolves a bare api_call slug to its primary key, with no service to scope by —
+    /// needed by `script_api_calls` writes, since `ScriptDef::callable` (a fixed part of
+    /// the model) maps an alias to a bare [`Slug`], not a `(service, slug)` pair. Safe
+    /// because `api_calls.slug` is `UNIQUE` globally (`ux_api_calls_slug`), so at most one
+    /// row can ever match.
+    pub(crate) async fn id_by_slug_global(&self, slug: &Slug) -> Result<Uuid, StoreError> {
+        api_calls::Entity::find()
             .filter(api_calls::Column::Slug.eq(slug.as_str()))
-            .all(&self.db)
+            .one(&self.db)
             .await
-            .map_err(db_err("api_call::id_by_slug_any_service"))?;
-        match rows.len() {
-            0 => Err(StoreError::NotFound),
-            1 => Ok(rows.remove(0).id),
-            n => Err(StoreError::Conflict(format!(
-                "api_call slug {:?} is ambiguous: {n} services define it",
-                slug.as_str()
-            ))),
-        }
+            .map_err(db_err("api_call::id_by_slug_global"))?
+            .map(|r| r.id)
+            .ok_or(StoreError::NotFound)
     }
 
     /// Resolves an api_call's `(service_slug, slug)` pair from its primary key — used by
