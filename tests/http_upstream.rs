@@ -27,12 +27,12 @@ use fixture::{Behavior, Fixture};
 #[tokio::test]
 async fn gzip_bomb_trips_the_cap_on_decompressed_bytes_not_wire_length() {
     let f = Fixture::start().await;
-    // ~103 KB on the wire (see `fixture::gzip_bomb`'s docs on why not the plan's literal
-    // "100 KB/100 MB": no compression-encoding dependency is available to this chunk), inflating
-    // to ~16 MiB decompressed.
-    let repeats = 65_028;
+    // ~16 KB on the wire inflating to 16 MiB decompressed, a ratio over 1000:1. That ratio is
+    // the whole point: the wire body is small enough that a Content-Length check waves it
+    // through, so only a cap counting decompressed bytes can stop it.
+    let repeats = 16 * 1024 * 1024;
     let decompressed_len = fixture::gzip_bomb::decompressed_len(repeats);
-    assert!(decompressed_len > 16 * 1024 * 1024);
+    assert_eq!(decompressed_len, 16 * 1024 * 1024);
     f.set(
         "/bomb",
         Behavior::GzipBody {

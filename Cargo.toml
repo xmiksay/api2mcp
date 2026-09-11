@@ -72,6 +72,9 @@ mime_guess = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
+# Only the test fixture needs to compress: the byte-cap test serves a small wire
+# body that inflates enormously, to prove the cap counts decompressed bytes.
+flate2 = "1"
 http-body-util = "0.1"
 proptest = "1"
 trybuild = "1"

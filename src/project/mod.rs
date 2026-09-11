@@ -166,23 +166,23 @@ fn coerce_value(ty: ParamType, value: &Value) -> Result<Value, &'static str> {
     match ty {
         ParamType::String => match value {
             Value::String(_) => Ok(value.clone()),
-            other => Err(json_type_name(other)),
+            other => Err(crate::schema::coerce::json_type_name(other)),
         },
         ParamType::Integer => coerce_integer(value),
         ParamType::Number => match value {
             Value::Number(_) => Ok(value.clone()),
-            other => Err(json_type_name(other)),
+            other => Err(crate::schema::coerce::json_type_name(other)),
         },
         ParamType::Boolean => match value {
             Value::Bool(_) => Ok(value.clone()),
-            other => Err(json_type_name(other)),
+            other => Err(crate::schema::coerce::json_type_name(other)),
         },
         ParamType::StringArray => match value {
             Value::Array(items) if items.iter().all(|v| matches!(v, Value::String(_))) => {
                 Ok(value.clone())
             }
             Value::Array(_) => Err("array of non-strings"),
-            other => Err(json_type_name(other)),
+            other => Err(crate::schema::coerce::json_type_name(other)),
         },
     }
 }
@@ -210,18 +210,7 @@ fn coerce_integer(value: &Value) -> Result<Value, &'static str> {
                 Err("string")
             }
         }
-        other => Err(json_type_name(other)),
-    }
-}
-
-fn json_type_name(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "boolean",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
+        other => Err(crate::schema::coerce::json_type_name(other)),
     }
 }
 

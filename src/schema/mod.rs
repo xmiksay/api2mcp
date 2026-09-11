@@ -4,7 +4,7 @@
 //! of it. `bind_args` never trusts the schema it emitted — a caller that ignores the schema
 //! is rejected by the same code that would have rejected a caller that read it.
 
-mod coerce;
+pub(crate) mod coerce;
 mod validate;
 
 pub use validate::{ValidationError, bind_args};

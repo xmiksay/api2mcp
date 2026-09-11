@@ -83,7 +83,7 @@ fn next_request(
         Ok(other) => {
             return Err(PaginateError::CursorNotString {
                 pointer: next_cursor_path.to_string(),
-                actual: json_type_name(other),
+                actual: crate::schema::coerce::json_type_name(other),
             });
         }
     };
@@ -112,21 +112,6 @@ fn set_query_param(url: &url::Url, key: &str, value: &str) -> url::Url {
         .extend_pairs(kept.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .append_pair(key, value);
     out
-}
-
-/// The JSON type name of `value`, for error messages. Duplicated from (the private)
-/// `schema::coerce::json_type_name` rather than reused — that module is `mod coerce;` (not `pub
-/// mod`) inside `schema`, so it isn't reachable from here without editing a file this chunk
-/// doesn't own; see the chunk report for the follow-up to make it `pub(crate)` and shared.
-fn json_type_name(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "boolean",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-    }
 }
 
 #[cfg(test)]
