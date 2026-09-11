@@ -1,0 +1,81 @@
+[package]
+name = "api2mcp"
+version = "0.1.0"
+edition = "2024"
+description = "MCP Tool Factory — turns curated HTTP API calls into MCP tools"
+default-run = "api2mcp"
+
+[lib]
+name = "api2mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "api2mcp"
+path = "src/bin/api2mcp.rs"
+
+[dependencies]
+# Async / web
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "io-util"] }
+axum = "0.8"
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["trace", "catch-panic", "set-header", "timeout"] }
+http = "1"
+# Upstream HTTP. `stream` is required: bodies are read with a running byte cap
+# so a gzip bomb is aborted mid-stream rather than materialised.
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "gzip", "brotli", "zstd"] }
+hickory-resolver = "0.26"
+url = "2"
+percent-encoding = "2"
+# SSRF range classification. std's is_global/is_shared/is_unique_local are all
+# still unstable, so the deny table is hand-written over ipnet.
+ipnet = "2"
+
+# Persistence
+sea-orm = { version = "1.1", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
+sea-orm-migration = "1.1"
+
+# Scripting. `sync` is mandatory — it makes Dynamic/AST Send+Sync so they can
+# cross into spawn_blocking. NOT default-features: we assemble the package set
+# by hand to exclude BasicTimePackage (a clock in a script breaks I7).
+rhai = { version = "1", default-features = false, features = ["std", "sync", "serde"] }
+
+# Serialization. serde_json MUST NOT enable `preserve_order`: rhai::Map is a
+# BTreeMap, and default serde_json::Map is too, so both sort identically and
+# every Rhai boundary round-trips in stable order (I7).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_json_path = "0.7"
+jsonptr = "0.8"
+# Maintained fork of the unmaintained serde_yaml, same API.
+serde_norway = "0.9"
+
+# Crypto
+argon2 = "0.6"
+sha2 = "0.11"
+rand = "0.9"
+base64 = "0.22"
+zeroize = { version = "1", features = ["derive"] }
+
+# Errors / logging / CLI / misc
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive", "env"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"
+async-trait = "0.1"
+dotenvy = "0.15"
+rust-embed = "8"
+mime_guess = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+http-body-util = "0.1"
+proptest = "1"
+trybuild = "1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[profile.release]
+strip = true
