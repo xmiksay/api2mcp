@@ -9,10 +9,22 @@ const routes: RouteRecordRaw[] = [
 
   { path: '/services', name: 'services', component: () => import('@/views/ServicesListView.vue') },
   {
+    path: '/services/new',
+    name: 'service-new',
+    component: () => import('@/views/ServiceFormView.vue'),
+    props: { mode: 'create' },
+  },
+  {
     path: '/services/:slug',
     name: 'service-detail',
     component: () => import('@/views/ServiceDetailView.vue'),
     props: true,
+  },
+  {
+    path: '/services/:slug/edit',
+    name: 'service-edit',
+    component: () => import('@/views/ServiceFormView.vue'),
+    props: (route) => ({ mode: 'edit', slug: route.params.slug }),
   },
 
   {
@@ -21,34 +33,82 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/AuthProvidersListView.vue'),
   },
   {
+    path: '/auth-providers/new',
+    name: 'auth-provider-new',
+    component: () => import('@/views/AuthProviderFormView.vue'),
+    props: { mode: 'create' },
+  },
+  {
     path: '/auth-providers/:slug',
     name: 'auth-provider-detail',
     component: () => import('@/views/AuthProviderDetailView.vue'),
     props: true,
   },
+  {
+    path: '/auth-providers/:slug/edit',
+    name: 'auth-provider-edit',
+    component: () => import('@/views/AuthProviderFormView.vue'),
+    props: (route) => ({ mode: 'edit', slug: route.params.slug }),
+  },
 
   { path: '/api-calls', name: 'api-calls', component: () => import('@/views/ApiCallsListView.vue') },
+  {
+    path: '/api-calls/new',
+    name: 'api-call-new',
+    component: () => import('@/views/ApiCallFormView.vue'),
+    props: { mode: 'create' },
+  },
   {
     path: '/api-calls/:slug',
     name: 'api-call-detail',
     component: () => import('@/views/ApiCallDetailView.vue'),
     props: true,
   },
+  {
+    path: '/api-calls/:slug/edit',
+    name: 'api-call-edit',
+    component: () => import('@/views/ApiCallFormView.vue'),
+    props: (route) => ({ mode: 'edit', slug: route.params.slug }),
+  },
 
   { path: '/scripts', name: 'scripts', component: () => import('@/views/ScriptsListView.vue') },
+  {
+    path: '/scripts/new',
+    name: 'script-new',
+    component: () => import('@/views/ScriptFormView.vue'),
+    props: { mode: 'create' },
+  },
   {
     path: '/scripts/:slug',
     name: 'script-detail',
     component: () => import('@/views/ScriptDetailView.vue'),
     props: true,
   },
+  {
+    path: '/scripts/:slug/edit',
+    name: 'script-edit',
+    component: () => import('@/views/ScriptFormView.vue'),
+    props: (route) => ({ mode: 'edit', slug: route.params.slug }),
+  },
 
   { path: '/endpoints', name: 'endpoints', component: () => import('@/views/EndpointsListView.vue') },
+  {
+    path: '/endpoints/new',
+    name: 'endpoint-new',
+    component: () => import('@/views/EndpointFormView.vue'),
+    props: { mode: 'create' },
+  },
   {
     path: '/endpoints/:slug',
     name: 'endpoint-detail',
     component: () => import('@/views/EndpointDetailView.vue'),
     props: true,
+  },
+  {
+    path: '/endpoints/:slug/edit',
+    name: 'endpoint-edit',
+    component: () => import('@/views/EndpointFormView.vue'),
+    props: (route) => ({ mode: 'edit', slug: route.params.slug }),
   },
   {
     path: '/endpoints/:slug/plan',

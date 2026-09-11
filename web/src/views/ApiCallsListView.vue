@@ -7,12 +7,12 @@ import DataTable from "@/components/DataTable.vue";
 import LoadingState from "@/components/LoadingState.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import ErrorState from "@/components/ErrorState.vue";
-import SeamButton from "@/components/SeamButton.vue";
 import StatusPill from "@/components/StatusPill.vue";
 import TagChips from "@/components/TagChips.vue";
 import { accessTone } from "@/lib/tone";
 import type { Column } from "@/lib/table";
 import type { ApiCallView } from "@/api";
+import { writeButtonClass } from "@/lib/formStyle";
 
 const store = useApiCallsStore();
 const router = useRouter();
@@ -35,7 +35,7 @@ function open(row: ApiCallView): void {
 <template>
   <PageHeader title="Api Calls" subtitle="Curated HTTP calls — one exact request shape each, ready to become a tool.">
     <template #actions>
-      <SeamButton label="new api call" />
+      <RouterLink to="/api-calls/new" :class="writeButtonClass">new api call</RouterLink>
     </template>
   </PageHeader>
 
@@ -46,7 +46,7 @@ function open(row: ApiCallView): void {
     title="no api calls defined"
     hint="An api_call is one HTTP request shape — method, URL template, params and a projection."
   >
-    <SeamButton label="new api call" />
+    <RouterLink to="/api-calls/new" :class="writeButtonClass">new api call</RouterLink>
   </EmptyState>
   <DataTable v-else :columns="columns" :rows="store.items" :row-key="(r) => r.slug" @row-click="open">
     <template #cell-slug="{ row }">

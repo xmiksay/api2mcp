@@ -7,9 +7,9 @@ import DataTable from "@/components/DataTable.vue";
 import LoadingState from "@/components/LoadingState.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import ErrorState from "@/components/ErrorState.vue";
-import SeamButton from "@/components/SeamButton.vue";
 import type { Column } from "@/lib/table";
 import type { AuthProviderView } from "@/api";
+import { writeButtonClass } from "@/lib/formStyle";
 
 const store = useAuthProvidersStore();
 const router = useRouter();
@@ -34,7 +34,7 @@ function open(row: AuthProviderView): void {
     subtitle="Credential wiring — an env var name and a bound origin, never a secret value. Human-only writes (I5)."
   >
     <template #actions>
-      <SeamButton label="new provider" />
+      <RouterLink to="/auth-providers/new" :class="writeButtonClass">new provider</RouterLink>
     </template>
   </PageHeader>
 
@@ -45,7 +45,7 @@ function open(row: AuthProviderView): void {
     title="no auth providers defined"
     hint="Most demo/public APIs need none — this is only for credentialed upstreams."
   >
-    <SeamButton label="new provider" />
+    <RouterLink to="/auth-providers/new" :class="writeButtonClass">new provider</RouterLink>
   </EmptyState>
   <DataTable v-else :columns="columns" :rows="store.items" :row-key="(r) => r.slug" @row-click="open">
     <template #cell-slug="{ row }">

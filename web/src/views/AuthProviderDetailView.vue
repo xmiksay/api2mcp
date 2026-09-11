@@ -1,15 +1,20 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { useAuthProvidersStore } from "@/stores/authProviders";
 import PageHeader from "@/components/PageHeader.vue";
 import DetailSection from "@/components/DetailSection.vue";
 import FieldRow from "@/components/FieldRow.vue";
 import LoadingState from "@/components/LoadingState.vue";
 import ErrorState from "@/components/ErrorState.vue";
-import SeamButton from "@/components/SeamButton.vue";
+import ConfirmButton from "@/components/form/ConfirmButton.vue";
+import ValidationErrors from "@/components/form/ValidationErrors.vue";
+import { ghostButtonClass } from "@/lib/formStyle";
+import { ApiError } from "@/api";
 
 const props = defineProps<{ slug: string }>();
 const store = useAuthProvidersStore();
+const router = useRouter();
 
 function load(): void {
   store.fetchOne(props.slug);
@@ -17,6 +22,22 @@ function load(): void {
 onMounted(load);
 
 const provider = store.bySlug(props.slug);
+
+const deleting = ref(false);
+const deleteErrors = ref<string[]>([]);
+
+async function remove(): Promise<void> {
+  deleting.value = true;
+  deleteErrors.value = [];
+  try {
+    await store.remove(props.slug);
+    router.push("/auth-providers");
+  } catch (e) {
+    deleteErrors.value = e instanceof ApiError ? e.messages : ["request failed"];
+  } finally {
+    deleting.value = false;
+  }
+}
 </script>
 
 <template>
@@ -29,10 +50,12 @@ const provider = store.bySlug(props.slug);
       :back="{ to: '/auth-providers', label: 'auth providers' }"
     >
       <template #actions>
-        <SeamButton label="edit" />
-        <SeamButton label="delete" />
+        <RouterLink :to="`/auth-providers/${provider.slug}/edit`" :class="ghostButtonClass">edit</RouterLink>
+        <ConfirmButton label="delete" :pending="deleting" @confirm="remove" />
       </template>
     </PageHeader>
+
+    <ValidationErrors :errors="deleteErrors" />
 
     <DetailSection title="binding">
       <dl>

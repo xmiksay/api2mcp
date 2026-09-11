@@ -2,7 +2,8 @@
 // The detail view the brief cares most about after runs/plan: it has to make the curation
 // visible — the URL template, which params are fixed vs caller-supplied, the projection, and the
 // generated `inputSchema` a model actually sees for every endpoint that exposes this call.
-import { onMounted } from "vue";
+import { onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { useApiCallsStore } from "@/stores/apiCalls";
 import { useToolExposure } from "@/composables/useToolExposure";
 import PageHeader from "@/components/PageHeader.vue";
@@ -13,13 +14,18 @@ import JsonViewer from "@/components/JsonViewer.vue";
 import BudgetsSummary from "@/components/BudgetsSummary.vue";
 import LoadingState from "@/components/LoadingState.vue";
 import ErrorState from "@/components/ErrorState.vue";
-import SeamButton from "@/components/SeamButton.vue";
+import ConfirmButton from "@/components/form/ConfirmButton.vue";
+import ValidationErrors from "@/components/form/ValidationErrors.vue";
+import ApiCallTestPanel from "@/components/ApiCallTestPanel.vue";
 import StatusPill from "@/components/StatusPill.vue";
 import TagChips from "@/components/TagChips.vue";
 import { accessTone } from "@/lib/tone";
+import { ghostButtonClass, primaryButtonClass } from "@/lib/formStyle";
+import { ApiError } from "@/api";
 
 const props = defineProps<{ slug: string }>();
 const store = useApiCallsStore();
+const router = useRouter();
 const { load: loadExposure, exposures, loading: exposureLoading } = useToolExposure(
   "api_call",
   () => props.slug,
@@ -32,6 +38,23 @@ function load(): void {
 onMounted(load);
 
 const call = store.bySlug(props.slug);
+
+const testing = ref(false);
+const deleting = ref(false);
+const deleteErrors = ref<string[]>([]);
+
+async function remove(): Promise<void> {
+  deleting.value = true;
+  deleteErrors.value = [];
+  try {
+    await store.remove(props.slug);
+    router.push("/api-calls");
+  } catch (e) {
+    deleteErrors.value = e instanceof ApiError ? e.messages : ["request failed"];
+  } finally {
+    deleting.value = false;
+  }
+}
 </script>
 
 <template>
@@ -41,11 +64,19 @@ const call = store.bySlug(props.slug);
     <PageHeader :title="call.slug" subtitle="api call" :back="{ to: '/api-calls', label: 'api calls' }">
       <template #actions>
         <StatusPill :label="call.access" :tone="accessTone(call.access)" />
-        <SeamButton label="test" />
-        <SeamButton label="edit" />
-        <SeamButton label="delete" />
+        <button type="button" :class="primaryButtonClass" @click="testing = !testing">
+          {{ testing ? "hide test" : "test" }}
+        </button>
+        <RouterLink :to="`/api-calls/${call.slug}/edit`" :class="ghostButtonClass">edit</RouterLink>
+        <ConfirmButton label="delete" :pending="deleting" @confirm="remove" />
       </template>
     </PageHeader>
+
+    <ValidationErrors :errors="deleteErrors" />
+
+    <DetailSection v-if="testing" title="test">
+      <ApiCallTestPanel :api-call="call" :exposures="exposures" />
+    </DetailSection>
 
     <DetailSection title="request">
       <dl>

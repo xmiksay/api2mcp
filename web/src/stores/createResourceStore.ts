@@ -11,6 +11,13 @@ export interface SlugResourceApi<T> {
   get(slug: string): Promise<T>;
 }
 
+/** The write half — every definition store's API module already shapes up as this. */
+export interface WritableResourceApi<T, D> extends SlugResourceApi<T> {
+  create(slug: string, def: D): Promise<T>;
+  update(slug: string, def: D): Promise<T>;
+  remove(slug: string): Promise<void>;
+}
+
 function messageOf(e: unknown): string {
   return e instanceof ApiError ? e.message : "request failed";
 }
@@ -19,8 +26,16 @@ function messageOf(e: unknown): string {
  * Builds a Pinia store definition for one slug-addressed resource. Called once per resource at
  * module scope (each call site passes its own store id), which is the standard way to generate
  * several distinct stores from one factory.
+ *
+ * Create/update/remove intentionally do not catch `ApiError` themselves — a write form needs the
+ * *shape* of a validation failure (`ApiError.messages`, plural) to show every problem at once,
+ * which a store-level string would collapse. The caller (the form) owns its own submit/error UI
+ * state; this store only owns the resulting cache mutation once a write actually succeeds.
  */
-export function createResourceStore<T extends { slug: string }>(id: string, resource: SlugResourceApi<T>) {
+export function createResourceStore<T extends { slug: string }, D>(
+  id: string,
+  resource: WritableResourceApi<T, D>,
+) {
   return defineStore(id, () => {
     // `shallowRef`, not `ref`: with a generic element type, `ref<T[]>` collides with Vue's
     // `UnwrapRefSimple<T>` machinery (a known limitation, not a real reactivity need here — every
@@ -71,6 +86,25 @@ export function createResourceStore<T extends { slug: string }>(id: string, reso
       return computed(() => items.value.find((i) => i.slug === slug) ?? null);
     }
 
+    /** Throws `ApiError` on failure — see this factory's own doc for why that's deliberate. */
+    async function create(slug: string, def: D): Promise<T> {
+      const item = await resource.create(slug, def);
+      items.value = [...items.value, item];
+      return item;
+    }
+
+    async function update(slug: string, def: D): Promise<T> {
+      const item = await resource.update(slug, def);
+      const idx = items.value.findIndex((i) => i.slug === slug);
+      items.value = idx >= 0 ? items.value.map((existing, i) => (i === idx ? item : existing)) : [...items.value, item];
+      return item;
+    }
+
+    async function remove(slug: string): Promise<void> {
+      await resource.remove(slug);
+      items.value = items.value.filter((i) => i.slug !== slug);
+    }
+
     return {
       items,
       loaded,
@@ -81,6 +115,9 @@ export function createResourceStore<T extends { slug: string }>(id: string, reso
       fetchList,
       fetchOne,
       bySlug,
+      create,
+      update,
+      remove,
     };
   });
 }

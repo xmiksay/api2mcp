@@ -7,11 +7,11 @@ import DataTable from "@/components/DataTable.vue";
 import LoadingState from "@/components/LoadingState.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import ErrorState from "@/components/ErrorState.vue";
-import SeamButton from "@/components/SeamButton.vue";
 import StatusPill from "@/components/StatusPill.vue";
 import { accessTone } from "@/lib/tone";
 import type { Column } from "@/lib/table";
 import type { EndpointView } from "@/api";
+import { writeButtonClass } from "@/lib/formStyle";
 
 const store = useEndpointsStore();
 const router = useRouter();
@@ -35,7 +35,7 @@ function open(row: EndpointView): void {
     subtitle="MCP-shaped views over the definitions above — POST /mcp/{slug} serves exactly what a plan resolves."
   >
     <template #actions>
-      <SeamButton label="new endpoint" />
+      <RouterLink to="/endpoints/new" :class="writeButtonClass">new endpoint</RouterLink>
     </template>
   </PageHeader>
 
@@ -46,7 +46,7 @@ function open(row: EndpointView): void {
     title="no endpoints defined"
     hint="An endpoint selects a subset of api_calls/scripts by tag expression and exposes them at /mcp/{slug}."
   >
-    <SeamButton label="new endpoint" />
+    <RouterLink to="/endpoints/new" :class="writeButtonClass">new endpoint</RouterLink>
   </EmptyState>
   <DataTable v-else :columns="columns" :rows="store.items" :row-key="(r) => r.slug" @row-click="open">
     <template #cell-slug="{ row }">

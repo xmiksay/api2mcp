@@ -7,9 +7,9 @@ import DataTable from "@/components/DataTable.vue";
 import LoadingState from "@/components/LoadingState.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import ErrorState from "@/components/ErrorState.vue";
-import SeamButton from "@/components/SeamButton.vue";
 import type { Column } from "@/lib/table";
 import type { ServiceView } from "@/api";
+import { writeButtonClass } from "@/lib/formStyle";
 
 const store = useServicesStore();
 const router = useRouter();
@@ -31,7 +31,7 @@ function open(row: ServiceView): void {
 <template>
   <PageHeader title="Services" subtitle="Upstream APIs — base URL, allowlisted origins, transport limits.">
     <template #actions>
-      <SeamButton label="new service" />
+      <RouterLink to="/services/new" :class="writeButtonClass">new service</RouterLink>
     </template>
   </PageHeader>
 
@@ -42,7 +42,7 @@ function open(row: ServiceView): void {
     title="no services defined"
     hint="Services are the upstream APIs an api_call points at. Import a pack or add one to get started."
   >
-    <SeamButton label="new service" />
+    <RouterLink to="/services/new" :class="writeButtonClass">new service</RouterLink>
   </EmptyState>
   <DataTable
     v-else

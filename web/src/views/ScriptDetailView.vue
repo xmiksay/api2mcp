@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { useScriptsStore } from "@/stores/scripts";
 import { useToolExposure } from "@/composables/useToolExposure";
 import PageHeader from "@/components/PageHeader.vue";
@@ -11,11 +12,16 @@ import JsonViewer from "@/components/JsonViewer.vue";
 import BudgetsSummary from "@/components/BudgetsSummary.vue";
 import LoadingState from "@/components/LoadingState.vue";
 import ErrorState from "@/components/ErrorState.vue";
-import SeamButton from "@/components/SeamButton.vue";
+import ConfirmButton from "@/components/form/ConfirmButton.vue";
+import ValidationErrors from "@/components/form/ValidationErrors.vue";
+import ScriptTestPanel from "@/components/ScriptTestPanel.vue";
 import TagChips from "@/components/TagChips.vue";
+import { ghostButtonClass, primaryButtonClass } from "@/lib/formStyle";
+import { ApiError } from "@/api";
 
 const props = defineProps<{ slug: string }>();
 const store = useScriptsStore();
+const router = useRouter();
 const { load: loadExposure, exposures, loading: exposureLoading } = useToolExposure(
   "script",
   () => props.slug,
@@ -28,6 +34,23 @@ function load(): void {
 onMounted(load);
 
 const script = store.bySlug(props.slug);
+
+const testing = ref(false);
+const deleting = ref(false);
+const deleteErrors = ref<string[]>([]);
+
+async function remove(): Promise<void> {
+  deleting.value = true;
+  deleteErrors.value = [];
+  try {
+    await store.remove(props.slug);
+    router.push("/scripts");
+  } catch (e) {
+    deleteErrors.value = e instanceof ApiError ? e.messages : ["request failed"];
+  } finally {
+    deleting.value = false;
+  }
+}
 </script>
 
 <template>
@@ -36,11 +59,19 @@ const script = store.bySlug(props.slug);
   <div v-else-if="script">
     <PageHeader :title="script.slug" subtitle="script" :back="{ to: '/scripts', label: 'scripts' }">
       <template #actions>
-        <SeamButton label="test" />
-        <SeamButton label="edit" />
-        <SeamButton label="delete" />
+        <button type="button" :class="primaryButtonClass" @click="testing = !testing">
+          {{ testing ? "hide test" : "test" }}
+        </button>
+        <RouterLink :to="`/scripts/${script.slug}/edit`" :class="ghostButtonClass">edit</RouterLink>
+        <ConfirmButton label="delete" :pending="deleting" @confirm="remove" />
       </template>
     </PageHeader>
+
+    <ValidationErrors :errors="deleteErrors" />
+
+    <DetailSection v-if="testing" title="test">
+      <ScriptTestPanel :script="script" :exposures="exposures" />
+    </DetailSection>
 
     <DetailSection title="declared">
       <dl>

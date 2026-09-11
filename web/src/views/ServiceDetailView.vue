@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { useServicesStore } from "@/stores/services";
 import { useApiCallsStore } from "@/stores/apiCalls";
 import { useAuthProvidersStore } from "@/stores/authProviders";
@@ -8,14 +9,18 @@ import DetailSection from "@/components/DetailSection.vue";
 import FieldRow from "@/components/FieldRow.vue";
 import LoadingState from "@/components/LoadingState.vue";
 import ErrorState from "@/components/ErrorState.vue";
-import SeamButton from "@/components/SeamButton.vue";
+import ConfirmButton from "@/components/form/ConfirmButton.vue";
+import ValidationErrors from "@/components/form/ValidationErrors.vue";
+import { ghostButtonClass } from "@/lib/formStyle";
 import { formatBytes } from "@/lib/format";
+import { ApiError } from "@/api";
 
 const props = defineProps<{ slug: string }>();
 
 const store = useServicesStore();
 const apiCalls = useApiCallsStore();
 const authProviders = useAuthProvidersStore();
+const router = useRouter();
 
 function load(): void {
   store.fetchOne(props.slug);
@@ -27,6 +32,25 @@ onMounted(load);
 const service = store.bySlug(props.slug);
 const relatedApiCalls = computed(() => apiCalls.items.filter((c) => c.service === props.slug));
 const relatedAuthProviders = computed(() => authProviders.items.filter((p) => p.service === props.slug));
+
+const deleting = ref(false);
+const deleteErrors = ref<string[]>([]);
+
+async function remove(): Promise<void> {
+  deleting.value = true;
+  deleteErrors.value = [];
+  try {
+    await store.remove(props.slug);
+    router.push("/services");
+  } catch (e) {
+    // The server rejects a delete a script/api_call still references with a clean validation
+    // error (`validate_write`'s "removing an entity ... catches a now-dangling reference" side
+    // effect) — surface that message, not a generic failure.
+    deleteErrors.value = e instanceof ApiError ? e.messages : ["request failed"];
+  } finally {
+    deleting.value = false;
+  }
+}
 </script>
 
 <template>
@@ -35,10 +59,12 @@ const relatedAuthProviders = computed(() => authProviders.items.filter((p) => p.
   <div v-else-if="service">
     <PageHeader :title="service.slug" subtitle="service" :back="{ to: '/services', label: 'services' }">
       <template #actions>
-        <SeamButton label="edit" />
-        <SeamButton label="delete" />
+        <RouterLink :to="`/services/${service.slug}/edit`" :class="ghostButtonClass">edit</RouterLink>
+        <ConfirmButton label="delete" :pending="deleting" @confirm="remove" />
       </template>
     </PageHeader>
+
+    <ValidationErrors :errors="deleteErrors" />
 
     <DetailSection title="transport">
       <dl>

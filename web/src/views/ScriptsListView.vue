@@ -7,10 +7,10 @@ import DataTable from "@/components/DataTable.vue";
 import LoadingState from "@/components/LoadingState.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import ErrorState from "@/components/ErrorState.vue";
-import SeamButton from "@/components/SeamButton.vue";
 import TagChips from "@/components/TagChips.vue";
 import type { Column } from "@/lib/table";
 import type { ScriptView } from "@/api";
+import { writeButtonClass } from "@/lib/formStyle";
 
 const store = useScriptsStore();
 const router = useRouter();
@@ -34,7 +34,7 @@ function open(row: ScriptView): void {
     subtitle="Rhai compositions of declared api_calls — never raw HTTP (I1)."
   >
     <template #actions>
-      <SeamButton label="new script" />
+      <RouterLink to="/scripts/new" :class="writeButtonClass">new script</RouterLink>
     </template>
   </PageHeader>
 
@@ -45,7 +45,7 @@ function open(row: ScriptView): void {
     title="no scripts defined"
     hint="A script folds several api_calls into one model-usable answer."
   >
-    <SeamButton label="new script" />
+    <RouterLink to="/scripts/new" :class="writeButtonClass">new script</RouterLink>
   </EmptyState>
   <DataTable v-else :columns="columns" :rows="store.items" :row-key="(r) => r.slug" @row-click="open">
     <template #cell-slug="{ row }">
