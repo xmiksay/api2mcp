@@ -6,7 +6,7 @@
 use chrono::{DateTime, Utc};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set, TransactionTrait,
+    QuerySelect, Select, Set, TransactionTrait,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -99,6 +99,22 @@ pub struct RunCall {
     pub response_bytes: Option<u64>,
     pub response_truncated: bool,
     pub error: Option<String>,
+    /// The upstream's own response body for this call's last page, as persisted by
+    /// `runtime::recorder::new_run_call` — the raw counterpart to the run's own
+    /// `output_redacted` (which is the *projected* value). Exposed here because
+    /// `server::api`'s test-run routes are the reason "raw vs. projected, side by side" needs
+    /// to be recoverable after the fact, not just during the one dispatch that produced it.
+    pub response_body: Option<Value>,
+}
+
+/// Narrows a [`RunSummary`] listing. `None` on any field means "no opinion" (no filter on that
+/// axis); `limit`/`offset` always apply.
+#[derive(Debug, Clone)]
+pub struct RunFilter {
+    pub endpoint_slug: Option<Slug>,
+    pub status: Option<RunStatus>,
+    pub limit: u64,
+    pub offset: u64,
 }
 
 #[derive(Clone)]
@@ -202,6 +218,27 @@ impl RunStore {
             .map_err(db_err("run::list_for_endpoint"))?;
         rows.into_iter().map(summary_to_model).collect()
     }
+
+    /// `server::api`'s `GET /api/runs`: an optional endpoint/status filter plus offset paging —
+    /// [`Self::list_for_endpoint`] alone can't express either, and neither is a rule this crate's
+    /// admin UI can do without once the run log has more than a page's worth of history.
+    pub async fn list(&self, filter: &RunFilter) -> Result<Vec<RunSummary>, StoreError> {
+        let mut query: Select<runs::Entity> = runs::Entity::find();
+        if let Some(slug) = &filter.endpoint_slug {
+            query = query.filter(runs::Column::EndpointSlug.eq(slug.as_str()));
+        }
+        if let Some(status) = filter.status {
+            query = query.filter(runs::Column::Status.eq(status_to_str(status)));
+        }
+        let rows = query
+            .order_by_desc(runs::Column::CreatedAt)
+            .limit(filter.limit)
+            .offset(filter.offset)
+            .all(&self.db)
+            .await
+            .map_err(db_err("run::list"))?;
+        rows.into_iter().map(summary_to_model).collect()
+    }
 }
 
 fn target_kind_to_str(kind: RunTargetKind) -> &'static str {
@@ -277,5 +314,6 @@ fn call_to_model(row: run_calls::Model) -> Result<RunCall, StoreError> {
         response_bytes: row.response_bytes.map(|v| v as u64),
         response_truncated: row.response_truncated,
         error: row.error,
+        response_body: row.body_redacted,
     })
 }

@@ -13,8 +13,9 @@
 //! **No `CorsLayer`.** MCP clients are not browsers, and the embedded SPA is served same-origin
 //! — a permissive CORS layer here would be a regression, not a convenience.
 //!
-//! `oauth::router` (chunk C12) and `api::router` (chunk C14) are the two seams the plan's own
-//! sketch of this function names that don't exist yet; `.merge`d in here the moment they do.
+//! `api::router` (the read-write admin JSON API) is nested at `/api`; `oauth::router` (the
+//! authorization server and its two `.well-known` discovery documents) is merged at the root,
+//! because RFC 9728 and RFC 8414 both fix those paths.
 
 use std::time::Duration;
 
@@ -30,9 +31,11 @@ use tower_http::trace::TraceLayer;
 
 use crate::observe;
 
+use super::api;
 use super::embed;
 use super::login::{self, LoginForm, LoginQuery};
 use super::mcp;
+use super::oauth;
 use super::state::AppState;
 
 const CSP: &str = "default-src 'self'; base-uri 'self'; frame-ancestors 'none'";
@@ -45,7 +48,8 @@ pub fn build_router(state: AppState) -> Router {
         .merge(mcp::router())
         .route("/login", get(get_login).post(post_login))
         .route("/logout", get(get_logout))
-        // C12 (oauth::router) and C14 (nest("/api", api::router)) merge in here.
+        .nest("/api", api::router())
+        .merge(oauth::router())
         .fallback(embed::spa_handler)
         .with_state(state)
         .layer(axum::middleware::from_fn(observe::log_slow_request))

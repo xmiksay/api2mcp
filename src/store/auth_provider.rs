@@ -1,7 +1,11 @@
-//! `auth_providers` façade. I5 lives here structurally: every write method is
-//! `pub(crate)`, so only `pack::import` and `cli` (this crate's two humans-in-the-loop) can
-//! bind a credential to an origin — no MCP tool or read-only API route can reach them
-//! because they can't even import this module's write surface.
+//! `auth_providers` façade. I5's structural half lives one layer up from here: every write
+//! method below is `pub(crate)` (visible anywhere in this crate, `server::api` included), so
+//! the actual gate is *who can even reach the route that calls one* — `server/api/auth_providers.rs`
+//! is wired behind the [`crate::server::identity::Caller`] extractor, which only ever resolves
+//! from a session cookie (never an `Authorization` bearer token, see that extractor's own doc),
+//! so a service token cannot construct a `Caller` at all and therefore cannot reach this
+//! module's write surface regardless of its scopes. `pack::import` and `cli` are this crate's
+//! other two humans-in-the-loop; no MCP tool reaches these methods under any caller.
 //!
 //! The DB's `kind` CHECK allows three values (`header`, `bearer`,
 //! `oauth2_client_credentials`) but [`crate::model::AuthKind`] has two variants: `header`
@@ -72,11 +76,22 @@ impl AuthProviderStore {
             .collect()
     }
 
-    /// I5: a human (via `pack::import` or `cli`) is the only caller that may bind a
-    /// credential to an origin. Those callers don't exist yet (later chunks); until then this
-    /// is only reachable from this module's own unit tests, hence the `cfg_attr` below —
-    /// scoped to non-test builds only, so it can never mask a real regression.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Every auth provider across every service — a read, so (unlike `create`/`update`/
+    /// `delete`) not gated by I5; `server::api`'s `GET /api/auth_providers` is this method's
+    /// caller. Not paginated, matching `ApiCallStore::list_all`'s own reasoning: the
+    /// definition set is operator-curated, not user-generated data.
+    pub async fn list_all(&self) -> Result<Vec<AuthProvider>, StoreError> {
+        let mut out = Vec::new();
+        for svc in self.services().list().await? {
+            out.extend(self.list_for_service(&svc.slug).await?);
+        }
+        Ok(out)
+    }
+
+    /// I5: a human (via `pack::import`, `cli`, or an admin-session request handled by
+    /// `server::api::auth_providers`) is the only caller that may bind a credential to an
+    /// origin — see this module's own doc for why that's true structurally, not just by
+    /// convention.
     pub(crate) async fn create(&self, provider: &AuthProvider) -> Result<(), StoreError> {
         let service_id = self.services().id_by_slug(&provider.service_slug).await?;
         if self
@@ -103,7 +118,6 @@ impl AuthProviderStore {
         txn.commit().await.map_err(db_err("auth_provider::create"))
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) async fn update(&self, provider: &AuthProvider) -> Result<(), StoreError> {
         let service_id = self.services().id_by_slug(&provider.service_slug).await?;
         let id = self
@@ -124,7 +138,6 @@ impl AuthProviderStore {
         txn.commit().await.map_err(db_err("auth_provider::update"))
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) async fn delete(&self, service_slug: &Slug, slug: &Slug) -> Result<(), StoreError> {
         let id = self.id_by_slug(service_slug, slug).await?;
         let txn = self

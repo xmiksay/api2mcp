@@ -1,0 +1,177 @@
+//! `GET /api/runs` (filtered, paged) and `GET /api/runs/{id}` with its `run_calls` — the audit
+//! trail. Every field here is already redaction-safe: `RunSummary`/`RunCall` are the store's own
+//! read shapes, built from columns `runtime::recorder` wrote through `http::redact` in the first
+//! place (see that module's own doc); this layer only renders them as JSON.
+
+use axum::extract::{Path, Query, State};
+use axum::routing::get;
+use axum::{Json, Router};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use uuid::Uuid;
+
+use crate::server::state::AppState;
+use crate::store::{RunCall, RunFilter, RunStatus, RunSummary};
+
+use super::convert::parse_slug;
+use super::{ApiError, Caller, require_admin};
+
+pub fn router() -> Router<AppState> {
+    Router::new()
+        .route("/runs", get(list))
+        .route("/runs/{id}", get(get_one))
+}
+
+const DEFAULT_LIMIT: u64 = 50;
+const MAX_LIMIT: u64 = 500;
+
+#[derive(Debug, Deserialize)]
+struct RunsQuery {
+    endpoint: Option<String>,
+    status: Option<String>,
+    limit: Option<u64>,
+    offset: Option<u64>,
+}
+
+fn parse_status(s: &str) -> Result<RunStatus, ApiError> {
+    match s {
+        "ok" => Ok(RunStatus::Ok),
+        "partial" => Ok(RunStatus::Partial),
+        "error" => Ok(RunStatus::Error),
+        "denied" => Ok(RunStatus::Denied),
+        "budget_exceeded" => Ok(RunStatus::BudgetExceeded),
+        "timeout" => Ok(RunStatus::Timeout),
+        other => Err(ApiError::BadRequest(format!(
+            "status {other:?}: expected one of ok|partial|error|denied|budget_exceeded|timeout"
+        ))),
+    }
+}
+
+fn status_str(s: RunStatus) -> &'static str {
+    match s {
+        RunStatus::Ok => "ok",
+        RunStatus::Partial => "partial",
+        RunStatus::Error => "error",
+        RunStatus::Denied => "denied",
+        RunStatus::BudgetExceeded => "budget_exceeded",
+        RunStatus::Timeout => "timeout",
+    }
+}
+
+fn target_kind_str(k: crate::store::RunTargetKind) -> &'static str {
+    match k {
+        crate::store::RunTargetKind::ApiCall => "api_call",
+        crate::store::RunTargetKind::Script => "script",
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct RunSummaryView {
+    id: Uuid,
+    endpoint_slug: String,
+    tool_name: String,
+    target_kind: &'static str,
+    target_slug: String,
+    status: &'static str,
+    calls_made: u32,
+    bytes_in: u64,
+    pages_fetched: u32,
+    created_at: String,
+}
+
+fn summary_view(s: &RunSummary) -> RunSummaryView {
+    RunSummaryView {
+        id: s.id,
+        endpoint_slug: s.endpoint_slug.as_str().to_owned(),
+        tool_name: s.tool_name.clone(),
+        target_kind: target_kind_str(s.target_kind),
+        target_slug: s.target_slug.as_str().to_owned(),
+        status: status_str(s.status),
+        calls_made: s.calls_made,
+        bytes_in: s.bytes_in,
+        pages_fetched: s.pages_fetched,
+        created_at: s.created_at.to_rfc3339(),
+    }
+}
+
+async fn list(
+    State(state): State<AppState>,
+    caller: Caller,
+    Query(q): Query<RunsQuery>,
+) -> Result<Json<Vec<RunSummaryView>>, ApiError> {
+    require_admin(&caller)?;
+    let endpoint_slug = q
+        .endpoint
+        .as_deref()
+        .map(parse_slug)
+        .transpose()
+        .map_err(ApiError::BadRequest)?;
+    let status = q.status.as_deref().map(parse_status).transpose()?;
+    let filter = RunFilter {
+        endpoint_slug,
+        status,
+        limit: q.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT),
+        offset: q.offset.unwrap_or(0),
+    };
+    let runs = state
+        .stores()
+        .run()
+        .list(&filter)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(Json(runs.iter().map(summary_view).collect()))
+}
+
+#[derive(Debug, Serialize)]
+struct RunCallView {
+    seq: i32,
+    api_call_slug: String,
+    service_slug: String,
+    status_code: Option<u16>,
+    response_bytes: Option<u64>,
+    response_truncated: bool,
+    error: Option<String>,
+    /// The upstream's own response body, straight from the audit row — see `test_run`'s module
+    /// doc for the same "raw vs. projected" reasoning applied to the run log's own history, not
+    /// just a fresh test run.
+    raw: Option<Value>,
+}
+
+fn call_view(c: &RunCall) -> RunCallView {
+    RunCallView {
+        seq: c.seq,
+        api_call_slug: c.api_call_slug.as_str().to_owned(),
+        service_slug: c.service_slug.as_str().to_owned(),
+        status_code: c.status_code,
+        response_bytes: c.response_bytes,
+        response_truncated: c.response_truncated,
+        error: c.error.clone(),
+        raw: c.response_body.clone(),
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct RunDetailView {
+    #[serde(flatten)]
+    summary: RunSummaryView,
+    calls: Vec<RunCallView>,
+}
+
+async fn get_one(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<Uuid>,
+) -> Result<Json<RunDetailView>, ApiError> {
+    require_admin(&caller)?;
+    let (summary, calls) = state
+        .stores()
+        .run()
+        .get(id)
+        .await
+        .map_err(ApiError::from_store)?
+        .ok_or_else(|| ApiError::NotFound(format!("run {id} not found")))?;
+    Ok(Json(RunDetailView {
+        summary: summary_view(&summary),
+        calls: calls.iter().map(call_view).collect(),
+    }))
+}
