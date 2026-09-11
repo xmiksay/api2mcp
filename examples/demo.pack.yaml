@@ -27,6 +27,10 @@ api_calls:
     path_template: "/items/{id}"
     access: read
     idempotent: true
+    description: >-
+      Fetch one item by id; returns its id and title. Reach for this when you already know
+      which item you want — use list-items first if you only have a page to browse and no id
+      yet.
     projection:
       fields:
         - name: id
@@ -59,6 +63,10 @@ api_calls:
     path_template: "/items"
     access: read
     idempotent: true
+    description: >-
+      List items, newest first, up to `limit` per page (default 10). Reach for this to browse
+      or find an item's id before calling get-item; it returns the raw unprojected listing
+      shape, not a single item's detail.
     params:
       - name: limit
         location: query

@@ -238,6 +238,7 @@ mod tests {
                     max_response_bytes: None,
                     params: Vec::new(),
                     tags: BTreeSet::from(["expose".to_owned()]),
+                    description: Some("Fetch every thing.".to_owned()),
                 },
             )]),
             scripts: BTreeMap::new(),

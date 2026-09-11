@@ -253,6 +253,7 @@ mod tests {
             timeout_ms: None,
             max_response_bytes: None,
             params: Vec::new(),
+            description: Some("Fetch every thing.".to_owned()),
         };
         stores
             .api_call()

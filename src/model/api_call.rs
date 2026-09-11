@@ -54,6 +54,11 @@ pub struct ApiCall {
     pub timeout_ms: Option<u32>,
     pub max_response_bytes: Option<u64>,
     pub params: Vec<Param>,
+    /// Human-authored documentation of what this call returns and when to reach for it —
+    /// the MCP tool `description` a model reads to decide whether and how to call the tool.
+    /// `server::mcp::registry::describe` falls back to a synthesized method/path string only
+    /// when this is `None`.
+    pub description: Option<String>,
 }
 
 #[cfg(test)]

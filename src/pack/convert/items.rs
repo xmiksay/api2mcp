@@ -30,6 +30,7 @@ pub(crate) fn api_call_to_pack(c: &ApiCall, tags: &BTreeSet<Tag>) -> PackApiCall
         max_response_bytes: c.max_response_bytes,
         params: c.params.iter().map(param_to_pack).collect(),
         tags: tags.iter().map(|t| t.0.as_str().to_owned()).collect(),
+        description: c.description.clone(),
     }
 }
 
@@ -64,6 +65,7 @@ pub(crate) fn api_call_from_pack(
             .iter()
             .map(param_from_pack)
             .collect::<Result<Vec<_>, _>>()?,
+        description: c.description.clone(),
     })
 }
 

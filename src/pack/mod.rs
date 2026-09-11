@@ -220,6 +220,11 @@ pub struct PackApiCall {
     pub params: Vec<PackParam>,
     #[serde(default)]
     pub tags: BTreeSet<String>,
+    /// What a model reads to decide whether and when to call this tool. See this module's
+    /// doc and `server::mcp::registry::describe` for why this is worth more than the
+    /// method/path fallback synthesized when it's absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -78,6 +78,7 @@ enum ApiCalls {
     Pagination,
     TimeoutMs,
     MaxResponseBytes,
+    Description,
     CreatedAt,
     UpdatedAt,
 }
@@ -232,6 +233,19 @@ impl MigrationTrait for Migration {
                         ColumnDef::new(ApiCalls::MaxResponseBytes)
                             .big_integer()
                             .null(),
+                    )
+                    // What `server::mcp::registry::describe` uses verbatim as the MCP tool's
+                    // `description` when present — the single highest-leverage field in the
+                    // whole schema, since it is what a model reads to decide whether and how to
+                    // call the tool. `NOT NULL DEFAULT ''` for the same reason as
+                    // `api_call_params.description`: "no description" and "empty description"
+                    // are the same thing to a schema consumer, so the store layer collapses `''`
+                    // to `None` rather than carrying a third state through `model::ApiCall`.
+                    .col(
+                        ColumnDef::new(ApiCalls::Description)
+                            .text()
+                            .not_null()
+                            .default(""),
                     )
                     .col(timestamptz_now(ApiCalls::CreatedAt))
                     .col(timestamptz_now(ApiCalls::UpdatedAt))

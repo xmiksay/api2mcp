@@ -27,6 +27,10 @@ pub struct Model {
     pub pagination: Option<Json>,
     pub timeout_ms: Option<i32>,
     pub max_response_bytes: Option<i64>,
+    /// What `server::mcp::registry::describe` uses as the MCP tool's `description` when
+    /// present. `NOT NULL DEFAULT ''` — see `api_call_params.description` for why the store
+    /// layer, not this column, is where `''` collapses to `None`.
+    pub description: String,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
 }

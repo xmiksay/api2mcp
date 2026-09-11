@@ -244,6 +244,7 @@ mod tests {
                 max_response_bytes: None,
                 params: Vec::new(),
                 tags: BTreeSet::new(),
+                description: None,
             },
         );
         pack.scripts.insert(
@@ -307,6 +308,7 @@ mod tests {
                     position: 0,
                 }],
                 tags: BTreeSet::new(),
+                description: None,
             },
         );
         let errors = crate::pack::validate(&pack).unwrap_err();

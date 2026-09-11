@@ -247,6 +247,7 @@ fn to_active_model(
         pagination: Set(pagination_to_json(&api_call.pagination)),
         timeout_ms: Set(api_call.timeout_ms.map(|v| v as i32)),
         max_response_bytes: Set(api_call.max_response_bytes.map(|v| v as i64)),
+        description: Set(api_call.description.clone().unwrap_or_default()),
         ..Default::default()
     }
 }
@@ -282,5 +283,9 @@ fn to_model(
         timeout_ms: row.timeout_ms.map(|v| v as u32),
         max_response_bytes: row.max_response_bytes.map(|v| v as u64),
         params,
+        // `''` and "no description" are the same thing to a schema consumer (see
+        // `api_call_params`'s identical collapse) — carrying a third (empty-string) state
+        // through `model::ApiCall::description` would just push the check onto every reader.
+        description: (!row.description.is_empty()).then_some(row.description),
     })
 }
