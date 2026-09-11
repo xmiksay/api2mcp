@@ -6,8 +6,10 @@
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 
+pub mod call;
 pub mod migrate;
 pub mod pack;
+pub mod script;
 pub mod serve;
 pub mod token;
 pub mod user;
@@ -38,12 +40,14 @@ pub enum Command {
         /// Also print the unprojected upstream response.
         #[arg(long)]
         raw: bool,
+        /// Endpoint to resolve the tool against. Defaults to `cfg.default_endpoint`.
+        #[arg(long)]
+        endpoint: Option<String>,
     },
     /// Execute a script.
     Script {
-        name: String,
-        #[arg(long = "arg", value_name = "KEY=VALUE")]
-        args: Vec<String>,
+        #[command(subcommand)]
+        action: ScriptAction,
     },
     /// Write a YAML pack for an endpoint to stdout.
     Export {
@@ -66,6 +70,21 @@ pub enum Command {
     User {
         #[command(subcommand)]
         action: UserAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ScriptAction {
+    /// Run a script and print its result.
+    Run {
+        /// script slug.
+        name: String,
+        /// Repeatable `key=value` argument.
+        #[arg(long = "arg", value_name = "KEY=VALUE")]
+        args: Vec<String>,
+        /// Endpoint to resolve the tool against. Defaults to `cfg.default_endpoint`.
+        #[arg(long)]
+        endpoint: Option<String>,
     },
 }
 
@@ -108,8 +127,19 @@ pub async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Serve => serve::run().await,
         Command::Migrate { action } => migrate::run(action).await,
-        Command::Call { .. } => bail!("call: not implemented yet (chunk C8)"),
-        Command::Script { .. } => bail!("script: not implemented yet (chunk C9)"),
+        Command::Call {
+            name,
+            args,
+            raw,
+            endpoint,
+        } => call::run(&name, &args, raw, endpoint.as_deref()).await,
+        Command::Script { action } => match action {
+            ScriptAction::Run {
+                name,
+                args,
+                endpoint,
+            } => script::run(&name, &args, endpoint.as_deref()).await,
+        },
         Command::Export { endpoint } => pack::export(&endpoint).await,
         Command::Import { path, dry_run } => pack::import(&path, dry_run).await,
         Command::Token { action } => token::run(action).await,
@@ -131,6 +161,38 @@ pub fn parse_args(pairs: &[String]) -> Result<serde_json::Map<String, serde_json
     Ok(out)
 }
 
+/// Re-reads `--arg` values against the parameters they will actually bind to.
+///
+/// [`parse_args`] has to guess: it tries JSON so `--arg limit=10` is a number, and falls back to a
+/// string. That guess is wrong exactly when a `string`-typed parameter is given a bare numeric or
+/// boolean-looking value — `--arg id=3` becomes the number `3` and is then correctly rejected by
+/// `schema::bind_args`, which is baffling from a shell where everything is text anyway.
+///
+/// The narrowing is deliberately one-directional and lives here rather than in `schema::coerce`.
+/// A model sending `3` for a `string` parameter should still be told so: it had a typed schema in
+/// front of it and ignored it. A person typing at a shell had no such thing.
+pub fn retype_args_for_params(
+    params: &[crate::model::Param],
+    args: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    for p in params {
+        if p.ty != crate::model::ParamType::String {
+            continue;
+        }
+        let Some(value) = args.get_mut(&p.name) else {
+            continue;
+        };
+        let restated = match value {
+            serde_json::Value::Number(n) => Some(n.to_string()),
+            serde_json::Value::Bool(b) => Some(b.to_string()),
+            _ => None,
+        };
+        if let Some(text) = restated {
+            *value = serde_json::Value::String(text);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,6 +210,49 @@ mod tests {
     fn a_value_containing_equals_keeps_its_tail() {
         let got = parse_args(&["q=a=b".into()]).unwrap();
         assert_eq!(got["q"], json!("a=b"));
+    }
+
+    #[test]
+    fn retyping_narrows_a_number_onto_a_string_param() {
+        use crate::model::{Param, ParamLocation, ParamType};
+        let p = Param {
+            name: "id".into(),
+            location: ParamLocation::Path,
+            ty: ParamType::String,
+            required: true,
+            default: None,
+            fixed: None,
+            enum_values: None,
+            description: None,
+            position: 0,
+        };
+        let mut args = parse_args(&["id=3".into()]).expect("parses");
+        assert_eq!(args["id"], json!(3), "parse_args guesses a number");
+        retype_args_for_params(&[p], &mut args);
+        assert_eq!(args["id"], json!("3"), "retyped to the declared string");
+    }
+
+    #[test]
+    fn retyping_leaves_a_non_string_param_alone() {
+        use crate::model::{Param, ParamLocation, ParamType};
+        let p = Param {
+            name: "limit".into(),
+            location: ParamLocation::Query,
+            ty: ParamType::Integer,
+            required: false,
+            default: None,
+            fixed: None,
+            enum_values: None,
+            description: None,
+            position: 0,
+        };
+        let mut args = parse_args(&["limit=10".into()]).expect("parses");
+        retype_args_for_params(&[p], &mut args);
+        assert_eq!(
+            args["limit"],
+            json!(10),
+            "an integer param keeps its number"
+        );
     }
 
     #[test]
