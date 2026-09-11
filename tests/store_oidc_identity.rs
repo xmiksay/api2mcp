@@ -21,7 +21,7 @@ async fn first_sign_in_creates_a_user_and_a_second_matches_by_issuer_and_subject
     let users = stores.user();
 
     let first = users
-        .find_or_create_by_oidc("https://idp.example.com", "sub-123", "a@example.com")
+        .find_or_create_by_oidc("https://idp.example.com", "sub-123", "a@example.com", true)
         .await?;
     assert_eq!(first.email, "a@example.com");
     assert!(!first.has_password);
@@ -33,7 +33,7 @@ async fn first_sign_in_creates_a_user_and_a_second_matches_by_issuer_and_subject
 
     // Same (issuer, subject), same email: resolves to the identical row, doesn't duplicate it.
     let second = users
-        .find_or_create_by_oidc("https://idp.example.com", "sub-123", "a@example.com")
+        .find_or_create_by_oidc("https://idp.example.com", "sub-123", "a@example.com", true)
         .await?;
     assert_eq!(second.id, first.id);
 
@@ -55,11 +55,21 @@ async fn a_changed_email_on_a_second_sign_in_still_resolves_to_the_same_user() -
     let users = stores.user();
 
     let first = users
-        .find_or_create_by_oidc("https://idp.example.com", "sub-456", "old@example.com")
+        .find_or_create_by_oidc(
+            "https://idp.example.com",
+            "sub-456",
+            "old@example.com",
+            true,
+        )
         .await?;
 
     let second = users
-        .find_or_create_by_oidc("https://idp.example.com", "sub-456", "new@example.com")
+        .find_or_create_by_oidc(
+            "https://idp.example.com",
+            "sub-456",
+            "new@example.com",
+            true,
+        )
         .await?;
     assert_eq!(
         second.id, first.id,
@@ -89,10 +99,20 @@ async fn the_same_subject_from_two_different_issuers_are_different_users() -> Re
     let users = stores.user();
 
     let a = users
-        .find_or_create_by_oidc("https://idp-a.example.com", "shared-sub", "a@example.com")
+        .find_or_create_by_oidc(
+            "https://idp-a.example.com",
+            "shared-sub",
+            "a@example.com",
+            true,
+        )
         .await?;
     let b = users
-        .find_or_create_by_oidc("https://idp-b.example.com", "shared-sub", "b@example.com")
+        .find_or_create_by_oidc(
+            "https://idp-b.example.com",
+            "shared-sub",
+            "b@example.com",
+            true,
+        )
         .await?;
     assert_ne!(a.id, b.id);
 
@@ -126,6 +146,7 @@ async fn a_password_user_and_an_oidc_user_carry_the_expected_login_shape() -> Re
             "https://idp.example.com",
             "sub-789",
             "oidc-user@example.com",
+            true,
         )
         .await?;
     assert!(!oidc_user.has_password);

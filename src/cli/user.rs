@@ -7,11 +7,14 @@
 //!
 //! `add --oidc-only` pre-provisions an account with no password
 //! (`store::user::create_pending_oidc`) for someone who will sign in externally. That account
-//! has no working login *yet*: linking it to the OIDC identity that eventually signs in with a
-//! matching email is real work this chunk deliberately doesn't do (matching on email is exactly
-//! the account-takeover shape `store::user::find_or_create_by_oidc`'s own doc warns against for
-//! an *existing* linked account — doing it safely for a *pending, unlinked* row needs its own
-//! reasoning a follow-up chunk should give, not a CHECK-constraint-driven default here).
+//! has no working login until that first sign-in happens:
+//! `store::user::find_or_create_by_oidc` claims the row — binding `(issuer, subject)` to it —
+//! the first time an OIDC sign-in presents a `email_verified: true` email matching it exactly.
+//! This is not the account-takeover shape a stale-email match would be: the row it claims has
+//! no identity bound to it yet, so there is nothing to take over (see that function's own doc
+//! for the full reasoning). Until that first sign-in happens, the row stays inert —
+//! `store::user::UserStore::verify_password` refuses it (no password hash), and it is never a
+//! candidate for a *linked* account's email refresh.
 
 use std::io::{self, Write as _};
 

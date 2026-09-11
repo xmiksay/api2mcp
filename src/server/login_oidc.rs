@@ -146,7 +146,12 @@ pub async fn get_oidc_callback(
         }
     };
     let user = match UserStore::new(db.clone())
-        .find_or_create_by_oidc(&oidc_cfg.issuer, &identity.subject, &identity.email)
+        .find_or_create_by_oidc(
+            &oidc_cfg.issuer,
+            &identity.subject,
+            &identity.email,
+            identity.email_verified,
+        )
         .await
     {
         Ok(u) => u,

@@ -16,13 +16,23 @@
 //! `users.password_hash` is nullable and `oidc_issuer`/`oidc_subject` are new. A user typically
 //! has exactly one of a local password or a linked external OIDC identity, but a third state is
 //! also valid: both `NULL` — a pending account `api2mcp user add --oidc-only` pre-provisions,
-//! with no working login yet until a follow-up chunk adds a way to link it to a real sign-in
-//! (`entity::users`'s own doc has the full reasoning). The `CHECK` constraint below therefore
-//! only enforces that `oidc_issuer`/`oidc_subject` are set *together or not at all* — it does
-//! not require a password or an identity to be present — and the partial unique index on the
-//! OIDC pair still guarantees `(issuer, subject)` uniqueness whenever both are set. This
-//! migration is amended in place rather than followed by a corrective one — the branch is
-//! unmerged and nothing is deployed yet.
+//! claimed by `store::user::find_or_create_by_oidc` the first time a verified-email OIDC
+//! sign-in matches it (`entity::users`'s own doc has the full reasoning). The `CHECK`
+//! constraint below therefore only enforces that `oidc_issuer`/`oidc_subject` are set *together
+//! or not at all* — it does not require a password or an identity to be present — and the
+//! partial unique index on the OIDC pair still guarantees `(issuer, subject)` uniqueness
+//! whenever both are set. This migration is amended in place rather than followed by a
+//! corrective one — the branch is unmerged and nothing is deployed yet.
+//!
+//! A stricter `ck_users_has_a_login`-shaped constraint (`password_hash IS NOT NULL OR
+//! oidc_issuer IS NOT NULL`) was considered and rejected: a `CHECK` only ever sees a row's own
+//! columns, so it cannot tell "no login yet, deliberately pending" apart from "no login, and
+//! never should have been possible" — the pending state needs the *first* to be allowed, and a
+//! plain `CHECK` can't express that distinction without a new column (e.g. an explicit `status`)
+//! recording which case a `NULL`-`NULL` row is in, which is out of scope here. The application
+//! layer already enforces the invariant that matters: `create_pending_oidc` is the only writer
+//! that can produce a `NULL`-`NULL` row at all, and `verify_password`/the `(issuer, subject)`
+//! lookup both correctly refuse it a working login until it is claimed.
 
 use sea_orm::ConnectionTrait;
 use sea_orm_migration::prelude::*;

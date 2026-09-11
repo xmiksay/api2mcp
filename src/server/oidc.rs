@@ -139,12 +139,25 @@ pub async fn exchange_code(
 struct UserInfoResponse {
     sub: String,
     email: Option<String>,
+    /// OIDC Core §5.1's standard claim. `Option` because a provider is free to omit it
+    /// entirely (not every provider verifies email at all) — omission is treated as
+    /// unverified, never as an implicit `true`. See [`Identity::email_verified`]'s own doc
+    /// for why the distinction matters downstream.
+    #[serde(default)]
+    email_verified: Option<bool>,
 }
 
 /// The identity [`super::login`]'s callback resolves a user from.
 pub struct Identity {
     pub subject: String,
     pub email: String,
+    /// Whether the provider actually vouches for `email`, per OIDC Core §5.1. This gates
+    /// `store::UserStore::find_or_create_by_oidc`'s claim of an existing unlinked row by
+    /// email — an unverified email is just a self-asserted string, and claiming an account
+    /// on it would be the account-takeover hole that function's doc warns about. Missing the
+    /// claim entirely is treated the same as `false` ([`UserInfoResponse::email_verified`]),
+    /// never as verified by default.
+    pub email_verified: bool,
 }
 
 /// Calls the `userinfo` endpoint with the access token (OIDC Core §5.3) — see this module's own
@@ -172,6 +185,7 @@ pub async fn fetch_identity(
     Ok(Identity {
         subject: body.sub,
         email,
+        email_verified: body.email_verified.unwrap_or(false),
     })
 }
 

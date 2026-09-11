@@ -29,6 +29,10 @@ struct Inner {
     expected_code_challenge: Option<String>,
     sub: String,
     email: String,
+    /// `None` omits the `email_verified` claim from `/userinfo` entirely (some providers never
+    /// send it); `Some(v)` sends it as a real JSON boolean. Either way this is the mock's only
+    /// way to control it — a real provider wouldn't let this crate set the claim itself.
+    email_verified: Option<bool>,
     /// Every `Authorization` header value the `/token` endpoint has ever seen — lets a test
     /// assert `client_secret_basic` was actually used, and exactly what it carried.
     seen_token_auth_headers: Vec<String>,
@@ -67,10 +71,19 @@ impl MockIdp {
         self.inner.lock().expect("idp lock").expected_code_challenge = Some(challenge.to_owned());
     }
 
+    /// Sets the identity `/userinfo` reports, with `email_verified: true` — the common case for
+    /// every existing test, none of which cares about the claim path this field also gates.
     pub fn set_identity(&self, sub: &str, email: &str) {
+        self.set_identity_verified(sub, email, Some(true));
+    }
+
+    /// As [`Self::set_identity`], but with explicit control over the `email_verified` claim:
+    /// `Some(v)` sends it as `v`, `None` omits it from the `/userinfo` response entirely.
+    pub fn set_identity_verified(&self, sub: &str, email: &str, email_verified: Option<bool>) {
         let mut inner = self.inner.lock().expect("idp lock");
         inner.sub = sub.to_owned();
         inner.email = email.to_owned();
+        inner.email_verified = email_verified;
     }
 
     pub fn seen_token_auth_headers(&self) -> Vec<String> {
@@ -139,9 +152,9 @@ async fn userinfo(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let inner = inner.lock().expect("idp lock");
-    (
-        StatusCode::OK,
-        Json(json!({"sub": inner.sub, "email": inner.email})),
-    )
-        .into_response()
+    let mut body = json!({"sub": inner.sub, "email": inner.email});
+    if let Some(verified) = inner.email_verified {
+        body["email_verified"] = json!(verified);
+    }
+    (StatusCode::OK, Json(body)).into_response()
 }

@@ -6,13 +6,19 @@
 //! password) or `(oidc_issuer, oidc_subject)` (a linked external identity, `server::oidc`). A
 //! third, deliberately valid state exists too: a row with both `password_hash` and the OIDC
 //! pair `NULL` — an account pre-provisioned by `api2mcp user add --oidc-only`
-//! (`store::user::create_pending_oidc`) that has no working login yet, pending a linking step a
-//! follow-up chunk adds. `ck_users_oidc_pair` (`migration::m0001_init`) only enforces that
-//! `oidc_issuer`/`oidc_subject` are set *together or not at all*; `ux_users_oidc_identity` (a
-//! partial unique index, same migration) enforces the pair is unique whenever both are set.
-//! Matching an OIDC sign-in is always by `(issuer, subject)`, never by `email`: a provider is
-//! free to let a user change their email, and matching on it would let a changed email hijack
-//! another account (`store::user::find_or_create_by_oidc`).
+//! (`store::user::create_pending_oidc`) that has no working login yet, pending its first
+//! sign-in: `store::user::find_or_create_by_oidc` claims such a row — binding `(issuer,
+//! subject)` to it — the first time an OIDC sign-in presents a *verified* email matching it
+//! exactly (see that function's own doc for why that claim is safe). `ck_users_oidc_pair`
+//! (`migration::m0001_init`) only enforces that `oidc_issuer`/`oidc_subject` are set *together
+//! or not at all*; `ux_users_oidc_identity` (a partial unique index, same migration) enforces
+//! the pair is unique whenever both are set.
+//!
+//! An OIDC sign-in resolving an *already-linked* row always matches on `(issuer, subject)`,
+//! never `email`: a provider is free to let a user change their email, and matching a linked
+//! account on it would let a changed email hijack it. A row with no identity bound to it at all
+//! is a different case, and may be claimed by a verified email — see
+//! `store::user::find_or_create_by_oidc`'s own doc for the full reasoning.
 
 use sea_orm::entity::prelude::*;
 

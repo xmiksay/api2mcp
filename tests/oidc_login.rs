@@ -24,6 +24,7 @@ use api2mcp::entity::{sessions, users};
 use api2mcp::resolve::PlanCache;
 use api2mcp::server::auth::SESSION_COOKIE_NAME;
 use api2mcp::server::{AppState, build_router};
+use api2mcp::store::{NewUser, UserStore};
 
 use common::ScratchDb;
 use fixture::harness::loopback_pool;
@@ -247,6 +248,136 @@ async fn callback_rejects_a_code_verifier_that_does_not_match_the_challenge() ->
     assert!(
         users::Entity::find().one(&state.db).await?.is_none(),
         "a PKCE verifier mismatch must never create a user"
+    );
+
+    db.teardown().await
+}
+
+/// The end-to-end shape of the task's headline fix: `api2mcp user add --oidc-only` pre-provisions
+/// a row with no way to log in; the person it was made for signs in over real OIDC and the
+/// callback claims that row instead of creating a second account next to it.
+#[tokio::test]
+async fn full_login_flow_claims_a_pending_oidc_only_account_instead_of_duplicating_it() -> Result<()>
+{
+    let Some(db) = ScratchDb::create().await? else {
+        eprintln!("TEST_DATABASE_URL unset — skipping");
+        return Ok(());
+    };
+    db.migrate_up().await?;
+
+    let idp = MockIdp::start().await;
+    let state = build_state(&idp, &db.conn).await?;
+    let router = build_router(state.clone());
+
+    let pending = UserStore::new(state.db.clone())
+        .create_pending_oidc("invitee@example.com")
+        .await?;
+
+    let start = do_start(&router, "/dest").await;
+    idp.expect_code_challenge(&start.code_challenge);
+    idp.set_identity("sub-invitee", "invitee@example.com");
+
+    let cookie = format!("{FLOW_COOKIE}={}", start.flow_cookie);
+    let callback_uri = format!(
+        "/login/oidc/callback?code=fake-code&state={}",
+        wire::urlenc(&start.state)
+    );
+    let (status, headers, _) = wire::get(&router, &callback_uri, Some(&cookie)).await;
+    assert!(status.is_redirection(), "expected a redirect, got {status}");
+    assert!(
+        set_cookie_value(&headers, SESSION_COOKIE_NAME).is_some(),
+        "the claim must still issue a session cookie"
+    );
+
+    // Exactly one row, claimed rather than duplicated: same id as the pending invite, now linked.
+    let all_users = users::Entity::find().all(&state.db).await?;
+    assert_eq!(
+        all_users.len(),
+        1,
+        "the pending row must be claimed, not duplicated"
+    );
+    assert_eq!(all_users[0].id, pending.id);
+    assert_eq!(all_users[0].oidc_subject.as_deref(), Some("sub-invitee"));
+    assert_eq!(
+        all_users[0].oidc_issuer.as_deref(),
+        Some(idp.base_url.as_str())
+    );
+
+    // A second sign-in resolves the now-linked account by identity, still one row.
+    let start2 = do_start(&router, "/dest").await;
+    idp.expect_code_challenge(&start2.code_challenge);
+    let cookie2 = format!("{FLOW_COOKIE}={}", start2.flow_cookie);
+    let callback_uri2 = format!(
+        "/login/oidc/callback?code=fake-code&state={}",
+        wire::urlenc(&start2.state)
+    );
+    let (status2, headers2, _) = wire::get(&router, &callback_uri2, Some(&cookie2)).await;
+    assert!(status2.is_redirection());
+    assert!(set_cookie_value(&headers2, SESSION_COOKIE_NAME).is_some());
+    assert_eq!(users::Entity::find().all(&state.db).await?.len(), 1);
+
+    db.teardown().await
+}
+
+/// The other half of the fix: an unverified email must never let a sign-in claim someone else's
+/// account. The login simply fails (a clean conflict, logged server-side — see
+/// `server::login_oidc`'s own doc for why the browser never sees why); the existing password
+/// account is left completely untouched.
+#[tokio::test]
+async fn full_login_flow_refuses_to_claim_an_account_when_the_email_is_not_verified() -> Result<()>
+{
+    let Some(db) = ScratchDb::create().await? else {
+        eprintln!("TEST_DATABASE_URL unset — skipping");
+        return Ok(());
+    };
+    db.migrate_up().await?;
+
+    let idp = MockIdp::start().await;
+    let state = build_state(&idp, &db.conn).await?;
+    let router = build_router(state.clone());
+
+    let users = UserStore::new(state.db.clone());
+    let password_user = users
+        .create(NewUser {
+            email: "unverified-target@example.com".into(),
+            password: "correct horse battery staple".into(),
+        })
+        .await?;
+
+    let start = do_start(&router, "/dest").await;
+    idp.expect_code_challenge(&start.code_challenge);
+    idp.set_identity_verified(
+        "sub-not-verified",
+        "unverified-target@example.com",
+        Some(false),
+    );
+
+    let cookie = format!("{FLOW_COOKIE}={}", start.flow_cookie);
+    let callback_uri = format!(
+        "/login/oidc/callback?code=fake-code&state={}",
+        wire::urlenc(&start.state)
+    );
+    let (status, headers, _) = wire::get(&router, &callback_uri, Some(&cookie)).await;
+    assert!(status.is_redirection());
+    assert!(wire::location(&headers).starts_with("/login"));
+    assert!(
+        set_cookie_value(&headers, SESSION_COOKIE_NAME).is_none(),
+        "an unverified email must never issue a session cookie"
+    );
+
+    // The account is untouched: still one row, still unlinked, password still works.
+    let all_users = users::Entity::find().all(&state.db).await?;
+    assert_eq!(all_users.len(), 1);
+    assert_eq!(all_users[0].id, password_user.id);
+    assert!(all_users[0].oidc_issuer.is_none());
+    assert!(
+        UserStore::new(state.db.clone())
+            .verify_password(
+                "unverified-target@example.com",
+                "correct horse battery staple"
+            )
+            .await?
+            .is_some()
     );
 
     db.teardown().await
