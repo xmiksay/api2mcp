@@ -65,9 +65,14 @@ impl ScratchDb {
     }
 
     /// Closes the scratch connection and drops the database. Must be called explicitly —
-    /// a `Drop` impl can't run the required `async` `DROP DATABASE`. `WITH (FORCE)`
-    /// (Postgres 13+) disconnects any session still attached, so a caller that forgot to
-    /// close its own borrowed connections doesn't wedge the drop.
+    /// a `Drop` impl can't run the required `async` `DROP DATABASE`.
+    ///
+    /// Cleanup failure is a warning, not a test failure. By the time this runs the test's
+    /// assertions have already passed, so turning a green test red over a disposable,
+    /// uniquely-named database would be pure noise. `WITH (FORCE)` terminates every backend
+    /// still attached, which intermittently trips "permission denied to terminate process"
+    /// when one of them is not owned by our role (an autovacuum worker, say) — hence the
+    /// retries and the soft landing.
     pub async fn teardown(self) -> Result<()> {
         self.conn
             .close()
@@ -77,13 +82,27 @@ impl ScratchDb {
         let admin = db::connect(&self.admin_url)
             .await
             .context("reconnecting to the admin (postgres) database to drop the scratch db")?;
-        admin
-            .execute(Statement::from_string(
-                admin.get_database_backend(),
-                format!(r#"DROP DATABASE IF EXISTS "{}" WITH (FORCE)"#, self.name),
-            ))
-            .await
-            .with_context(|| format!("dropping scratch database {}", self.name))?;
+
+        let stmt = format!(r#"DROP DATABASE IF EXISTS "{}" WITH (FORCE)"#, self.name);
+        let mut last_err = None;
+        for attempt in 0..3 {
+            match admin
+                .execute(Statement::from_string(admin.get_database_backend(), &stmt))
+                .await
+            {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    last_err = Some(e);
+                    tokio::time::sleep(std::time::Duration::from_millis(50 * (attempt + 1))).await;
+                }
+            }
+        }
+        eprintln!(
+            "warning: could not drop scratch database {} ({}); it is disposable and safe to \
+             remove by hand",
+            self.name,
+            last_err.map(|e| e.to_string()).unwrap_or_default()
+        );
         Ok(())
     }
 }
