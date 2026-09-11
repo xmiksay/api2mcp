@@ -35,10 +35,14 @@ pub use api_call::{ApiCallStore, TaggedApiCall};
 pub use auth_provider::AuthProviderStore;
 pub use endpoint::EndpointStore;
 pub use meta::MetaStore;
-pub use oauth::{NewOauthClient, OauthClient, OauthStore};
+pub use oauth::{
+    ConsentRequest, NewConsentRequest, NewOauthClient, NewOauthCode, OauthClient, OauthCode,
+    OauthStore,
+};
 pub use oauth_tokens::{IssuedOauthToken, OauthToken, TokenGrant};
 pub use run::{
-    NewRun, NewRunCall, RunCall, RunCallerKind, RunStatus, RunStore, RunSummary, RunTargetKind,
+    NewRun, NewRunCall, RunCall, RunCallerKind, RunFilter, RunStatus, RunStore, RunSummary,
+    RunTargetKind,
 };
 pub use script::{ScriptStore, TaggedScript};
 pub use service::ServiceStore;

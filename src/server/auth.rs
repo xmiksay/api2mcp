@@ -1,14 +1,13 @@
 //! MCP authentication and the session-cookie plumbing the browser login path
 //! ([`super::login`]) builds on.
 //!
-//! A `/mcp` request carries `Authorization: Bearer <token>`. [`authenticate_mcp`] resolves
-//! it against the service-token store (which already rejects a revoked or expired row —
-//! see [`crate::store::ServiceTokenStore::resolve`]) and, on any failure, returns a
-//! [`BearerChallenge`]: the caller (chunk C11's router) turns that into a `401` carrying
-//! `WWW-Authenticate: Bearer resource_metadata="…"`, the RFC 9728 discovery hook an
-//! OAuth-aware MCP client follows to find the authorization server. Chunk C12's OAuth
-//! access-token branch slots in ahead of the service-token check below — same bearer, same
-//! header, just a second store tried before giving up.
+//! A `/mcp` request carries `Authorization: Bearer <token>`. [`authenticate_mcp`] tries an
+//! OAuth 2.1 access token first ([`crate::server::oauth`]'s token endpoint is what mints
+//! these) and falls back to the service-token store (which already rejects a revoked or
+//! expired row — see [`crate::store::ServiceTokenStore::resolve`]); either failing, it
+//! returns a [`BearerChallenge`]: the caller (chunk C11's router) turns that into a `401`
+//! carrying `WWW-Authenticate: Bearer resource_metadata="…"`, the RFC 9728 discovery hook an
+//! OAuth-aware MCP client follows to find the authorization server.
 //!
 //! **Two hashing schemes, deliberately not shared:** [`hash_token`] is sha256
 //! ([`crate::store::sha256_hex`]) — right for a service token or session cookie, both
@@ -33,7 +32,9 @@ use uuid::Uuid;
 use anyhow::{Context, Result};
 
 use crate::config::Config;
+use crate::store::OauthStore;
 use crate::store::ServiceTokenStore;
+use crate::store::UserStore;
 
 use crate::store::SessionStore;
 
@@ -49,9 +50,9 @@ pub struct BearerChallenge {
     pub www_authenticate: String,
 }
 
-/// Resolve the caller behind an MCP request: bearer service token only, this chunk (OAuth
-/// access tokens are chunk C12). No credential, or a credential that fails to resolve,
-/// both come back as the same [`BearerChallenge`] — a caller must not be able to tell
+/// Resolve the caller behind an MCP request: an OAuth 2.1 access token first, then a static
+/// service token. No credential, or a credential that fails to resolve against either store,
+/// all come back as the same [`BearerChallenge`] — a caller must not be able to tell
 /// "missing" from "invalid" from the response shape alone.
 pub async fn authenticate_mcp(
     db: &DatabaseConnection,
@@ -62,7 +63,9 @@ pub async fn authenticate_mcp(
         return Err(challenge(cfg));
     };
 
-    // OAuth access-token branch (C12) goes here, ahead of the service-token fallback.
+    if let Some(caller) = oauth_caller(db, token).await {
+        return Ok(caller);
+    }
 
     let store = ServiceTokenStore::new(db.clone());
     match store.resolve(token).await {
@@ -73,6 +76,34 @@ pub async fn authenticate_mcp(
             // valid, so it must not be treated any more favourably than "not found".
             tracing::error!(error = %e, "authenticate_mcp: service token lookup failed");
             Err(challenge(cfg))
+        }
+    }
+}
+
+/// Resolves an OAuth access token (`server::oauth`'s token endpoint) to its granting user,
+/// reusing [`Caller::from_user`] — this system's OAuth grant is one coarse `mcp` scope, not a
+/// narrower delegation, so an OAuth-authenticated caller can do exactly what that user's
+/// browser session could. `None` covers "not an OAuth token", "revoked/expired" and "the
+/// granting user has since been deleted" alike, so the caller falls through to the
+/// service-token branch indistinguishably; a store error fails closed (logged, then `None`)
+/// rather than being treated as "not an OAuth token".
+async fn oauth_caller(db: &DatabaseConnection, token: &str) -> Option<Caller> {
+    let record = match OauthStore::new(db.clone())
+        .resolve_access_token(token)
+        .await
+    {
+        Ok(record) => record?,
+        Err(e) => {
+            tracing::error!(error = %e, "authenticate_mcp: oauth access token lookup failed");
+            return None;
+        }
+    };
+    match UserStore::new(db.clone()).get_by_id(record.user_id).await {
+        Ok(Some(user)) => Some(Caller::from_user(&user)),
+        Ok(None) => None,
+        Err(e) => {
+            tracing::error!(error = %e, "authenticate_mcp: oauth token's user lookup failed");
+            None
         }
     }
 }

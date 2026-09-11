@@ -11,7 +11,7 @@
 use std::time::Duration;
 
 use chrono::Utc;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
 use uuid::Uuid;
 
 use crate::entity::oauth_tokens;
@@ -138,6 +138,25 @@ impl OauthStore {
                 .map_err(db_err("oauth::revoke_family"))?;
         }
         Ok(())
+    }
+
+    /// The `created_at` of the oldest row sharing `family_id` — the family's original
+    /// issuance time. [`rotate_refresh_token`](Self::rotate_refresh_token) only ever carries
+    /// each row's own TTL *duration* forward, never an absolute deadline, so an absolute
+    /// family lifetime (chunk C12's `server::oauth::refresh`) has nothing else to check
+    /// against. `None` only for an unknown `family_id` — never for one that has just rotated,
+    /// since the row inserted by that rotation is itself a family member.
+    pub async fn family_started_at(
+        &self,
+        family_id: Uuid,
+    ) -> Result<Option<chrono::DateTime<Utc>>, StoreError> {
+        let oldest = oauth_tokens::Entity::find()
+            .filter(oauth_tokens::Column::FamilyId.eq(family_id))
+            .order_by_asc(oauth_tokens::Column::CreatedAt)
+            .one(&self.db)
+            .await
+            .map_err(db_err("oauth::family_started_at"))?;
+        Ok(oldest.map(|r| r.created_at.with_timezone(&Utc)))
     }
 
     /// `Ok(None)` for "no such token", "revoked" and "expired" alike.
