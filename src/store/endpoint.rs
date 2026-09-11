@@ -3,14 +3,9 @@
 //! `endpoint_auth_providers`).
 //!
 //! `model::EndpointDef::tag_expr` is already the parsed [`crate::model::TagExpr`] AST, not
-//! the raw string the `tag_expr` column holds. `model::tag`'s doc comment assigns parsing
-//! the human-written expression to chunk C6 (`resolve::tag_expr`) — but this store still has
-//! to produce a fully-typed `EndpointDef`, and C6 doesn't exist yet to parse for it. The
-//! [`tag_expr_parse`] module below is therefore a **stopgap**: a small, self-contained
-//! recursive-descent parser for exactly the grammar `model::tag`'s doc comment shows
-//! (`has(x)`, `not`, `and`, `or`, parens), used only so this store's round-trip is total.
-//! Flagged for the planner: C6 should either promote this into `resolve::tag_expr` verbatim
-//! or replace it, but the two must not silently diverge.
+//! the raw string the `tag_expr` column holds; parsing/printing that string is
+//! [`crate::resolve::tag_expr`]'s job (promoted there from this module in chunk C6), not
+//! this store's — this module only calls into it at the row <-> model boundary.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -24,11 +19,11 @@ use uuid::Uuid;
 use crate::entity::{endpoint_aliases, endpoint_auth_providers, endpoints};
 use crate::model::{Budgets, EndpointDef, EndpointTarget, Slug};
 
+use crate::resolve::tag_expr;
+
 use super::auth_provider::AuthProviderStore;
 use super::meta::MetaStore;
 use super::{StoreError, access_to_str, db_err, parse_slug, str_to_access};
-
-mod tag_expr_parse;
 
 #[derive(Clone)]
 pub struct EndpointStore {
@@ -227,7 +222,7 @@ fn to_active_model(endpoint: &EndpointDef, id: Uuid) -> Result<endpoints::Active
     Ok(endpoints::ActiveModel {
         id: Set(id),
         slug: Set(endpoint.slug.as_str().to_owned()),
-        tag_expr: Set(tag_expr_parse::to_string(&endpoint.tag_expr)),
+        tag_expr: Set(tag_expr::to_string(&endpoint.tag_expr)),
         write_ceiling: Set(access_to_str(endpoint.write_ceiling).to_owned()),
         budgets: Set(budgets_to_json(&endpoint.budgets)),
         instructions: Set(endpoint.instructions.clone()),
@@ -243,7 +238,8 @@ fn to_model(
 ) -> Result<EndpointDef, StoreError> {
     Ok(EndpointDef {
         slug: parse_slug(&row.slug)?,
-        tag_expr: tag_expr_parse::parse(&row.tag_expr)?,
+        tag_expr: tag_expr::parse(&row.tag_expr)
+            .map_err(|e| StoreError::Malformed(e.to_string()))?,
         write_ceiling: str_to_access(&row.write_ceiling)?,
         budgets: json_to_budgets(&row.budgets)?,
         instructions: row.instructions,
