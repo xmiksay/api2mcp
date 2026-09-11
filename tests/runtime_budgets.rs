@@ -285,7 +285,7 @@ async fn run_tool_persists_a_complete_run_with_no_credential_leaked() {
         .await
         .expect("db read")
         .expect("run row exists");
-    assert_eq!(summary.calls_made, 1);
+    assert_eq!(summary.summary.calls_made, 1);
     assert_eq!(calls.len(), 1, "one run_calls row per upstream request");
     assert_eq!(calls[0].seq, 0, "seq is the input index");
 

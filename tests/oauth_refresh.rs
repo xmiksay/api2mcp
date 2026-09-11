@@ -47,7 +47,6 @@ async fn setup_with_initial_pair() -> Result<Option<(Harness, String, String)>> 
         .create(NewUser {
             email: "refresh@example.com".into(),
             password: "correct horse battery staple".into(),
-            is_admin: false,
         })
         .await?;
     let session = api2mcp::server::auth::create_session(

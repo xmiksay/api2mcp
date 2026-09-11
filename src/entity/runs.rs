@@ -21,6 +21,8 @@ pub struct Model {
     pub caller_kind: String,
     pub caller_id: String,
     pub request_id: String,
+    /// The run's frozen wall-clock start — `script::dates::execution_start()`'s source of truth.
+    pub execution_start: DateTimeWithTimeZone,
     #[sea_orm(column_type = "JsonBinary")]
     pub definition_snapshot: Json,
     pub definition_digest: String,

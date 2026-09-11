@@ -101,7 +101,6 @@ pub async fn login_cookie(
         .create(NewUser {
             email: email.to_owned(),
             password: "correct horse battery staple".to_owned(),
-            is_admin: false,
         })
         .await?;
     let token =

@@ -28,6 +28,7 @@ enum Runs {
     CallerKind,
     CallerId,
     RequestId,
+    ExecutionStart,
     DefinitionSnapshot,
     DefinitionDigest,
     InputRedacted,
@@ -78,6 +79,15 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Runs::CallerKind).text().not_null())
                     .col(ColumnDef::new(Runs::CallerId).text().not_null())
                     .col(ColumnDef::new(Runs::RequestId).text().not_null())
+                    // The single wall-clock instant `BudgetMeter::new` froze for this run, and
+                    // the source of truth `script::dates::execution_start()` reads from — without
+                    // it, a run record can't actually be replayed deterministically (I7's own
+                    // wording), only claimed to be.
+                    .col(
+                        ColumnDef::new(Runs::ExecutionStart)
+                            .timestamp_with_time_zone()
+                            .not_null(),
+                    )
                     .col(
                         ColumnDef::new(Runs::DefinitionSnapshot)
                             .json_binary()

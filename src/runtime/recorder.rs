@@ -11,7 +11,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::http::{redact_headers, redact_message, redact_url};
+use crate::http::{CallResponse, redact_headers, redact_message, redact_url};
 use crate::model::Slug;
 use crate::resolve::EndpointPlan;
 use crate::resolve::plan::PlannedTool;
@@ -19,7 +19,7 @@ use crate::store::StoreError;
 use crate::store::{NewRun, NewRunCall, RunCallerKind, RunStatus, RunTargetKind, Stores};
 
 use super::budget::{BudgetMeter, snapshot_json};
-use super::partial::BatchEntry;
+use super::partial::{BatchEntry, ItemOutcome};
 use super::snapshot::build_snapshot;
 
 /// Everything [`record`] needs beyond the batch's own entries — assembled by `Executor::run_tool`
@@ -54,6 +54,11 @@ pub async fn record(stores: &Stores, run: RunRecord<'_>) -> Result<Uuid, StoreEr
         definition_digest: run.plan.digest.clone(),
         input_redacted: run.args,
         output_redacted: run.output_redacted,
+        // The single instant every call in this run's fan-out shares (`BudgetMeter::new`) — the
+        // source of truth `script::dates::execution_start()` reads. Reading it off `run.meter`
+        // rather than adding a field to `RunRecord` needs no new plumbing at any of this
+        // function's three call sites, since all three already build the meter first.
+        execution_start: run.meter.execution_start(),
         status: run.status,
         errors: errors_json(run.entries),
         calls_made: run.meter.calls_made(),
@@ -77,36 +82,80 @@ fn target_of(tool: &PlannedTool) -> (RunTargetKind, Slug) {
     }
 }
 
-/// One `run_calls` row per **attempted** upstream request — an entry `dispatch_outcome()` has no
-/// value for (never attempted at all, or failed before/without a response) leaves no row, since
-/// there is nothing truthful to record about a request that was never actually sent.
+/// One `run_calls` row per **attempted** upstream request. Whether an entry gets a row is
+/// structural, driven by what data each `ItemOutcome` actually carries, not by a comment
+/// promising it: `Ok`/`BudgetCut` always did (both carry a full `DispatchOutcome`); `Failed` did
+/// **only** when its `DispatchError` carries a [`super::dispatch::DispatchAttempt`] — set exactly
+/// for the failure kinds that occur after `http::paginate` already returned real upstream pages
+/// (a non-2xx status chief among them — see that type's own doc); `NotAttempted` never did, by
+/// definition. This is what closes the regression where a non-2xx response (now `Failed`, once
+/// `Ok`) silently stopped writing a row at all.
 fn new_run_call(entry: &BatchEntry) -> Option<NewRunCall> {
-    let outcome = entry.outcome.dispatch_outcome()?;
-    let first_page = outcome.pages.first();
-    let last_page = outcome.pages.last();
+    match &entry.outcome {
+        ItemOutcome::Ok(outcome) => Some(row_from_pages(
+            entry.index,
+            &outcome.api_call_slug,
+            &outcome.service_slug,
+            &outcome.method,
+            &outcome.pages,
+            None,
+        )),
+        ItemOutcome::BudgetCut(axis, outcome) => Some(row_from_pages(
+            entry.index,
+            &outcome.api_call_slug,
+            &outcome.service_slug,
+            &outcome.method,
+            &outcome.pages,
+            Some(format!("budget exceeded: {axis:?}")),
+        )),
+        ItemOutcome::Failed(e) => e.attempt().map(|attempt| {
+            row_from_pages(
+                entry.index,
+                &attempt.api_call_slug,
+                &attempt.service_slug,
+                &attempt.method,
+                &attempt.pages,
+                // The error is recorded *alongside* the attempt, never in place of it — the run's
+                // `errors[]` (see `errors_json` below) already names the same failure by index,
+                // but a `run_calls` row on its own (e.g. read back by `store::run::RunStore::get`
+                // in isolation) should still say why it has no successful `value`.
+                Some(redact_message(&e.to_string())),
+            )
+        }),
+        ItemOutcome::NotAttempted(_) => None,
+    }
+}
+
+/// The shared tail of [`new_run_call`]'s three producing arms: every field a `run_calls` row
+/// needs that can be read off a plain `&[CallResponse]` plus the caller-supplied identity/error —
+/// true of a completed [`super::dispatch::DispatchOutcome`] and of a
+/// [`super::dispatch::DispatchAttempt`] alike.
+fn row_from_pages(
+    index: usize,
+    api_call_slug: &Slug,
+    service_slug: &Slug,
+    method: &::http::Method,
+    pages: &[CallResponse],
+    error: Option<String>,
+) -> NewRunCall {
+    let first_page = pages.first();
+    let last_page = pages.last();
 
     let url_redacted = first_page.map(|p| redact_url(&p.url)).unwrap_or_default();
     let headers_redacted = Some(json!(redact_headers(
         &last_page.map(|p| p.headers.clone()).unwrap_or_default()
     )));
     let body_redacted = last_page.and_then(|p| serde_json::from_slice::<Value>(&p.body).ok());
-    let response_bytes = outcome.bytes_in();
+    let response_bytes: u64 = pages.iter().map(|p| p.body.len() as u64).sum();
     let response_truncated = false; // truncation is a hard error in `http::body` (never silent), so a
     // recorded row never represents a *silently* truncated body.
     let status_code = last_page.map(|p| p.status.as_u16());
 
-    let error = match &entry.outcome {
-        super::partial::ItemOutcome::BudgetCut(axis, _) => {
-            Some(format!("budget exceeded: {axis:?}"))
-        }
-        _ => None,
-    };
-
-    Some(NewRunCall {
-        seq: entry.index as i32,
-        api_call_slug: outcome.api_call_slug.clone(),
-        service_slug: outcome.service_slug.clone(),
-        method: outcome.method.clone(),
+    NewRunCall {
+        seq: index as i32,
+        api_call_slug: api_call_slug.clone(),
+        service_slug: service_slug.clone(),
+        method: method.clone(),
         url_redacted,
         headers_redacted,
         body_redacted,
@@ -115,7 +164,7 @@ fn new_run_call(entry: &BatchEntry) -> Option<NewRunCall> {
         response_truncated,
         error,
         timings: None,
-    })
+    }
 }
 
 /// The run-level `errors[]` envelope: every non-`Ok` entry, keyed by its input index — the plan's

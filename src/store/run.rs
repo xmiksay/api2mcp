@@ -3,119 +3,26 @@
 //! of the tool-definition aggregates `model` describes), so this store defines its own
 //! plain, scalar-only request/response types, same reasoning as `store::user`.
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, Select, Set, TransactionTrait,
 };
-use serde_json::Value;
 use uuid::Uuid;
 
 use crate::entity::{run_calls, runs};
 use crate::model::Slug;
 
+use super::run_types::{
+    caller_kind_to_str, status_to_str, str_to_caller_kind, str_to_status, str_to_target_kind,
+    target_kind_to_str,
+};
 use super::{StoreError, db_err, parse_slug};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RunTargetKind {
-    ApiCall,
-    Script,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RunCallerKind {
-    Oauth,
-    ServiceToken,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RunStatus {
-    Ok,
-    Partial,
-    Error,
-    Denied,
-    BudgetExceeded,
-    Timeout,
-}
-
-#[derive(Debug, Clone)]
-pub struct NewRun {
-    pub endpoint_slug: Slug,
-    pub tool_name: String,
-    pub target_kind: RunTargetKind,
-    pub target_slug: Slug,
-    pub caller_kind: RunCallerKind,
-    pub caller_id: String,
-    pub request_id: String,
-    pub definition_snapshot: Value,
-    pub definition_digest: String,
-    pub input_redacted: Value,
-    pub output_redacted: Option<Value>,
-    pub status: RunStatus,
-    pub errors: Option<Value>,
-    pub calls_made: u32,
-    pub bytes_in: u64,
-    pub pages_fetched: u32,
-    pub budget_snapshot: Option<Value>,
-    pub timings: Option<Value>,
-}
-
-#[derive(Debug, Clone)]
-pub struct NewRunCall {
-    pub seq: i32,
-    pub api_call_slug: Slug,
-    pub service_slug: Slug,
-    pub method: http::Method,
-    pub url_redacted: String,
-    pub headers_redacted: Option<Value>,
-    pub body_redacted: Option<Value>,
-    pub status_code: Option<u16>,
-    pub response_bytes: Option<u64>,
-    pub response_truncated: bool,
-    pub error: Option<String>,
-    pub timings: Option<Value>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RunSummary {
-    pub id: Uuid,
-    pub endpoint_slug: Slug,
-    pub tool_name: String,
-    pub target_kind: RunTargetKind,
-    pub target_slug: Slug,
-    pub status: RunStatus,
-    pub calls_made: u32,
-    pub bytes_in: u64,
-    pub pages_fetched: u32,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RunCall {
-    pub seq: i32,
-    pub api_call_slug: Slug,
-    pub service_slug: Slug,
-    pub status_code: Option<u16>,
-    pub response_bytes: Option<u64>,
-    pub response_truncated: bool,
-    pub error: Option<String>,
-    /// The upstream's own response body for this call's last page, as persisted by
-    /// `runtime::recorder::new_run_call` — the raw counterpart to the run's own
-    /// `output_redacted` (which is the *projected* value). Exposed here because
-    /// `server::api`'s test-run routes are the reason "raw vs. projected, side by side" needs
-    /// to be recoverable after the fact, not just during the one dispatch that produced it.
-    pub response_body: Option<Value>,
-}
-
-/// Narrows a [`RunSummary`] listing. `None` on any field means "no opinion" (no filter on that
-/// axis); `limit`/`offset` always apply.
-#[derive(Debug, Clone)]
-pub struct RunFilter {
-    pub endpoint_slug: Option<Slug>,
-    pub status: Option<RunStatus>,
-    pub limit: u64,
-    pub offset: u64,
-}
+pub use super::run_types::{
+    NewRun, NewRunCall, RunCall, RunCallerKind, RunDetail, RunFilter, RunStatus, RunSummary,
+    RunTargetKind,
+};
 
 #[derive(Clone)]
 pub struct RunStore {
@@ -139,6 +46,7 @@ impl RunStore {
             caller_kind: Set(caller_kind_to_str(run.caller_kind).to_owned()),
             caller_id: Set(run.caller_id.clone()),
             request_id: Set(run.request_id.clone()),
+            execution_start: Set(run.execution_start.into()),
             definition_snapshot: Set(run.definition_snapshot.clone()),
             definition_digest: Set(run.definition_digest.clone()),
             input_redacted: Set(run.input_redacted.clone()),
@@ -183,7 +91,9 @@ impl RunStore {
         Ok(id)
     }
 
-    pub async fn get(&self, id: Uuid) -> Result<Option<(RunSummary, Vec<RunCall>)>, StoreError> {
+    /// `server::api`'s `GET /api/runs/{id}` — the one route allowed to carry `definition_snapshot`
+    /// and every other column [`RunSummary`] leaves off (see [`RunDetail`]'s own doc).
+    pub async fn get(&self, id: Uuid) -> Result<Option<(RunDetail, Vec<RunCall>)>, StoreError> {
         let Some(row) = runs::Entity::find_by_id(id)
             .one(&self.db)
             .await
@@ -201,7 +111,7 @@ impl RunStore {
             .into_iter()
             .map(call_to_model)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Some((summary_to_model(row)?, calls)))
+        Ok(Some((detail_to_model(row)?, calls)))
     }
 
     pub async fn list_for_endpoint(
@@ -241,55 +151,6 @@ impl RunStore {
     }
 }
 
-fn target_kind_to_str(kind: RunTargetKind) -> &'static str {
-    match kind {
-        RunTargetKind::ApiCall => "api_call",
-        RunTargetKind::Script => "script",
-    }
-}
-
-fn caller_kind_to_str(kind: RunCallerKind) -> &'static str {
-    match kind {
-        RunCallerKind::Oauth => "oauth",
-        RunCallerKind::ServiceToken => "service_token",
-    }
-}
-
-fn status_to_str(status: RunStatus) -> &'static str {
-    match status {
-        RunStatus::Ok => "ok",
-        RunStatus::Partial => "partial",
-        RunStatus::Error => "error",
-        RunStatus::Denied => "denied",
-        RunStatus::BudgetExceeded => "budget_exceeded",
-        RunStatus::Timeout => "timeout",
-    }
-}
-
-fn str_to_target_kind(s: &str) -> Result<RunTargetKind, StoreError> {
-    match s {
-        "api_call" => Ok(RunTargetKind::ApiCall),
-        "script" => Ok(RunTargetKind::Script),
-        other => Err(StoreError::Malformed(format!(
-            "runs.target_kind: unrecognised value {other:?}"
-        ))),
-    }
-}
-
-fn str_to_status(s: &str) -> Result<RunStatus, StoreError> {
-    match s {
-        "ok" => Ok(RunStatus::Ok),
-        "partial" => Ok(RunStatus::Partial),
-        "error" => Ok(RunStatus::Error),
-        "denied" => Ok(RunStatus::Denied),
-        "budget_exceeded" => Ok(RunStatus::BudgetExceeded),
-        "timeout" => Ok(RunStatus::Timeout),
-        other => Err(StoreError::Malformed(format!(
-            "runs.status: unrecognised value {other:?}"
-        ))),
-    }
-}
-
 fn summary_to_model(row: runs::Model) -> Result<RunSummary, StoreError> {
     Ok(RunSummary {
         id: row.id,
@@ -305,11 +166,52 @@ fn summary_to_model(row: runs::Model) -> Result<RunSummary, StoreError> {
     })
 }
 
+/// Builds the detail-route model. Clones `row` into [`summary_to_model`] rather than splitting
+/// its fields by hand — `runs::Model` is a plain data row (`Clone`-derived, no I/O), so the clone
+/// costs nothing worth avoiding, and this keeps the summary's own field mapping defined in
+/// exactly one place.
+fn detail_to_model(row: runs::Model) -> Result<RunDetail, StoreError> {
+    let caller_kind = str_to_caller_kind(&row.caller_kind)?;
+    let caller_id = row.caller_id.clone();
+    let request_id = row.request_id.clone();
+    let execution_start = row.execution_start.with_timezone(&Utc);
+    let definition_snapshot = row.definition_snapshot.clone();
+    let definition_digest = row.definition_digest.clone();
+    let input_redacted = row.input_redacted.clone();
+    let output_redacted = row.output_redacted.clone();
+    let errors = row.errors.clone();
+    let budget_snapshot = row.budget_snapshot.clone();
+    let timings = row.timings.clone();
+    Ok(RunDetail {
+        summary: summary_to_model(row)?,
+        caller_kind,
+        caller_id,
+        request_id,
+        execution_start,
+        definition_snapshot,
+        definition_digest,
+        input_redacted,
+        output_redacted,
+        errors,
+        budget_snapshot,
+        timings,
+    })
+}
+
 fn call_to_model(row: run_calls::Model) -> Result<RunCall, StoreError> {
+    let method = row.method.parse().map_err(|_| {
+        StoreError::Malformed(format!(
+            "run_calls.method: {:?} is not a valid HTTP method",
+            row.method
+        ))
+    })?;
     Ok(RunCall {
         seq: row.seq,
         api_call_slug: parse_slug(&row.api_call_slug)?,
         service_slug: parse_slug(&row.service_slug)?,
+        method,
+        url_redacted: row.url_redacted,
+        headers_redacted: row.headers_redacted,
         status_code: row.status_code.map(|v| v as u16),
         response_bytes: row.response_bytes.map(|v| v as u64),
         response_truncated: row.response_truncated,

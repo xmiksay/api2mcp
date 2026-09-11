@@ -176,7 +176,7 @@ async fn api_call_test_run_returns_raw_and_projected_side_by_side_and_writes_a_r
         .get(run_id.parse()?)
         .await?
         .expect("the test run was persisted");
-    assert_eq!(summary.tool_name, "get-item");
+    assert_eq!(summary.summary.tool_name, "get-item");
     assert_eq!(calls.len(), 1);
 
     // An api_call not exposed by the endpoint is a 404, not a 500.

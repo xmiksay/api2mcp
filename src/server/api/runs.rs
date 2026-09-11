@@ -11,7 +11,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::server::state::AppState;
-use crate::store::{RunCall, RunFilter, RunStatus, RunSummary};
+use crate::store::{RunCall, RunCallerKind, RunFilter, RunStatus, RunSummary};
 
 use super::convert::parse_slug;
 use super::{ApiError, Caller};
@@ -62,6 +62,13 @@ fn target_kind_str(k: crate::store::RunTargetKind) -> &'static str {
     match k {
         crate::store::RunTargetKind::ApiCall => "api_call",
         crate::store::RunTargetKind::Script => "script",
+    }
+}
+
+fn caller_kind_str(k: RunCallerKind) -> &'static str {
+    match k {
+        RunCallerKind::Oauth => "oauth",
+        RunCallerKind::ServiceToken => "service_token",
     }
 }
 
@@ -126,6 +133,11 @@ struct RunCallView {
     seq: i32,
     api_call_slug: String,
     service_slug: String,
+    method: String,
+    /// Already redacted at write time (`http::redact`) — see `RunDetailView`'s own doc: nothing
+    /// here gets a second redaction pass.
+    url_redacted: String,
+    headers_redacted: Option<Value>,
     status_code: Option<u16>,
     response_bytes: Option<u64>,
     response_truncated: bool,
@@ -141,6 +153,9 @@ fn call_view(c: &RunCall) -> RunCallView {
         seq: c.seq,
         api_call_slug: c.api_call_slug.as_str().to_owned(),
         service_slug: c.service_slug.as_str().to_owned(),
+        method: c.method.to_string(),
+        url_redacted: c.url_redacted.clone(),
+        headers_redacted: c.headers_redacted.clone(),
         status_code: c.status_code,
         response_bytes: c.response_bytes,
         response_truncated: c.response_truncated,
@@ -149,10 +164,33 @@ fn call_view(c: &RunCall) -> RunCallView {
     }
 }
 
+/// The full audit record — everything `store::run::RunDetail` carries beyond
+/// [`RunSummaryView`], redaction-safe by construction (every field here was already redacted at
+/// write time by `runtime::recorder`/`http::redact`; this layer never re-redacts, it only renders
+/// already-safe columns as JSON — re-redacting here would suggest the write-time pass can't be
+/// trusted, which is exactly backwards).
+///
+/// `definition_snapshot` lives **only** here, never on [`RunSummaryView`]/the list route: it's
+/// the full compiled api_call/script/service/budgets slice a tool ran from and can be large, and
+/// a run listing has no use for it. Keep it that way — this asymmetry (everything else flat and
+/// shared with the summary, this one field detail-only) is deliberate, not a gap to close later.
 #[derive(Debug, Serialize)]
 struct RunDetailView {
     #[serde(flatten)]
     summary: RunSummaryView,
+    caller_kind: &'static str,
+    caller_id: String,
+    request_id: String,
+    /// The run's frozen wall-clock start (`runtime::budget::BudgetMeter::execution_start`) — what
+    /// makes a script built on `execution_start()` actually replayable from this record.
+    execution_start: String,
+    definition_snapshot: Value,
+    definition_digest: String,
+    input_redacted: Value,
+    output_redacted: Option<Value>,
+    errors: Option<Value>,
+    budget_snapshot: Option<Value>,
+    timings: Option<Value>,
     calls: Vec<RunCallView>,
 }
 
@@ -161,7 +199,7 @@ async fn get_one(
     _caller: Caller,
     Path(id): Path<Uuid>,
 ) -> Result<Json<RunDetailView>, ApiError> {
-    let (summary, calls) = state
+    let (detail, calls) = state
         .stores()
         .run()
         .get(id)
@@ -169,7 +207,18 @@ async fn get_one(
         .map_err(ApiError::from_store)?
         .ok_or_else(|| ApiError::NotFound(format!("run {id} not found")))?;
     Ok(Json(RunDetailView {
-        summary: summary_view(&summary),
+        summary: summary_view(&detail.summary),
+        caller_kind: caller_kind_str(detail.caller_kind),
+        caller_id: detail.caller_id,
+        request_id: detail.request_id,
+        execution_start: detail.execution_start.to_rfc3339(),
+        definition_snapshot: detail.definition_snapshot,
+        definition_digest: detail.definition_digest,
+        input_redacted: detail.input_redacted,
+        output_redacted: detail.output_redacted,
+        errors: detail.errors,
+        budget_snapshot: detail.budget_snapshot,
+        timings: detail.timings,
         calls: calls.iter().map(call_view).collect(),
     }))
 }

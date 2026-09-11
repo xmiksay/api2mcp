@@ -50,8 +50,11 @@ impl ItemOutcome {
         }
     }
 
-    /// The dispatch outcome an actually-sent request produced, if any — `Ok`/`BudgetCut` both
-    /// carry one; `Failed`/`NotAttempted` never do.
+    /// The *completed* dispatch outcome an actually-sent request produced, if any — `Ok`/
+    /// `BudgetCut` both carry one; `Failed`/`NotAttempted` never do. This is not the same
+    /// question as "did a request reach the wire": a `Failed` entry whose `DispatchError` carries
+    /// a `DispatchAttempt` (see that type's doc) did reach the wire too, just without a
+    /// successful, projected value — `runtime::recorder` is what reads that half separately.
     pub fn dispatch_outcome(&self) -> Option<&DispatchOutcome> {
         match self {
             ItemOutcome::Ok(o) | ItemOutcome::BudgetCut(_, o) => Some(o),

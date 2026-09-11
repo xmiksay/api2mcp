@@ -113,8 +113,8 @@ async fn call_prints_the_projected_value_and_raw_shows_what_it_dropped() -> Resu
         .get(outcome.run_id)
         .await?
         .expect("the run was recorded");
-    assert_eq!(summary.tool_name, "get-item");
-    assert_eq!(summary.status, RunStatus::Ok);
+    assert_eq!(summary.summary.tool_name, "get-item");
+    assert_eq!(summary.summary.status, RunStatus::Ok);
 
     db.teardown().await
 }
@@ -185,8 +185,8 @@ async fn script_run_composes_two_api_calls_in_input_order_with_a_breakdown() -> 
         .get(outcome.run_id)
         .await?
         .expect("the run was recorded");
-    assert_eq!(summary.tool_name, "item-summary");
-    assert_eq!(summary.calls_made, 2);
+    assert_eq!(summary.summary.tool_name, "item-summary");
+    assert_eq!(summary.summary.calls_made, 2);
 
     db.teardown().await
 }
