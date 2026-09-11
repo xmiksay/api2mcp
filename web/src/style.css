@@ -1,1 +1,71 @@
 @import "tailwindcss";
+
+/* api2mcp admin — "schematic" theme: a dark, monospace-set instrument panel. This is a curation
+ * tool, not a marketing surface, so the whole UI typesets in one monospace family (hierarchy
+ * comes from weight/size/color, not font pairing) and color is reserved for meaning: cyan for
+ * read, amber for write, and a fixed status palette for run outcomes. Listed webfonts are not
+ * self-hosted (the CSP here is `default-src 'self'`, so no CDN font can load anyway) — they are
+ * a wishlist that degrades to the system monospace stack with no visible seam. */
+@theme {
+  --font-sans:
+    "JetBrains Mono", "Berkeley Mono", ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+  --font-mono:
+    "JetBrains Mono", "Berkeley Mono", ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+
+  --color-bg: #0a0e14;
+  --color-surface: #0f141c;
+  --color-surface-raised: #151b25;
+  --color-border: #212a36;
+  --color-border-strong: #2f3b4a;
+
+  --color-ink: #dbe4f0;
+  --color-ink-dim: #8794a6;
+  --color-ink-faint: #56637a;
+
+  --color-read: #22d3ee;
+  --color-read-dim: #0e7490;
+  --color-write: #f59e0b;
+  --color-write-dim: #92400e;
+
+  --color-ok: #34d399;
+  --color-partial: #fbbf24;
+  --color-error: #f87171;
+  --color-denied: #c084fc;
+  --color-budget: #fb923c;
+  --color-timeout: #94a3b8;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  font-feature-settings: "liga" 0;
+}
+
+/* A faint schematic grid gives the dark background depth without competing with content — an
+ * atmosphere detail, not a decoration that needs to be looked at. */
+#app {
+  min-height: 100vh;
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--color-border) 40%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-border) 40%, transparent) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+::selection {
+  background: var(--color-read-dim);
+  color: var(--color-ink);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 0;
+}
+
