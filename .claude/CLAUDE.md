@@ -20,12 +20,14 @@ make check        # fast typecheck, no SPA build
 make verify       # THE pre-"done" gate: lint + all tests
 make run          # server on :8080
 make dev          # vite on :5173 proxying /api, /mcp, /oauth, /login to :8080
+make db-create    # create the role and database (idempotent)
 make migrate      # apply migrations
 make seed         # import examples/demo.pack.yaml
 ```
 
-`DATABASE_URL` is required; copy `.env.example` to `.env`. A local Postgres on 5432 works as-is;
-`make db-up` starts a containerised one on **5433** instead, so it never fights an existing server.
+`DATABASE_URL` is required; copy `.env.example` to `.env`. The database is a **Postgres you run
+locally** — there is no container for it. `make db-create` sets up the role and database
+idempotently; `make db-reset` drops and recreates it.
 
 ## Gotchas
 

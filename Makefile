@@ -14,7 +14,7 @@ NOUI := SKIP_UI_BUILD=1
 
 .DEFAULT_GOAL := help
 .PHONY: help deps ui build run dev check fmt lint test test-unit test-int test-ui \
-        coverage db-up db-down db-reset migrate migrate-status seed verify clean
+        coverage db-create db-reset migrate migrate-status seed verify clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n",$$1,$$2}'
@@ -59,19 +59,23 @@ test: test-unit test-int test-ui ## All tests
 coverage: ## Backend coverage summary
 	$(NOUI) cargo llvm-cov --summary-only
 
-# Optional containerised Postgres, published on 5433 so it never fights a Postgres already
-# listening on 5432. If you already run one locally, skip these and point DATABASE_URL at it.
-db-up: ## Start the containerised dev Postgres on :5433
-	docker compose up -d db
+# The database is a Postgres you already run locally — there is no container for it.
+# ADMIN_URL is DATABASE_URL with the trailing database name swapped for /postgres, which is
+# where CREATE/DROP DATABASE have to be issued from.
+DB_NAME = $(shell basename "$(DATABASE_URL)")
+ADMIN_URL = $(shell echo "$(DATABASE_URL)" | sed 's|/[^/]*$$|/postgres|')
 
-db-down: ## Stop the containerised dev Postgres
-	docker compose down
+db-create: ## Create the api2mcp role and database on the local Postgres (idempotent)
+	@psql "$(ADMIN_URL)" -v ON_ERROR_STOP=1 -q \
+	  -c "DO \$$\$$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='api2mcp') \
+	      THEN CREATE ROLE api2mcp LOGIN PASSWORD 'api2mcp' CREATEDB; END IF; END \$$\$$;"
+	@psql "$(ADMIN_URL)" -tAc "SELECT 1 FROM pg_database WHERE datname='$(DB_NAME)'" | grep -q 1 \
+	  || psql "$(ADMIN_URL)" -q -c "CREATE DATABASE $(DB_NAME) OWNER api2mcp"
 
 db-reset: ## Drop and recreate the database in DATABASE_URL, then migrate
-	@psql "$${DATABASE_URL:?set DATABASE_URL}" -c 'SELECT 1' >/dev/null
-	@psql "$$(echo "$$DATABASE_URL" | sed 's|/[^/]*$$|/postgres|')" \
-	  -c "DROP DATABASE IF EXISTS $$(basename "$$DATABASE_URL") WITH (FORCE)" \
-	  -c "CREATE DATABASE $$(basename "$$DATABASE_URL")"
+	@psql "$(ADMIN_URL)" -v ON_ERROR_STOP=1 -q \
+	  -c "DROP DATABASE IF EXISTS $(DB_NAME) WITH (FORCE)" \
+	  -c "CREATE DATABASE $(DB_NAME) OWNER api2mcp"
 	$(MAKE) migrate
 
 migrate: ## Apply pending migrations

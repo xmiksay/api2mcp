@@ -23,6 +23,7 @@ generator, and not a host for anyone else's credentials.
 
 ```bash
 cp .env.example .env          # set DATABASE_URL at minimum
+make db-create                # role + database on your local Postgres
 make migrate                  # apply the schema
 make seed                     # import examples/demo.pack.yaml
 make run                      # server on :8080
@@ -43,7 +44,7 @@ claude mcp add --transport http api2mcp http://localhost:8080/mcp/demo
 | `make check` | fast typecheck, no SPA build |
 | `make verify` | lint + all tests — the pre-"done" gate |
 | `make run` / `make dev` | server on :8080 / vite on :5173 proxying to it |
-| `make migrate` / `make db-reset` | schema up / recreate and migrate |
+| `make db-create` / `make migrate` / `make db-reset` | create the DB / apply the schema / recreate and migrate |
 | `api2mcp call <slug> --arg k=v --raw` | run one api_call, raw and projected side by side |
 | `api2mcp export --endpoint <slug>` | write a portable YAML pack |
 
