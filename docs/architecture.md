@@ -109,6 +109,15 @@ fan-out, never the completion index — invariant I7 made durable.
 The seven invariants and the exact function enforcing each are in the crate-level doc comment in
 `src/lib.rs`. Read it before touching `http/`, `resolve/`, `runtime/` or `script/`.
 
+**I7 is no longer absolute.** Ordering and budget attribution are unconditionally deterministic —
+input-order fan-out assembly, whole-batch call reservation, index-order byte commit — and that half
+is what `run_calls.seq` records. But scripts need real date logic to be useful for transformation,
+so time enters through two separate doors: `execution_start()`, frozen for the run and recorded on
+it, and `now()`, the live wall clock. A script built only on the former is reproducible and
+replayable from its run record; one that calls the latter is not, and that trade is visible in the
+script's own source rather than hidden in the engine. `BasicTimePackage` is still excluded, and a
+golden test still fails if it reappears.
+
 `plan.md`'s **I8 — versioned, immutable definitions — is deliberately not implemented.** Definitions
 are mutable and last-write-wins. This trades the ability to pin a tool version for a much smaller
 write path, and pushes the entire audit burden onto the run log.
