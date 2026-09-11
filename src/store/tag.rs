@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    Set, TransactionTrait,
+    Set,
 };
 use uuid::Uuid;
 
@@ -68,62 +68,63 @@ impl TagStore {
     }
 
     /// Replaces every tag membership row for `api_call_id` with `wanted`, creating any tag
-    /// that doesn't exist yet. Runs in one transaction so a reader never observes a
+    /// that doesn't exist yet. Takes the caller's connection (generic over
+    /// [`ConnectionTrait`], matching `EndpointStore::replace_aliases`/`replace_auth_providers`
+    /// and `ScriptStore::replace_callable`/`replace_params`) rather than opening its own
+    /// transaction: `ApiCallStore::create`/`update` call this while their own row insert is
+    /// still uncommitted on a separate transaction, so a second, independent transaction here
+    /// couldn't see that row yet and every tag insert would trip the `api_call_tags` foreign
+    /// key. Composing into the caller's transaction is what makes the api_call row and its
+    /// tags commit — or fail — atomically, and is also what lets a reader never observe a
     /// half-updated tag set.
-    pub(crate) async fn set_api_call_tags(
+    pub(crate) async fn set_api_call_tags<C: ConnectionTrait>(
         &self,
+        conn: &C,
         api_call_id: Uuid,
         wanted: &BTreeSet<Tag>,
     ) -> Result<(), StoreError> {
-        let txn = self
-            .db
-            .begin()
-            .await
-            .map_err(db_err("tag::set_api_call_tags"))?;
         api_call_tags::Entity::delete_many()
             .filter(api_call_tags::Column::ApiCallId.eq(api_call_id))
-            .exec(&txn)
+            .exec(conn)
             .await
             .map_err(db_err("tag::set_api_call_tags"))?;
         for tag in wanted {
-            let tag_id = self.ensure(&txn, tag).await?;
+            let tag_id = self.ensure(conn, tag).await?;
             api_call_tags::ActiveModel {
                 api_call_id: Set(api_call_id),
                 tag_id: Set(tag_id),
             }
-            .insert(&txn)
+            .insert(conn)
             .await
             .map_err(db_err("tag::set_api_call_tags"))?;
         }
-        txn.commit().await.map_err(db_err("tag::set_api_call_tags"))
+        Ok(())
     }
 
-    pub(crate) async fn set_script_tags(
+    /// See [`Self::set_api_call_tags`] for why this takes the caller's connection instead of
+    /// opening its own transaction.
+    pub(crate) async fn set_script_tags<C: ConnectionTrait>(
         &self,
+        conn: &C,
         script_id: Uuid,
         wanted: &BTreeSet<Tag>,
     ) -> Result<(), StoreError> {
-        let txn = self
-            .db
-            .begin()
-            .await
-            .map_err(db_err("tag::set_script_tags"))?;
         script_tags::Entity::delete_many()
             .filter(script_tags::Column::ScriptId.eq(script_id))
-            .exec(&txn)
+            .exec(conn)
             .await
             .map_err(db_err("tag::set_script_tags"))?;
         for tag in wanted {
-            let tag_id = self.ensure(&txn, tag).await?;
+            let tag_id = self.ensure(conn, tag).await?;
             script_tags::ActiveModel {
                 script_id: Set(script_id),
                 tag_id: Set(tag_id),
             }
-            .insert(&txn)
+            .insert(conn)
             .await
             .map_err(db_err("tag::set_script_tags"))?;
         }
-        txn.commit().await.map_err(db_err("tag::set_script_tags"))
+        Ok(())
     }
 
     async fn tags_by_ids(&self, ids: &[Uuid]) -> Result<BTreeSet<Tag>, StoreError> {

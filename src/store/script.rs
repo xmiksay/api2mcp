@@ -83,7 +83,7 @@ impl ScriptStore {
         replace_params(&txn, id, &script.params).await?;
         self.replace_callable(&txn, id, &script.callable).await?;
         TagStore::new(self.db.clone())
-            .set_script_tags(id, tags)
+            .set_script_tags(&txn, id, tags)
             .await?;
         MetaStore::bump_generation_in(&txn).await?;
         txn.commit().await.map_err(db_err("script::create"))
@@ -99,7 +99,7 @@ impl ScriptStore {
         replace_params(&txn, id, &script.params).await?;
         self.replace_callable(&txn, id, &script.callable).await?;
         TagStore::new(self.db.clone())
-            .set_script_tags(id, tags)
+            .set_script_tags(&txn, id, tags)
             .await?;
         MetaStore::bump_generation_in(&txn).await?;
         txn.commit().await.map_err(db_err("script::update"))

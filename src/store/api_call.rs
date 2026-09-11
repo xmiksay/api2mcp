@@ -107,7 +107,7 @@ impl ApiCallStore {
             .map_err(db_err("api_call::create"))?;
         replace_params(&txn, id, &api_call.params).await?;
         TagStore::new(self.db.clone())
-            .set_api_call_tags(id, tags)
+            .set_api_call_tags(&txn, id, tags)
             .await?;
         MetaStore::bump_generation_in(&txn).await?;
         txn.commit().await.map_err(db_err("api_call::create"))
@@ -125,7 +125,7 @@ impl ApiCallStore {
             .map_err(db_err("api_call::update"))?;
         replace_params(&txn, id, &api_call.params).await?;
         TagStore::new(self.db.clone())
-            .set_api_call_tags(id, tags)
+            .set_api_call_tags(&txn, id, tags)
             .await?;
         MetaStore::bump_generation_in(&txn).await?;
         txn.commit().await.map_err(db_err("api_call::update"))
