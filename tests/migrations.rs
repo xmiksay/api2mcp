@@ -164,6 +164,7 @@ fn sample_api_call(service_slug: &Slug, name: &str) -> ApiCall {
         timeout_ms: None,
         max_response_bytes: None,
         params: vec![],
+        description: None,
     }
 }
 

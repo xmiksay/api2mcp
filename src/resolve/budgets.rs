@@ -65,6 +65,7 @@ mod tests {
             timeout_ms: None,
             max_response_bytes: None,
             params: vec![],
+            description: None,
         };
         PlannedApiCall {
             url_template: UrlTemplate::parse(&api_call.path_template).unwrap(),

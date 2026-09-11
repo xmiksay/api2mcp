@@ -42,6 +42,7 @@ fn plan_with_n_calls(fixture: &Fixture) -> EndpointPlan {
             timeout_ms: None,
             max_response_bytes: None,
             params: vec![],
+            description: None,
         };
         let planned = PlannedApiCall {
             url_template: UrlTemplate::parse(&call.path_template).expect("valid template"),

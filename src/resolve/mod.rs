@@ -264,6 +264,7 @@ mod tests {
             timeout_ms: None,
             max_response_bytes: None,
             params: vec![],
+            description: None,
         };
         stores
             .api_call()

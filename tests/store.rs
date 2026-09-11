@@ -68,6 +68,7 @@ fn sample_api_call(service_slug: &Slug, name: &str, params: Vec<Param>) -> ApiCa
         timeout_ms: None,
         max_response_bytes: None,
         params,
+        description: None,
     }
 }
 

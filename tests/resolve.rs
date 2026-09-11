@@ -67,6 +67,7 @@ fn api_call(service_slug: &Slug, name: &str, access: Access) -> ApiCall {
         timeout_ms: None,
         max_response_bytes: None,
         params: vec![],
+        description: None,
     }
 }
 

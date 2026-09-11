@@ -60,6 +60,7 @@ fn plan_with_calls_paginated(
             timeout_ms: None,
             max_response_bytes: None,
             params: vec![],
+            description: None,
         };
         let planned = PlannedApiCall {
             url_template: UrlTemplate::parse(&call.path_template).expect("valid template"),

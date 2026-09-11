@@ -42,6 +42,7 @@ fn call() -> ApiCall {
             description: None,
             position: 0,
         }],
+        description: None,
     }
 }
 

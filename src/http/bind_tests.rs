@@ -49,6 +49,7 @@ fn test_call(path_template: &str, params: Vec<Param>) -> ApiCall {
         timeout_ms: None,
         max_response_bytes: None,
         params,
+        description: None,
     }
 }
 
