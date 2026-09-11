@@ -91,6 +91,13 @@ the read/write class; an endpoint selects with an expression over them.
 **No column anywhere can hold a credential value** — only `credential_env_key`, an env var name.
 That is invariant I4's structural half. `script_api_calls` is I1's declarative half.
 
+List-valued columns (`origin_allowlist`, `scopes`, `redirect_uris`) are **`JSONB`, not `TEXT[]`**.
+SeaORM's Postgres array support sits behind a feature flag, and the schema is already JSONB-heavy
+(`query_fixed`, `body_template`, `projection`, `pagination`, `errors`, `definition_snapshot`), so
+one representation for every structured column is the simpler thing to hold in your head. These
+lists are always read whole and never queried by element, so the GIN-indexability of a real array
+buys nothing here. Switching later needs a migration — the two are wire-incompatible.
+
 `runs` stores a full `definition_snapshot` of what actually executed plus a `definition_digest`.
 Because definitions are mutable (see below), that snapshot is the *only* answer to "what did this
 tool look like when it ran", so it carries the api_call/script, its params, its projection, the

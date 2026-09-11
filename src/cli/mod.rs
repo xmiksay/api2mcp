@@ -6,6 +6,8 @@
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 
+pub mod migrate;
+
 #[derive(Parser, Debug)]
 #[command(name = "api2mcp", version = crate::version::LONG_VERSION, about = "MCP Tool Factory")]
 pub struct Cli {
@@ -94,7 +96,7 @@ pub enum UserAction {
 pub async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Serve => bail!("serve: not implemented yet (chunk C11)"),
-        Command::Migrate { .. } => bail!("migrate: not implemented yet (chunk C1)"),
+        Command::Migrate { action } => migrate::run(action).await,
         Command::Call { .. } => bail!("call: not implemented yet (chunk C8)"),
         Command::Script { .. } => bail!("script: not implemented yet (chunk C9)"),
         Command::Export { .. } | Command::Import { .. } => {
