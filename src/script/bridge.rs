@@ -19,6 +19,7 @@ use crate::runtime::budget::{BudgetAxis, BudgetMeter};
 use crate::runtime::dispatch::{self, DispatchContext, DispatchError};
 use crate::runtime::fanout::ConcurrencyLimits;
 use crate::runtime::partial::{BatchEntry, BatchStatus, ItemOutcome, run_batch};
+use std::sync::Mutex;
 
 /// A script-authoring cap on a single `api_many()` call — independent of the run's own dynamic
 /// call budget ([`BudgetMeter`]). A batch this large is a property of the script, not of the
@@ -62,9 +63,10 @@ pub async fn service(
     limits: &ConcurrencyLimits,
     meter: &BudgetMeter,
     caller_script: &Slug,
+    audit: &Mutex<Vec<BatchEntry>>,
 ) {
     while let Some(call) = rx.recv().await {
-        let reply = service_one(plan, ctx, limits, meter, caller_script, &call).await;
+        let reply = service_one(plan, ctx, limits, meter, caller_script, &call, audit).await;
         // The blocking thread may have already given up waiting (bridge dropped, engine
         // unwinding) — a closed reply channel is not this loop's problem to report.
         let _ = call.reply.send(reply);
@@ -78,6 +80,7 @@ async fn service_one(
     meter: &BudgetMeter,
     caller_script: &Slug,
     call: &BindingCall,
+    audit: &Mutex<Vec<BatchEntry>>,
 ) -> BridgeReply {
     if call.batch.len() > MAX_BATCH {
         return BridgeReply::Refused(format!(
@@ -99,6 +102,20 @@ async fn service_one(
         .map(|args| (call.name.clone(), args))
         .collect();
     let outcome = run_batch(plan, ctx, limits, meter, Some(caller_script), items).await;
+
+    // Every upstream call a script makes still has to reach the audit trail, or a script tool
+    // would record a run with zero `run_calls` rows and the auditability claim would be false
+    // for exactly the tools that do the most. Entries are re-indexed onto one monotonic sequence
+    // across the whole script run, because each batch numbers its own items from zero and
+    // `run_calls` is keyed `UNIQUE(run_id, seq)`.
+    if let Ok(mut sink) = audit.lock() {
+        let base = sink.len();
+        sink.extend(outcome.entries.iter().enumerate().map(|(i, e)| BatchEntry {
+            index: base + i,
+            name: e.name.clone(),
+            outcome: e.outcome.clone(),
+        }));
+    }
 
     // Every item failing on the run's own wall clock (as opposed to one slow call's own
     // per-request timeout, which stays a per-item `Failed` entry) means the deadline was already

@@ -30,6 +30,7 @@ pub mod engine;
 pub mod errors;
 pub mod marshal;
 
+use std::sync::Mutex;
 use std::time::Instant;
 
 use rhai::{Dynamic, Scope};
@@ -41,6 +42,7 @@ use crate::resolve::EndpointPlan;
 use crate::runtime::budget::BudgetMeter;
 use crate::runtime::dispatch::DispatchContext;
 use crate::runtime::fanout::ConcurrencyLimits;
+use crate::runtime::partial::BatchEntry;
 use crate::schema;
 
 pub use errors::{RunScriptError, ScriptFailure, ScriptFailureKind};
@@ -52,6 +54,16 @@ pub use errors::{RunScriptError, ScriptFailure, ScriptFailureKind};
 /// Argument binding happens first, synchronously, against the script's own declared params
 /// ([`ScriptDef::params`]) — a caller-side mismatch is [`RunScriptError::Args`], distinct from
 /// the script itself misbehaving ([`RunScriptError::Script`]).
+/// A finished script run: what it returned, plus every upstream call it made along the way so
+/// the recorder can write a `run_calls` row for each. A script's calls are made inside the
+/// bridge rather than by the caller, so without collecting them here they would be invisible to
+/// the audit trail.
+#[derive(Debug)]
+pub struct ScriptRun {
+    pub value: Value,
+    pub calls: Vec<BatchEntry>,
+}
+
 pub async fn run_script(
     plan: &EndpointPlan,
     ctx: &DispatchContext<'_>,
@@ -60,7 +72,7 @@ pub async fn run_script(
     caller_script: &Slug,
     script: &ScriptDef,
     args: Value,
-) -> Result<Value, RunScriptError> {
+) -> Result<ScriptRun, RunScriptError> {
     let bound = schema::bind_args(&script.params, &args).map_err(RunScriptError::Args)?;
     let scope_vars: Vec<(String, Value)> = bound.into_iter().collect();
 
@@ -71,10 +83,12 @@ pub async fn run_script(
     let handle =
         tokio::task::spawn_blocking(move || run_blocking(&source, scope_vars, deadline, tx));
 
-    bridge::service(rx, plan, ctx, limits, meter, caller_script).await;
+    let audit = Mutex::new(Vec::new());
+    bridge::service(rx, plan, ctx, limits, meter, caller_script, &audit).await;
+    let calls = audit.into_inner().unwrap_or_default();
 
     match handle.await {
-        Ok(Ok(value)) => Ok(value),
+        Ok(Ok(value)) => Ok(ScriptRun { value, calls }),
         Ok(Err(failure)) => Err(RunScriptError::Script(failure)),
         // The blocking closure panicked instead of returning — never allowed to take the process
         // down with it.

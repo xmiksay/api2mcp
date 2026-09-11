@@ -107,12 +107,11 @@ async fn run_named_tool(
     {
         Ok(result) => Ok(run_result_outcome(result)),
         Err(ExecutorError::ToolNotFound { name }) => Err(DispatchError::UnknownTool(name)),
-        // A real, known tool that this build simply can't run yet (script execution is a later
-        // chunk) is a fact about *this call*, not the protocol — `isError: true`, not a
-        // JSON-RPC error.
-        Err(ExecutorError::ScriptExecutionNotImplemented { name }) => Ok(ToolCallOutcome::error(
-            format!("tool {name:?} is a script; script execution is not implemented in this build"),
-        )),
+        // The plan named a script tool whose definition is not on the plan — a definition
+        // inconsistency, which is a fact about this call rather than about the protocol.
+        Err(ExecutorError::ScriptNotOnPlan { name }) => Ok(ToolCallOutcome::error(format!(
+            "tool {name:?} names a script that is not on this endpoint's plan"
+        ))),
         // Loading auth providers or persisting the run failed on our side, not the caller's —
         // that is a protocol-level problem (the server couldn't do its job), not "this call
         // didn't succeed".

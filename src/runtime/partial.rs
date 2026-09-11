@@ -21,7 +21,7 @@ use super::dispatch::{CallBudget, DispatchContext, DispatchError, DispatchOutcom
 use super::fanout::{BoxedCall, ConcurrencyLimits, fan_out};
 
 /// One item's fate within a batch.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ItemOutcome {
     Ok(DispatchOutcome),
     /// Ran (or failed to resolve/bind) for a reason unrelated to the run's budget.
@@ -60,7 +60,7 @@ impl ItemOutcome {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BatchEntry {
     pub index: usize,
     pub name: String,

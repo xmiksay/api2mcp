@@ -56,10 +56,8 @@ use recorder::RunRecord;
 pub enum ExecutorError {
     #[error("tool {name:?} is not defined on this endpoint")]
     ToolNotFound { name: String },
-    /// C9 doesn't exist yet — see the module docs. A script-target tool is a real, named
-    /// limitation, not a silently-wrong result.
-    #[error("tool {name:?} is a script; script execution is not implemented in this build")]
-    ScriptExecutionNotImplemented { name: String },
+    #[error("tool {name:?} names a script that is not on this endpoint's plan")]
+    ScriptNotOnPlan { name: String },
     #[error("loading auth providers: {0}")]
     Auth(StoreError),
     #[error("recording the run: {0}")]
@@ -159,12 +157,6 @@ impl Executor {
             .ok_or_else(|| ExecutorError::ToolNotFound {
                 name: tool_name.to_owned(),
             })?;
-        if matches!(tool.target, ToolTarget::Script(_)) {
-            return Err(ExecutorError::ScriptExecutionNotImplemented {
-                name: tool_name.to_owned(),
-            });
-        }
-
         let auth = AuthProviders::load(&self.stores.auth_provider(), plan)
             .await
             .map_err(ExecutorError::Auth)?;
@@ -177,26 +169,54 @@ impl Executor {
         let limits = ConcurrencyLimits::build(plan, tool.budgets.max_concurrency);
         let meter = BudgetMeter::new(tool.budgets);
 
-        let batch = run_batch(
-            plan,
-            &ctx,
-            &limits,
-            &meter,
-            None,
-            vec![(tool_name.to_owned(), args.clone())],
-        )
-        .await;
-
-        let status = to_run_status(batch.status);
-        let value = batch
-            .entries
-            .first()
-            .and_then(|e| e.outcome.dispatch_outcome())
-            .map(|o| o.value.clone());
-        let error = if status == RunStatus::Ok {
-            None
-        } else {
-            batch.entries.first().map(entry_error_string)
+        // A script and an api_call differ only in how the value is produced; budgets, auth,
+        // concurrency and the audit record are identical, which is why both paths converge on
+        // the same recorder call below.
+        let (status, value, error, entries) = match &tool.target {
+            ToolTarget::Script(script_slug) => {
+                let script = plan.scripts.get(script_slug).ok_or_else(|| {
+                    ExecutorError::ScriptNotOnPlan {
+                        name: tool_name.to_owned(),
+                    }
+                })?;
+                match crate::script::run_script(
+                    plan,
+                    &ctx,
+                    &limits,
+                    &meter,
+                    script_slug,
+                    script,
+                    args.clone(),
+                )
+                .await
+                {
+                    Ok(run) => (RunStatus::Ok, Some(run.value), None, run.calls),
+                    Err(e) => (RunStatus::Error, None, Some(e.to_string()), Vec::new()),
+                }
+            }
+            ToolTarget::ApiCall(_) => {
+                let batch = run_batch(
+                    plan,
+                    &ctx,
+                    &limits,
+                    &meter,
+                    None,
+                    vec![(tool_name.to_owned(), args.clone())],
+                )
+                .await;
+                let status = to_run_status(batch.status);
+                let value = batch
+                    .entries
+                    .first()
+                    .and_then(|e| e.outcome.dispatch_outcome())
+                    .map(|o| o.value.clone());
+                let error = if status == RunStatus::Ok {
+                    None
+                } else {
+                    batch.entries.first().map(entry_error_string)
+                };
+                (status, value, error, batch.entries)
+            }
         };
 
         let request_id = Uuid::new_v4().to_string();
@@ -211,7 +231,7 @@ impl Executor {
                 args,
                 output_redacted: value.clone(),
                 status,
-                entries: &batch.entries,
+                entries: &entries,
                 meter: &meter,
                 elapsed: Some(started.elapsed()),
             },
