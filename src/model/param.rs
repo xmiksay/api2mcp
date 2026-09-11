@@ -23,6 +23,11 @@ pub enum ParamLocation {
     Header,
     /// The value is spliced into the request body at this JSON pointer.
     Body(jsonptr::PointerBuf),
+    /// The value is bound into the script's Rhai scope as a plain variable and never reaches an
+    /// HTTP request — `script_params` deliberately has no `location` column, since a script
+    /// input isn't placed anywhere in a request. Anything that binds an HTTP request (
+    /// `http::bind`) must reject this variant; only `script::bindings` may accept it.
+    Local,
 }
 
 /// The JSON-Schema-visible type of a param's value. Also drives coercion in
