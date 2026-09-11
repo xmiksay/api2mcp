@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: 4
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: api2mcp
+          POSTGRES_PASSWORD: api2mcp
+          POSTGRES_DB: api2mcp
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U api2mcp" --health-interval 10s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://api2mcp:api2mcp@localhost:5432/api2mcp
+      # Integration tests create a scratch database per test and derive the admin URL by
+      # swapping the trailing name for /postgres, so the role needs CREATE DATABASE and the
+      # URL needs a path component.
+      TEST_DATABASE_URL: postgres://api2mcp:api2mcp@localhost:5432/api2mcp
+      # The runner image ships nvm; without this the Makefile's `nvm use` would try to switch
+      # to a version that is not installed. Unset it so the recipes fall through to setup-node.
+      NVM_DIR: /nonexistent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: make deps
+      - run: make ui
+      - run: make verify
