@@ -1,21 +1,34 @@
 //! The upstream HTTP client, and the physical enforcement points for I2, I3 and I4.
 //!
-//! This module ships in two chunks. C3 (this one) is the pure, zero-network half: URL
-//! templates (I3, `url_template.rs`), origin checking (I2, `origin.rs`), the request binder
-//! (`bind.rs`), the SSRF guard's IP-classification table (`ssrf.rs`), and redaction (I4's other
-//! half alongside [`crate::secret::Secret`], `redact.rs`). Sending a request, following
-//! redirects, and pagination are C4's `http::send` — deliberately absent here so everything in
-//! this module is unit-testable with no network access.
+//! This module shipped in two chunks. C3 is the pure, zero-network half: URL templates (I3,
+//! `url_template.rs`), origin checking (I2, `origin.rs`), the request binder (`bind.rs`), the
+//! SSRF guard's IP-classification table (`ssrf.rs`), and redaction (I4's other half alongside
+//! [`crate::secret::Secret`], `redact.rs`). C4 (this half) sends the request: the guarded DNS
+//! resolver (`resolver.rs`), one `reqwest::Client` per service (`client.rs`), the capped body
+//! reader (`body.rs`), credential application (`auth.rs`), the redirect loop (`send.rs`), and
+//! pagination (`paginate.rs`).
 
+mod auth;
 mod bind;
+mod body;
+mod client;
 mod origin;
+mod paginate;
 mod redact;
+mod resolver;
+mod send;
 mod ssrf;
 mod url_template;
 
+pub use auth::{AuthError, apply as apply_auth};
 pub use bind::{BoundRequest, bind};
+pub use body::{BodyError, read_capped};
+pub use client::{ClientBuildError, UpstreamPool};
 pub use origin::assert_allowed;
+pub use paginate::{PaginateError, paginate};
 pub use redact::{redact_headers, redact_message, redact_url};
+pub use resolver::{DnsBackend, DnsError, GuardedResolver, HickoryDns, RebindDns, StaticDns};
+pub use send::{CallError, CallResponse, SendParams, send};
 pub use ssrf::{IpVerdict, SsrfPolicy, check_url, classify};
 pub use url_template::{Segment, TemplateError, UrlTemplate};
 
