@@ -7,6 +7,7 @@ use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 
 pub mod migrate;
+pub mod pack;
 pub mod token;
 pub mod user;
 
@@ -108,9 +109,8 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Migrate { action } => migrate::run(action).await,
         Command::Call { .. } => bail!("call: not implemented yet (chunk C8)"),
         Command::Script { .. } => bail!("script: not implemented yet (chunk C9)"),
-        Command::Export { .. } | Command::Import { .. } => {
-            bail!("pack: not implemented yet (chunk C13)")
-        }
+        Command::Export { endpoint } => pack::export(&endpoint).await,
+        Command::Import { path, dry_run } => pack::import(&path, dry_run).await,
         Command::Token { action } => token::run(action).await,
         Command::User { action } => user::run(action).await,
     }

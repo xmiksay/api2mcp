@@ -1,0 +1,106 @@
+# The pack `make seed` imports (see the Makefile's `seed` target) and `A2M_DEFAULT_ENDPOINT`
+# in `.env.example` points at. Demoable with no credentials and no network: `demo-api`'s
+# base_url below is a placeholder loopback address meant to be pointed at a local fixture —
+# `tests/pack_roundtrip.rs`'s `demo_pack_resolves_and_runs_against_the_fixture` test loads this
+# exact file, patches only `services.demo-api.base_url`/`origin_allowlist` to a freshly started
+# `tests/fixture::Fixture` instance, imports it, and drives `get-item`/`list-items` for real —
+# proving this shape (a path param, a definer-fixed param, a projection, and a script composing
+# two calls) actually works end to end, not just that it parses.
+version: 1
+
+services:
+  demo-api:
+    base_url: "http://127.0.0.1:8089"
+    origin_allowlist:
+      - "http://127.0.0.1:8089"
+    default_headers: {}
+    timeout_ms: 5000
+    max_concurrency: 4
+    max_response_bytes: 1048576
+
+auth_providers: {}
+
+api_calls:
+  get-item:
+    service: demo-api
+    method: GET
+    path_template: "/items/{id}"
+    access: read
+    idempotent: true
+    projection:
+      fields:
+        - name: id
+          path: "$.id"
+          cardinality: one
+        - name: title
+          path: "$.title"
+          cardinality: one
+    params:
+      # Caller-supplied: fills the `{id}` path placeholder.
+      - name: id
+        location: path
+        type: string
+        required: true
+        position: 0
+      # Definer-fixed: always sent, never visible to (or overridable by) the caller — see
+      # `Param::is_model_visible`.
+      - name: format
+        location: query
+        type: string
+        required: false
+        fixed: "json"
+        position: 1
+    tags:
+      - demo
+
+  list-items:
+    service: demo-api
+    method: GET
+    path_template: "/items"
+    access: read
+    idempotent: true
+    params:
+      - name: limit
+        location: query
+        type: integer
+        required: false
+        default: 10
+        position: 0
+    tags:
+      - demo
+
+scripts:
+  item-summary:
+    description: >-
+      Fetches a page of items, then the detail of the first one — a minimal example of a
+      script composing two api_calls (I1: only through their declared aliases below, never
+      raw HTTP).
+    source: |
+      let listing = api("list", #{});
+      let items = listing["items"];
+      if items.len() == 0 {
+          #{ "count": 0, "first": () }
+      } else {
+          let first_id = items[0]["id"];
+          let detail = api("get", #{ "id": first_id });
+          #{ "count": items.len(), "first": detail }
+      }
+    callable:
+      get: get-item
+      list: list-items
+    budgets:
+      max_calls: 5
+    tags:
+      - demo
+
+endpoints:
+  demo:
+    tag_expr: "has(demo)"
+    write_ceiling: read
+    instructions: >-
+      Demo endpoint for the api2mcp skeleton — backed by a local fixture, no credentials
+      required.
+    enabled: true
+
+tags:
+  - demo
