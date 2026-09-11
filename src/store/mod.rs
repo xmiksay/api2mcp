@@ -37,7 +37,9 @@ pub use endpoint::EndpointStore;
 pub use meta::MetaStore;
 pub use oauth::{NewOauthClient, OauthClient, OauthStore};
 pub use oauth_tokens::{IssuedOauthToken, OauthToken, TokenGrant};
-pub use run::{NewRun, NewRunCall, RunCall, RunStore, RunSummary};
+pub use run::{
+    NewRun, NewRunCall, RunCall, RunCallerKind, RunStatus, RunStore, RunSummary, RunTargetKind,
+};
 pub use script::{ScriptStore, TaggedScript};
 pub use service::ServiceStore;
 pub use service_token::{MintedServiceToken, ServiceTokenRecord, ServiceTokenStore};
