@@ -26,8 +26,28 @@ cp .env.example .env          # set DATABASE_URL at minimum
 make db-create                # role + database on your local Postgres
 make migrate                  # apply the schema
 make seed                     # import examples/demo.pack.yaml
-make run                      # server on :8080
+make demo-upstream            # terminal 2: the fake API the demo pack curates
+make run                      # terminal 3: server on :8080
 ```
+
+The demo needs no credentials and no network: `make demo-upstream` serves a small catalogue on
+`127.0.0.1:8089`, and the demo pack curates it. Set `A2M_ALLOW_LOOPBACK_UPSTREAM=1` so the SSRF
+guard permits a loopback upstream — it refuses one by default, which is the point.
+
+Mint a token and try it:
+
+```bash
+api2mcp token mint --label demo --scope mcp
+curl -s -X POST http://127.0.0.1:8080/mcp/demo \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
+       "params":{"name":"get-item","arguments":{"id":"3"}}}'
+```
+
+The upstream returns an item with `owner`, `secret_internal_id` and a `_links` block; the tool
+returns `{"id":"3","title":"Item 3"}`. That difference is the product. Ask for id `999` and you
+get `isError: true` carrying the upstream's own 404 message rather than its error body dressed up
+as data.
 
 Then point a client at it:
 
