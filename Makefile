@@ -59,15 +59,19 @@ test: test-unit test-int test-ui ## All tests
 coverage: ## Backend coverage summary
 	$(NOUI) cargo llvm-cov --summary-only
 
-db-up: ## Start the dev Postgres
+# Optional containerised Postgres, published on 5433 so it never fights a Postgres already
+# listening on 5432. If you already run one locally, skip these and point DATABASE_URL at it.
+db-up: ## Start the containerised dev Postgres on :5433
 	docker compose up -d db
 
-db-down: ## Stop the dev Postgres
+db-down: ## Stop the containerised dev Postgres
 	docker compose down
 
-db-reset: ## Drop and recreate the dev database, then migrate
-	docker compose exec -T db psql -U api2mcp -d postgres -c 'DROP DATABASE IF EXISTS api2mcp WITH (FORCE)'
-	docker compose exec -T db psql -U api2mcp -d postgres -c 'CREATE DATABASE api2mcp'
+db-reset: ## Drop and recreate the database in DATABASE_URL, then migrate
+	@psql "$${DATABASE_URL:?set DATABASE_URL}" -c 'SELECT 1' >/dev/null
+	@psql "$$(echo "$$DATABASE_URL" | sed 's|/[^/]*$$|/postgres|')" \
+	  -c "DROP DATABASE IF EXISTS $$(basename "$$DATABASE_URL") WITH (FORCE)" \
+	  -c "CREATE DATABASE $$(basename "$$DATABASE_URL")"
 	$(MAKE) migrate
 
 migrate: ## Apply pending migrations
