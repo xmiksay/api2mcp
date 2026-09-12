@@ -216,3 +216,43 @@ async fn a_scoped_token_is_also_refused_on_tools_list_for_an_ungranted_endpoint(
 
     g.db.teardown().await
 }
+
+#[tokio::test]
+async fn deleting_a_scoped_tokens_only_endpoint_does_not_widen_it_to_every_endpoint() -> Result<()>
+{
+    let Some(g) = setup().await? else {
+        return Ok(());
+    };
+    let stores = Stores::new(g.db.conn.clone());
+
+    // The scoped token is granted `grant-a` and nothing else. Deleting `grant-a` cascades its
+    // grant row away, leaving the token with an empty grant set — which must mean "reaches
+    // nothing", not "reaches everything". Under an empty-means-all reading this delete would hand
+    // the token `grant-b`, escalating it as a side effect of an unrelated edit.
+    stores.endpoint().delete(&slug("grant-a")).await?;
+
+    let resp = rpc(
+        &g.router,
+        &g.scoped_token,
+        "/mcp/grant-b",
+        req(1, "initialize", None),
+    )
+    .await;
+    assert!(
+        resp.get("result").is_none(),
+        "a scoped token must not reach grant-b after its own endpoint was deleted: {resp:?}"
+    );
+
+    // And the unrestricted token is unaffected — this is about the scoped one widening, not about
+    // the delete breaking everything.
+    let ok = rpc(
+        &g.router,
+        &g.unrestricted_token,
+        "/mcp/grant-b",
+        req(2, "initialize", None),
+    )
+    .await;
+    assert!(ok.get("result").is_some(), "got {ok:?}");
+
+    g.db.teardown().await
+}

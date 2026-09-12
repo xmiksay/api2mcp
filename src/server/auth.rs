@@ -64,31 +64,60 @@ pub struct BearerChallenge {
     pub www_authenticate: String,
 }
 
-/// Resolve the caller behind an MCP request: an OAuth 2.1 access token first, then a static
-/// service token. No credential, or a credential that fails to resolve against either store,
-/// all come back as the same [`BearerChallenge`] — a caller must not be able to tell
-/// "missing" from "invalid" from the response shape alone.
+/// Which endpoints a caller may reach.
 ///
-/// Returns the resolved [`Caller`] alongside its endpoint-grant set (empty = every endpoint) —
-/// see this module's own doc for why that travels separately rather than on `Caller` itself.
+/// Deliberately an enum rather than a `BTreeSet` where empty means "all". Those are different
+/// things and conflating them is a privilege escalation: a token granted exactly one endpoint has
+/// its grant rows cascaded away when that endpoint is deleted, and under the empty-means-all
+/// reading it would silently widen to *every* endpoint as a side effect of an unrelated edit.
+/// `Only(empty)` reaches nothing, which is the safe reading, and this shape makes the unsafe one
+/// impossible to write by accident.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EndpointGrants {
+    All,
+    Only(BTreeSet<Slug>),
+}
+
+impl EndpointGrants {
+    pub fn allows(&self, slug: &Slug) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only(allowed) => allowed.contains(slug),
+        }
+    }
+}
+
+/// Resolve the caller behind an MCP request: an OAuth 2.1 access token first, then a static
+/// service token. No credential, or a credential that fails to resolve against either store, all
+/// come back as the same [`BearerChallenge`] — a caller must not be able to tell "missing" from
+/// "invalid" from the response shape alone.
+///
+/// Returns the resolved [`Caller`] alongside its [`EndpointGrants`] — see this module's own doc
+/// for why that travels separately rather than on `Caller` itself.
 pub async fn authenticate_mcp(
     db: &DatabaseConnection,
     cfg: &Config,
     headers: &HeaderMap,
-) -> std::result::Result<(Caller, BTreeSet<Slug>), BearerChallenge> {
+) -> std::result::Result<(Caller, EndpointGrants), BearerChallenge> {
     let Some(token) = bearer_token(headers) else {
         return Err(challenge(cfg));
     };
 
     if let Some(caller) = oauth_caller(db, token).await {
-        return Ok((caller, BTreeSet::new()));
+        // An OAuth caller is a person acting as themselves, not a narrowed credential.
+        return Ok((caller, EndpointGrants::All));
     }
 
     let store = ServiceTokenStore::new(db.clone());
     match store.resolve(token).await {
         Ok(Some(record)) => {
             let caller = Caller::from_service_token(&record);
-            Ok((caller, record.endpoints))
+            let grants = if record.restricted {
+                EndpointGrants::Only(record.endpoints)
+            } else {
+                EndpointGrants::All
+            };
+            Ok((caller, grants))
         }
         Ok(None) => Err(challenge(cfg)),
         Err(e) => {

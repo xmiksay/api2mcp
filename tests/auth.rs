@@ -68,8 +68,9 @@ async fn minted_token_resolves_revoked_and_expired_do_not() -> Result<()> {
         .await
         .map_err(|_| anyhow::anyhow!("expected the minted token to authenticate"))?;
     assert_eq!(caller.id, user.id);
-    assert!(
-        grants.is_empty(),
+    assert_eq!(
+        grants,
+        auth::EndpointGrants::All,
         "an unrestricted mint grants every endpoint"
     );
 

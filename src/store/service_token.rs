@@ -58,8 +58,15 @@ pub struct ServiceTokenRecord {
     pub expires_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
-    /// Endpoint slugs this token is restricted to. Empty means unrestricted — see this
-    /// module's own doc.
+    /// Whether this token is confined to [`Self::endpoints`].
+    ///
+    /// Deliberately not inferred from `endpoints.is_empty()`. Deleting an endpoint cascades its
+    /// grant rows away, so a token granted exactly one endpoint would otherwise silently become
+    /// unrestricted the moment that endpoint was deleted — a privilege escalation triggered by an
+    /// unrelated edit. A restricted token whose grants have all disappeared can reach nothing,
+    /// which is the safe reading.
+    pub restricted: bool,
+    /// Endpoint slugs this token may reach, meaningful only when [`Self::restricted`].
     pub endpoints: BTreeSet<Slug>,
 }
 
@@ -99,6 +106,9 @@ impl ServiceTokenStore {
             token_prefix: Set(display_prefix(&plaintext)),
             owner_id: Set(owner_id),
             label: Set(label),
+            // Recorded at mint time from what the caller asked for, so it survives the grant rows
+            // being cascaded away by an endpoint deletion.
+            restricted: Set(!endpoints.is_empty()),
             last_used_at: Set(None),
             expires_at: Set(expires_at.map(Into::into)),
             revoked_at: Set(None),
@@ -264,6 +274,7 @@ fn to_model(row: service_tokens::Model, endpoints: BTreeSet<Slug>) -> ServiceTok
         expires_at: row.expires_at.map(|d| d.with_timezone(&Utc)),
         revoked_at: row.revoked_at.map(|d| d.with_timezone(&Utc)),
         created_at: row.created_at.with_timezone(&Utc),
+        restricted: row.restricted,
         endpoints,
     }
 }

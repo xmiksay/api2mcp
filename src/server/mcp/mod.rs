@@ -28,7 +28,6 @@ mod invoke;
 mod registry;
 mod rpc;
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use axum::body::Bytes;
@@ -43,7 +42,7 @@ use crate::http::redact_message;
 use crate::model::Slug;
 use crate::resolve::EndpointPlan;
 use crate::runtime::Executor;
-use crate::server::auth::{BearerChallenge, authenticate_mcp};
+use crate::server::auth::{BearerChallenge, EndpointGrants, authenticate_mcp};
 use crate::server::identity::Caller;
 use crate::server::state::AppState;
 
@@ -112,7 +111,7 @@ async fn dispatch_method(
     state: &AppState,
     endpoint_slug: &str,
     caller: &Caller,
-    endpoint_grants: &BTreeSet<Slug>,
+    endpoint_grants: &EndpointGrants,
     req: JsonRpcRequest,
 ) -> JsonRpcResponse {
     match req.method.as_str() {
@@ -153,7 +152,7 @@ async fn dispatch_method(
 async fn resolve_plan(
     state: &AppState,
     endpoint_slug: &str,
-    endpoint_grants: &BTreeSet<Slug>,
+    endpoint_grants: &EndpointGrants,
     id: &Option<Value>,
 ) -> Result<Arc<EndpointPlan>, JsonRpcResponse> {
     let slug: Slug = endpoint_slug.parse().map_err(|e| {
@@ -163,7 +162,9 @@ async fn resolve_plan(
             format!("invalid endpoint {endpoint_slug:?}: {e}"),
         )
     })?;
-    if !endpoint_grants.is_empty() && !endpoint_grants.contains(&slug) {
+    // Indistinguishable from a nonexistent endpoint on purpose: "exists but your token cannot
+    // reach it" tells a caller exactly which endpoint to go after.
+    if !endpoint_grants.allows(&slug) {
         return Err(build_endpoint_not_found(id, &slug));
     }
     state

@@ -122,6 +122,7 @@ mod tests {
 
     fn token_record() -> ServiceTokenRecord {
         ServiceTokenRecord {
+            restricted: false,
             id: Uuid::new_v4(),
             token_prefix: "abcdefgh".into(),
             owner_id: Uuid::new_v4(),

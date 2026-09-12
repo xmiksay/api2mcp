@@ -79,6 +79,7 @@ enum ServiceTokens {
     ExpiresAt,
     RevokedAt,
     CreatedAt,
+    Restricted,
 }
 
 #[derive(DeriveIden)]
@@ -176,6 +177,17 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(ServiceTokens::TokenPrefix).text().not_null())
                     .col(uuid_col(ServiceTokens::OwnerId))
                     .col(ColumnDef::new(ServiceTokens::Label).text().not_null())
+                    // Whether this token is confined to an explicit endpoint grant set. It has
+                    // to be a column rather than being inferred from "has grant rows", because
+                    // deleting the last granted endpoint cascades those rows away — and a
+                    // restricted token must never widen into an unrestricted one as a side
+                    // effect of someone deleting an endpoint.
+                    .col(
+                        ColumnDef::new(ServiceTokens::Restricted)
+                            .boolean()
+                            .not_null()
+                            .default(false),
+                    )
                     .col(timestamptz_null(ServiceTokens::LastUsedAt))
                     .col(timestamptz_null(ServiceTokens::ExpiresAt))
                     .col(timestamptz_null(ServiceTokens::RevokedAt))

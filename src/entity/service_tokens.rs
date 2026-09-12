@@ -19,6 +19,10 @@ pub struct Model {
     pub token_prefix: String,
     pub owner_id: Uuid,
     pub label: String,
+    /// Whether the token is confined to [`super::service_token_endpoints`]. Distinct from
+    /// "has no grant rows": deleting the last granted endpoint cascades those rows away, and a
+    /// restricted token must not widen into an unrestricted one as a result.
+    pub restricted: bool,
     pub last_used_at: Option<DateTimeWithTimeZone>,
     pub expires_at: Option<DateTimeWithTimeZone>,
     pub revoked_at: Option<DateTimeWithTimeZone>,
