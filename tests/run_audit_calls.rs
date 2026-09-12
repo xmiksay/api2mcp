@@ -141,14 +141,22 @@ async fn a_404_response_still_writes_a_run_calls_row_and_names_the_failure() -> 
     assert_eq!(calls[0].seq, 0);
 
     // The run's own `errors[]` still names the failure — the error rides *alongside* the row,
-    // never in place of it.
+    // never in place of it. And it carries the same tagged `kind`/`message` shape a script sees
+    // for the identical failure (`runtime::partial::ItemOutcome::error_object`), not a flattened
+    // prose string — a caller can filter this audit trail on `kind` exactly as a script author
+    // already could.
+    let errors = summary.errors.as_ref().expect("errors present");
+    let entry = errors
+        .as_array()
+        .and_then(|a| a.iter().find(|entry| entry["index"] == json!(0)))
+        .expect("the failed item is named in errors[]");
+    assert_eq!(entry["error"]["kind"], json!("http_status"));
+    assert_eq!(entry["error"]["status"], json!(404));
     assert!(
-        summary.errors.as_ref().is_some_and(|e| {
-            e.as_array()
-                .is_some_and(|a| a.iter().any(|entry| entry["index"] == json!(0)))
-        }),
-        "errors: {:?}",
-        summary.errors
+        entry["error"]["message"]
+            .as_str()
+            .is_some_and(|m| !m.is_empty()),
+        "a readable message alongside the kind: {entry:?}"
     );
 
     h.db.teardown().await
@@ -299,6 +307,41 @@ async fn a_scripts_middle_call_failing_still_records_all_three_rows_in_seq_order
     assert_eq!(calls[1]["status_code"], json!(500));
     assert_eq!(calls[2]["seq"], json!(2));
     assert_eq!(calls[2]["status_code"], json!(200));
+
+    // `body["value"]` is the script's own returned value — here, `api_many`'s per-item array
+    // exactly as `script::bridge::entry_to_json` builds it. Item 1's failed entry must carry the
+    // same `kind` the run's own persisted `errors[]` records for the identical failure: one
+    // function (`runtime::partial::ItemOutcome::error_object`) builds both, so they cannot
+    // disagree.
+    let script_view = body["value"]
+        .as_array()
+        .expect("api_many's own array result");
+    assert_eq!(script_view[1]["ok"], json!(false));
+    let script_kind = script_view[1]["error"]["kind"]
+        .as_str()
+        .expect("script-visible error has a kind")
+        .to_owned();
+    assert_eq!(script_kind, "http_status");
+
+    let run_id: uuid::Uuid = body["run_id"].as_str().expect("run_id present").parse()?;
+    let (summary, _calls) = h
+        .stores
+        .run()
+        .get(h.admin_id, run_id)
+        .await?
+        .expect("the run was persisted");
+    let errors = summary.errors.as_ref().expect("errors present");
+    let persisted_entry = errors
+        .as_array()
+        .and_then(|a| a.iter().find(|entry| entry["index"] == json!(1)))
+        .expect("the failed item is named in errors[]");
+    assert_eq!(
+        persisted_entry["error"]["kind"]
+            .as_str()
+            .expect("kind present"),
+        script_kind,
+        "the audit record and the script's own view of the same failure must agree on `kind`"
+    );
 
     h.db.teardown().await
 }

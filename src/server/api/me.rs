@@ -18,6 +18,7 @@ pub struct MeView {
 fn kind_str(kind: CallerKind) -> &'static str {
     match kind {
         CallerKind::Session => "session",
+        CallerKind::Oauth => "oauth",
         CallerKind::ServiceToken => "service_token",
         CallerKind::Cli => "cli",
     }

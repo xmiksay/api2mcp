@@ -67,8 +67,10 @@ fn target_kind_str(k: crate::store::RunTargetKind) -> &'static str {
 
 fn caller_kind_str(k: RunCallerKind) -> &'static str {
     match k {
+        RunCallerKind::Session => "session",
         RunCallerKind::Oauth => "oauth",
         RunCallerKind::ServiceToken => "service_token",
+        RunCallerKind::Cli => "cli",
     }
 }
 

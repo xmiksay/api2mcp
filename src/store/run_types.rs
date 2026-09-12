@@ -16,10 +16,21 @@ pub enum RunTargetKind {
     Script,
 }
 
+/// Mirrors `server::identity::CallerKind` one-for-one (`impl From<CallerKind> for
+/// RunCallerKind` lives there, since `server` already depends on `store` and not the other way
+/// around) — every way api2mcp can resolve a caller gets its own value here, so `runs.caller_kind`
+/// says what actually authenticated the call instead of collapsing distinct credentials onto
+/// whichever variant happened to be hardcoded at a given call site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunCallerKind {
+    /// A server-rendered browser session (a cookie, or an admin test run triggered from one).
+    Session,
+    /// An OAuth 2.1 access token.
     Oauth,
+    /// A minted, hashed-at-rest bearer token.
     ServiceToken,
+    /// The trusted local operator invoking the `api2mcp` binary directly.
+    Cli,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,8 +165,10 @@ pub(super) fn target_kind_to_str(kind: RunTargetKind) -> &'static str {
 
 pub(super) fn caller_kind_to_str(kind: RunCallerKind) -> &'static str {
     match kind {
+        RunCallerKind::Session => "session",
         RunCallerKind::Oauth => "oauth",
         RunCallerKind::ServiceToken => "service_token",
+        RunCallerKind::Cli => "cli",
     }
 }
 
@@ -182,8 +195,10 @@ pub(super) fn str_to_target_kind(s: &str) -> Result<RunTargetKind, StoreError> {
 
 pub(super) fn str_to_caller_kind(s: &str) -> Result<RunCallerKind, StoreError> {
     match s {
+        "session" => Ok(RunCallerKind::Session),
         "oauth" => Ok(RunCallerKind::Oauth),
         "service_token" => Ok(RunCallerKind::ServiceToken),
+        "cli" => Ok(RunCallerKind::Cli),
         other => Err(StoreError::Malformed(format!(
             "runs.caller_kind: unrecognised value {other:?}"
         ))),

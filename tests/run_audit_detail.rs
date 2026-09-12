@@ -139,7 +139,10 @@ async fn execution_start_round_trips_and_the_detail_route_exposes_the_full_recor
     assert!(detail["errors"].is_null(), "no failure on this run");
     assert!(detail["budget_snapshot"].is_object());
     assert!(detail["timings"].is_object());
-    assert_eq!(detail["caller_kind"], json!("service_token"));
+    // Triggered through `admin()`'s session cookie, so this test run is attributed to the
+    // session that requested it — not a hardcoded service-token literal (defect fix: every run
+    // records the caller kind that actually authenticated it).
+    assert_eq!(detail["caller_kind"], json!("session"));
 
     let calls = detail["calls"].as_array().expect("calls array");
     assert_eq!(calls.len(), 1);

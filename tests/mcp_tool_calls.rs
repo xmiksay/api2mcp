@@ -13,7 +13,7 @@ mod harness;
 use anyhow::Result;
 use serde_json::{Value, json};
 
-use api2mcp::store::RunStatus;
+use api2mcp::store::{RunCallerKind, RunStatus};
 
 use harness::{req, rpc, setup};
 
@@ -58,6 +58,17 @@ async fn tools_call_on_a_real_api_call_returns_a_projected_result_and_writes_a_r
     assert_eq!(runs.len(), 1, "exactly one run should have been recorded");
     assert_eq!(runs[0].tool_name, "get-item");
     assert_eq!(runs[0].status, RunStatus::Ok);
+
+    // `h.token` is a minted service token (`mcp_support::harness::setup`), so the audit record
+    // must say `service_token` — not the pre-fix hardcoded literal every `/mcp` caller used to
+    // get regardless of credential.
+    let (detail, _calls) = h
+        .stores
+        .run()
+        .get(h.owner_id, runs[0].id)
+        .await?
+        .expect("run row exists");
+    assert_eq!(detail.caller_kind, RunCallerKind::ServiceToken);
 
     h.db.teardown().await
 }

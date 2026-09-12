@@ -1,14 +1,17 @@
-//! Caller identity: who is making a request, in whichever of the three ways api2mcp can
+//! Caller identity: who is making a request, in whichever of the four ways api2mcp can
 //! resolve one ([`CallerKind`]).
 //!
 //! **Authorization is binary, not role-based.** A [`Caller`] resolved from a session cookie
 //! (`CallerKind::Session`) or the CLI (`CallerKind::Cli`) can read and write every definition,
 //! full stop — there is no admin/non-admin distinction among users any more. A service token
-//! (`CallerKind::ServiceToken`) can only ever call tools over `/mcp`: [`Caller`]'s own
-//! `FromRequestParts` impl below resolves *exclusively* from the session cookie and never even
-//! inspects the `Authorization` header, so a bearer service token cannot construct a `Caller`
-//! at all — that's what makes "a service token never reaches `/api/*`" a structural property of
+//! (`CallerKind::ServiceToken`) or an OAuth access token (`CallerKind::Oauth`) can only ever
+//! call tools over `/mcp`: [`Caller`]'s own `FromRequestParts` impl below resolves *exclusively*
+//! from the session cookie and never even inspects the `Authorization` header, so neither a
+//! bearer service token nor an OAuth access token can construct a `Caller` this way at all —
+//! that's what makes "a service/OAuth token never reaches `/api/*`" a structural property of
 //! the router (see `server::api`'s module doc) rather than a per-route checklist item.
+//! `CallerKind::Oauth` is only ever produced by `server::auth::authenticate_mcp`, `/mcp`'s own
+//! authentication path, never by this extractor.
 //!
 //! **There is no scope any more.** A service token used to carry a `scopes` list distinguishing
 //! `"mcp"` (call tools) from `"admin"` (token/user management); the admin/non-admin distinction
@@ -27,7 +30,7 @@ use axum::http::{StatusCode, header};
 use sea_orm::DatabaseConnection;
 use uuid::Uuid;
 
-use crate::store::{ServiceTokenRecord, UserRecord};
+use crate::store::{RunCallerKind, ServiceTokenRecord, UserRecord};
 
 use super::auth;
 
@@ -44,9 +47,30 @@ pub enum CallerKind {
     Session,
     /// A minted, hashed-at-rest bearer token (`api2mcp token mint`).
     ServiceToken,
+    /// An OAuth 2.1 access token (`server::oauth`'s own token endpoint). Deliberately its own
+    /// variant, not folded into `Session`: `server::auth::authenticate_mcp`'s OAuth branch
+    /// resolves to the same granting user a browser session would, but the audit log
+    /// (`runs.caller_kind`) wants to say *how* the caller showed up, and "presented a bearer
+    /// OAuth token over `/mcp`" is not "presented a cookie in a browser" even when both name the
+    /// same person.
+    Oauth,
     /// The trusted local operator running the `api2mcp` binary directly. Never reachable
     /// from a network request — there is no transport that produces this variant.
     Cli,
+}
+
+/// How a run's `caller_kind` column should read for a given [`CallerKind`] — the one place this
+/// mapping is written down, so the four `runtime::recorder`/CLI/MCP call sites that used to
+/// hardcode a `RunCallerKind` literal can't drift from each other or from `CallerKind` again.
+impl From<CallerKind> for RunCallerKind {
+    fn from(kind: CallerKind) -> Self {
+        match kind {
+            CallerKind::Session => RunCallerKind::Session,
+            CallerKind::ServiceToken => RunCallerKind::ServiceToken,
+            CallerKind::Oauth => RunCallerKind::Oauth,
+            CallerKind::Cli => RunCallerKind::Cli,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,6 +91,15 @@ impl Caller {
         Caller {
             kind: CallerKind::ServiceToken,
             id: record.owner_id,
+        }
+    }
+
+    /// An OAuth 2.1 access token's granting user — see [`CallerKind::Oauth`]'s own doc for why
+    /// this is not just `from_user` under a different name.
+    pub fn from_oauth_user(user: &UserRecord) -> Self {
+        Caller {
+            kind: CallerKind::Oauth,
+            id: user.id,
         }
     }
 
@@ -163,5 +196,39 @@ mod tests {
         let caller = Caller::from_service_token(&record);
         assert_eq!(caller.kind, CallerKind::ServiceToken);
         assert_eq!(caller.id, record.owner_id);
+    }
+
+    #[test]
+    fn from_oauth_user_is_distinct_from_a_session_caller() {
+        let user = crate::store::UserRecord {
+            id: Uuid::new_v4(),
+            email: "u2@example.com".into(),
+            has_password: true,
+            oidc_issuer: None,
+            oidc_subject: None,
+            created_at: chrono::Utc::now(),
+        };
+        let caller = Caller::from_oauth_user(&user);
+        assert_eq!(caller.kind, CallerKind::Oauth);
+        assert_eq!(caller.id, user.id);
+        assert_ne!(CallerKind::Oauth, CallerKind::Session);
+    }
+
+    #[test]
+    fn every_caller_kind_maps_to_a_distinct_run_caller_kind() {
+        let mapped = [
+            RunCallerKind::from(CallerKind::Session),
+            RunCallerKind::from(CallerKind::ServiceToken),
+            RunCallerKind::from(CallerKind::Oauth),
+            RunCallerKind::from(CallerKind::Cli),
+        ];
+        for i in 0..mapped.len() {
+            for j in (i + 1)..mapped.len() {
+                assert_ne!(
+                    mapped[i], mapped[j],
+                    "two CallerKinds collapsed onto the same RunCallerKind"
+                );
+            }
+        }
     }
 }

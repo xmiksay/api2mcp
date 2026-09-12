@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::model::Slug;
 use crate::resolve::EndpointPlan;
 use crate::runtime::budget::{BudgetAxis, BudgetMeter};
-use crate::runtime::dispatch::{self, DispatchContext, DispatchError};
+use crate::runtime::dispatch::{self, DispatchContext};
 use crate::runtime::fanout::ConcurrencyLimits;
 use crate::runtime::partial::{BatchEntry, BatchStatus, ItemOutcome, run_batch};
 use std::sync::Mutex;
@@ -133,11 +133,14 @@ async fn service_one(
 /// iff not.
 ///
 /// `error` is an **object**, not a string: it carries the `kind` tag from
-/// [`DispatchError`] so a script can branch on the failure (`if !r.ok && r.error.kind ==
-/// "http_status"`) instead of pattern-matching prose. Flattening it to a message would make the
-/// per-item error shape useless for anything but logging, which defeats the point of returning
-/// per-item errors at all. It is the same serialization a run's persisted `errors[]` uses, so a
-/// script's view of a failure and the audit record of it never disagree.
+/// [`crate::runtime::dispatch::DispatchError`] so a script can branch on the failure
+/// (`if !r.ok && r.error.kind == "http_status"`) instead of pattern-matching prose. Flattening it
+/// to a message would make the per-item error shape useless for anything but logging, which
+/// defeats the point of returning per-item errors at all. [`ItemOutcome::error_object`]
+/// (`runtime::partial`) is what actually builds it — the same call
+/// `runtime::recorder::errors_json` makes for a run's persisted `errors[]`, so a script's view of
+/// a failure and the audit record of it cannot disagree; this function no longer has a
+/// serialization of its own to drift.
 fn entry_to_json(entry: &BatchEntry) -> Value {
     match &entry.outcome {
         ItemOutcome::Ok(outcome) => json!({
@@ -145,33 +148,13 @@ fn entry_to_json(entry: &BatchEntry) -> Value {
             "index": entry.index,
             "value": outcome.value,
         }),
-        ItemOutcome::Failed(e) => json!({
+        _ => json!({
             "ok": false,
             "index": entry.index,
-            "error": error_object(e),
-        }),
-        ItemOutcome::NotAttempted(axis) | ItemOutcome::BudgetCut(axis, _) => json!({
-            "ok": false,
-            "index": entry.index,
-            "error": budget_error_object(*axis),
+            // `entry_to_json` only ever reaches a non-`Ok` arm here, so `error_object()` is
+            // never `None` — but a stray `internal` tag is a far safer failure mode than a
+            // panic if that invariant is ever violated.
+            "error": entry.outcome.error_object().unwrap_or_else(|| json!({"kind": "internal"})),
         }),
     }
-}
-
-/// Serializes a [`DispatchError`] into its tagged object, falling back to a message-only object
-/// if serialization somehow fails — a script must always find `kind` and `message` present.
-fn error_object(e: &DispatchError) -> Value {
-    let mut obj = serde_json::to_value(e).unwrap_or_else(|_| json!({"kind": "internal"}));
-    if let Some(map) = obj.as_object_mut() {
-        map.insert("message".into(), Value::String(e.to_string()));
-    }
-    obj
-}
-
-fn budget_error_object(axis: BudgetAxis) -> Value {
-    json!({
-        "kind": "budget_exceeded",
-        "axis": axis.as_str(),
-        "message": format!("budget exceeded: {}", axis.as_str()),
-    })
 }

@@ -217,7 +217,22 @@ export interface RunCallView {
   raw: unknown | null;
 }
 
-export type RunCallerKind = "oauth" | "service_token";
+export type RunCallerKind = "session" | "oauth" | "service_token" | "cli";
+
+/** The tagged, structured error one failed batch item carries — built by
+ * `runtime::partial::ItemOutcome::error_object`, the single place that also builds a script's
+ * own per-item `error` (`script::bridge::entry_to_json`), so this and what a script sees for the
+ * same failure never disagree on `kind`. Not an exhaustive union: `kind` is an open, growing set
+ * of string tags mirroring `DispatchError`'s variants (`"http_status"`, `"not_declared"`, ...)
+ * plus `"budget_exceeded"`; each kind carries its own extra fields alongside `message`
+ * (`status`/`reason`/`detail` on `http_status`; `axis`/`attempted` on `budget_exceeded`; ...). */
+export interface RunErrorObject {
+  kind: string;
+  /** Always present, redacted, human-readable — but `kind` is what a caller should branch or
+   * filter on, not this. */
+  message: string;
+  [field: string]: unknown;
+}
 
 /** One entry of a run's `errors[]` envelope — `store::run`/`runtime::recorder::errors_json`. */
 export interface RunErrorEntry {
@@ -225,7 +240,7 @@ export interface RunErrorEntry {
   /** The failed item's own label from the fan-out input — stable across repeat runs of the same
    * input shape, unlike `error`'s message text. */
   name: string;
-  error: string;
+  error: RunErrorObject;
 }
 
 /** `runtime::budget::snapshot_json` — the ceilings that applied to this run and what it actually

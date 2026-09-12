@@ -138,7 +138,12 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Runs::Timings).json_binary().null())
                     .col(timestamptz_now(Runs::CreatedAt))
                     .check(Expr::col(Runs::TargetKind).is_in(["api_call", "script"]))
-                    .check(Expr::col(Runs::CallerKind).is_in(["oauth", "service_token"]))
+                    .check(Expr::col(Runs::CallerKind).is_in([
+                        "session",
+                        "oauth",
+                        "service_token",
+                        "cli",
+                    ]))
                     .check(Expr::col(Runs::Status).is_in([
                         "ok",
                         "partial",

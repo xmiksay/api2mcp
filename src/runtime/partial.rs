@@ -12,8 +12,9 @@
 //! attempted / cut — never retried, never partially charged. See `runtime::budget` for the
 //! mechanics this module is built on top of.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
+use crate::http::redact_message;
 use crate::model::Slug;
 use crate::resolve::EndpointPlan;
 
@@ -62,6 +63,60 @@ impl ItemOutcome {
             _ => None,
         }
     }
+
+    /// The structured, tagged error for this outcome — `None` for `Ok`. This is the **one**
+    /// place that defines the shape both `script::bridge` (a script's per-item `error`) and
+    /// `runtime::recorder` (a run's persisted `errors[]`) serialize: both call this rather than
+    /// building their own object, so a script's view of a failure and the audit record of the
+    /// same failure cannot drift apart the way they used to (the audit record used to flatten
+    /// everything to a prose string, dropping the `kind` tag a script could already branch on).
+    pub fn error_object(&self) -> Option<Value> {
+        match self {
+            ItemOutcome::Ok(_) => None,
+            ItemOutcome::Failed(e) => Some(dispatch_error_object(e)),
+            ItemOutcome::NotAttempted(axis) => Some(budget_error_object(*axis, false)),
+            ItemOutcome::BudgetCut(axis, _) => Some(budget_error_object(*axis, true)),
+        }
+    }
+}
+
+/// Serializes a [`DispatchError`] into its `{kind, message, ...}` tagged object — `kind` (and any
+/// variant-specific fields, e.g. `status` on `HttpStatus`) come straight from `DispatchError`'s
+/// own `#[serde(tag = "kind")]` derive, so a new variant there needs no matching update here.
+/// `message` is `redact_message`d because this object is not just script-visible any more: it
+/// also lands in `runs.errors` (I4 — nothing upstream-derived is persisted or returned
+/// unredacted), and the whole object falls back to a message-only shape if serialization somehow
+/// fails, so a caller always finds `kind` and `message` present.
+fn dispatch_error_object(e: &DispatchError) -> Value {
+    let mut obj = serde_json::to_value(e).unwrap_or_else(|_| json!({"kind": "internal"}));
+    if let Some(map) = obj.as_object_mut() {
+        map.insert(
+            "message".into(),
+            Value::String(redact_message(&e.to_string())),
+        );
+    }
+    obj
+}
+
+/// A budget trip's tagged error object. `attempted` is what used to live only in the audit
+/// record's prose ("not attempted" vs. "budget exceeded") — `true` for [`ItemOutcome::BudgetCut`]
+/// (the request genuinely went out before the post-hoc commit excluded it), `false` for
+/// [`ItemOutcome::NotAttempted`] (the whole-batch reservation failed before any call in this
+/// batch could be made). Kept as its own field, not folded into `kind`, because the caller-facing
+/// filter that matters is "was this a budget problem" — `kind: "budget_exceeded"` alone already
+/// answers that.
+fn budget_error_object(axis: BudgetAxis, attempted: bool) -> Value {
+    let message = if attempted {
+        format!("budget exceeded: {}", axis.as_str())
+    } else {
+        format!("not attempted: budget exceeded ({})", axis.as_str())
+    };
+    json!({
+        "kind": "budget_exceeded",
+        "axis": axis.as_str(),
+        "attempted": attempted,
+        "message": message,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -292,6 +347,37 @@ mod tests {
             outcome: ItemOutcome::Failed(DispatchError::NotDeclared { name: "a".into() }),
         }];
         assert_eq!(derive_status(&entries), BatchStatus::AllFailed);
+    }
+
+    #[test]
+    fn error_object_is_none_for_ok() {
+        assert!(ok_entry(0).outcome.error_object().is_none());
+    }
+
+    #[test]
+    fn error_object_carries_the_dispatch_error_kind_and_a_message() {
+        let outcome = ItemOutcome::Failed(DispatchError::NotDeclared { name: "a".into() });
+        let obj = outcome.error_object().expect("failure has an error object");
+        assert_eq!(obj["kind"], serde_json::json!("not_declared"));
+        assert!(obj["message"].is_string());
+    }
+
+    #[test]
+    fn error_object_distinguishes_never_attempted_from_budget_cut() {
+        let not_attempted = ItemOutcome::NotAttempted(BudgetAxis::Pages)
+            .error_object()
+            .unwrap();
+        assert_eq!(not_attempted["kind"], serde_json::json!("budget_exceeded"));
+        assert_eq!(not_attempted["attempted"], serde_json::json!(false));
+
+        let cut = ItemOutcome::BudgetCut(
+            BudgetAxis::Pages,
+            ok_entry(0).outcome.dispatch_outcome().unwrap().clone(),
+        )
+        .error_object()
+        .unwrap();
+        assert_eq!(cut["kind"], serde_json::json!("budget_exceeded"));
+        assert_eq!(cut["attempted"], serde_json::json!(true));
     }
 
     fn ok_entry(index: usize) -> BatchEntry {

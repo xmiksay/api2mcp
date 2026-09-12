@@ -130,10 +130,12 @@ pub async fn authenticate_mcp(
 }
 
 /// Resolves an OAuth access token (`server::oauth`'s token endpoint) to its granting user,
-/// reusing [`Caller::from_user`] — this system's OAuth grant is one coarse `mcp` scope, not a
+/// via [`Caller::from_oauth_user`] — this system's OAuth grant is one coarse `mcp` scope, not a
 /// narrower delegation, so an OAuth-authenticated caller can do exactly what that user's
-/// browser session could. `None` covers "not an OAuth token", "revoked/expired" and "the
-/// granting user has since been deleted" alike, so the caller falls through to the
+/// browser session could, even though the resolved [`CallerKind`] is `Oauth`, not `Session`
+/// (see that variant's own doc — the audit log wants the two distinguishable even though
+/// authorization treats them identically). `None` covers "not an OAuth token", "revoked/expired"
+/// and "the granting user has since been deleted" alike, so the caller falls through to the
 /// service-token branch indistinguishably; a store error fails closed (logged, then `None`)
 /// rather than being treated as "not an OAuth token".
 async fn oauth_caller(db: &DatabaseConnection, token: &str) -> Option<Caller> {
@@ -148,7 +150,7 @@ async fn oauth_caller(db: &DatabaseConnection, token: &str) -> Option<Caller> {
         }
     };
     match UserStore::new(db.clone()).get_by_id(record.user_id).await {
-        Ok(Some(user)) => Some(Caller::from_user(&user)),
+        Ok(Some(user)) => Some(Caller::from_oauth_user(&user)),
         Ok(None) => None,
         Err(e) => {
             tracing::error!(error = %e, "authenticate_mcp: oauth token's user lookup failed");

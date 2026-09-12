@@ -46,14 +46,13 @@ use crate::store::{RunCallerKind, RunStatus, Stores};
 
 use super::{ApiError, Caller};
 
-/// See this module's doc: a test run is attributed to the admin session that triggered it, but
-/// `runs.caller_kind` is a DB `CHECK` restricted to `oauth`/`service_token`
-/// (`migration::m0006_runs`), so recording a session-triggered test run under either value needs
-/// a new append-only migration to widen that constraint, which hasn't happened.
-/// `ServiceToken` is the closer fit of the two, and the `admin-test:` prefix on `caller_id` keeps
-/// a test run visually distinct from a real one in the audit trail.
-fn test_caller_kind() -> RunCallerKind {
-    RunCallerKind::ServiceToken
+/// A test run is triggered by the admin session that requested it, so it records
+/// `RunCallerKind::Session` — `caller.kind` is always `CallerKind::Session` here since this
+/// route only ever runs behind the `Caller` session extractor (`server::identity`); the
+/// `admin-test:` prefix on `caller_id` (below) is what keeps a test run visually distinct from a
+/// real one in the audit trail, not the caller kind.
+fn test_caller_kind(caller: &Caller) -> RunCallerKind {
+    RunCallerKind::from(caller.kind)
 }
 
 fn test_caller_id(caller: &Caller) -> String {
@@ -138,7 +137,7 @@ pub async fn run_api_call_test(
             &plan,
             &tool.name,
             args,
-            test_caller_kind(),
+            test_caller_kind(caller),
             test_caller_id(caller),
         )
         .await
@@ -252,7 +251,7 @@ pub async fn run_script_test(
         RunRecord {
             plan: &plan,
             tool,
-            caller_kind: test_caller_kind(),
+            caller_kind: test_caller_kind(caller),
             caller_id: test_caller_id(caller),
             request_id: Uuid::new_v4().to_string(),
             args,

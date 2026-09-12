@@ -24,7 +24,7 @@ use api2mcp::model::{ScriptDef, Slug, Tag};
 use api2mcp::pack::{self, Pack};
 use api2mcp::resolve::{EndpointPlan, build_plan};
 use api2mcp::script::RunScriptError;
-use api2mcp::store::{RunStatus, Stores};
+use api2mcp::store::{RunCallerKind, RunStatus, Stores};
 use uuid::Uuid;
 
 use common::ScratchDb;
@@ -117,6 +117,10 @@ async fn call_prints_the_projected_value_and_raw_shows_what_it_dropped() -> Resu
         .expect("the run was recorded");
     assert_eq!(summary.summary.tool_name, "get-item");
     assert_eq!(summary.summary.status, RunStatus::Ok);
+    // A CLI invocation is the trusted local operator, never a token/session/OAuth caller —
+    // `cli::call::execute` must record `RunCallerKind::Cli`, not a hardcoded literal borrowed
+    // from a different caller kind.
+    assert_eq!(summary.caller_kind, RunCallerKind::Cli);
 
     db.teardown().await
 }

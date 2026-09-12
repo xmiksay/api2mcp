@@ -16,7 +16,7 @@ use axum::body::Body;
 use axum::http::{HeaderValue, Request, StatusCode, header};
 use serde_json::{Value, json};
 
-use api2mcp::store::NewOauthClient;
+use api2mcp::store::{NewOauthClient, RunCallerKind};
 
 use harness::{REDIRECT_URI, login_cookie, setup};
 use wire::{get, location, pkce_pair, post_form, qs, send, urldecode};
@@ -267,6 +267,29 @@ async fn an_issued_access_token_authenticates_on_mcp() -> Result<()> {
         !doc["result"]["isError"].as_bool().unwrap_or(false),
         "tool call reported isError: {doc:?}"
     );
+
+    // The point of this whole round trip (`server::auth::authenticate_mcp`'s OAuth branch): the
+    // recorded run must say `oauth`, distinct from a browser session and from a service token,
+    // even though `Caller::from_oauth_user` resolves the very same user a session would.
+    let user = h
+        .stores
+        .user()
+        .get_by_email("mcp-user@example.com")
+        .await?
+        .expect("the OAuth-granting user exists");
+    let runs = h
+        .stores
+        .run()
+        .list_for_endpoint(user.id, &"demo".parse().unwrap(), 10)
+        .await?;
+    assert_eq!(runs.len(), 1, "exactly one run should have been recorded");
+    let (detail, _calls) = h
+        .stores
+        .run()
+        .get(user.id, runs[0].id)
+        .await?
+        .expect("run row exists");
+    assert_eq!(detail.caller_kind, RunCallerKind::Oauth);
 
     h.db.teardown().await
 }

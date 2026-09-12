@@ -170,6 +170,12 @@ fn row_from_pages(
 
 /// The run-level `errors[]` envelope: every non-`Ok` entry, keyed by its input index — the plan's
 /// own wording for the partial-failure shape.
+///
+/// `error` is the same tagged `{kind, message, ...}` object `script::bridge::entry_to_json`
+/// returns to a script for the identical failure ([`ItemOutcome::error_object`],
+/// `runtime::partial`) — not a second, independent flattening to prose. A caller of this crate's
+/// own audit trail can now filter on `errors[].error.kind` (`"http_status"`, `"budget_exceeded"`,
+/// ...) exactly as a script author already could, instead of string-matching the `message`.
 fn errors_json(entries: &[BatchEntry]) -> Option<Value> {
     let errors: Vec<Value> = entries
         .iter()
@@ -178,7 +184,10 @@ fn errors_json(entries: &[BatchEntry]) -> Option<Value> {
             json!({
                 "index": e.index,
                 "name": e.name,
-                "error": error_message(e),
+                // `!e.outcome.is_ok()` above is exactly `ItemOutcome::error_object`'s `Some`
+                // condition, so this can only be `None` if that invariant breaks — a stray
+                // `internal` tag is a far safer failure mode than a panic or an unwrap here.
+                "error": e.outcome.error_object().unwrap_or_else(|| json!({"kind": "internal"})),
             })
         })
         .collect();
@@ -186,19 +195,6 @@ fn errors_json(entries: &[BatchEntry]) -> Option<Value> {
         None
     } else {
         Some(Value::Array(errors))
-    }
-}
-
-fn error_message(entry: &BatchEntry) -> String {
-    match &entry.outcome {
-        super::partial::ItemOutcome::Ok(_) => String::new(),
-        super::partial::ItemOutcome::Failed(e) => redact_message(&e.to_string()),
-        super::partial::ItemOutcome::NotAttempted(axis) => {
-            format!("not attempted: budget exceeded ({axis:?})")
-        }
-        super::partial::ItemOutcome::BudgetCut(axis, _) => {
-            format!("budget exceeded ({axis:?})")
-        }
     }
 }
 
@@ -238,6 +234,53 @@ mod tests {
         let arr = errors.as_array().expect("array");
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["index"], json!(1));
+    }
+
+    #[test]
+    fn errors_json_carries_the_dispatch_error_kind_a_script_sees_too() {
+        let entries = vec![BatchEntry {
+            index: 0,
+            name: "a".into(),
+            outcome: super::super::partial::ItemOutcome::Failed(
+                super::super::dispatch::DispatchError::NotDeclared { name: "a".into() },
+            ),
+        }];
+        let errors = errors_json(&entries).expect("one failure");
+        let err = &errors.as_array().expect("array")[0]["error"];
+        assert_eq!(err["kind"], json!("not_declared"));
+        assert!(err["message"].is_string(), "message present alongside kind");
+    }
+
+    #[test]
+    fn errors_json_gives_a_budget_kind_to_a_never_attempted_item() {
+        let entries = vec![BatchEntry {
+            index: 0,
+            name: "a".into(),
+            outcome: super::super::partial::ItemOutcome::NotAttempted(
+                super::super::budget::BudgetAxis::Calls,
+            ),
+        }];
+        let errors = errors_json(&entries).expect("one failure");
+        let err = &errors.as_array().expect("array")[0]["error"];
+        assert_eq!(err["kind"], json!("budget_exceeded"));
+        assert_eq!(err["attempted"], json!(false));
+        assert!(err["message"].is_string());
+    }
+
+    #[test]
+    fn errors_json_gives_a_budget_kind_to_a_budget_cut_item() {
+        let entries = vec![BatchEntry {
+            index: 0,
+            name: "a".into(),
+            outcome: super::super::partial::ItemOutcome::BudgetCut(
+                super::super::budget::BudgetAxis::Bytes,
+                sample_outcome(),
+            ),
+        }];
+        let errors = errors_json(&entries).expect("one failure");
+        let err = &errors.as_array().expect("array")[0]["error"];
+        assert_eq!(err["kind"], json!("budget_exceeded"));
+        assert_eq!(err["attempted"], json!(true));
     }
 
     fn sample_outcome() -> super::super::dispatch::DispatchOutcome {

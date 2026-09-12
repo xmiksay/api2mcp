@@ -164,7 +164,10 @@ pub async fn execute(
         RunRecord {
             plan,
             tool,
-            caller_kind: RunCallerKind::ServiceToken,
+            // A CLI invocation is never a token, session or OAuth caller — it's the trusted
+            // local operator running the binary directly (`server::identity::CallerKind::Cli`'s
+            // own doc).
+            caller_kind: RunCallerKind::Cli,
             caller_id: CALLER_ID.to_owned(),
             request_id,
             args,
