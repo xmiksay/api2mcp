@@ -169,3 +169,62 @@ Tyhle je potřeba rozhodnout, ne odložit — každé mění rozsah:
 - GraphQL a gRPC upstreamy.
 - Web UI — konfigurace zůstává v gitu.
 - Rune jako alternativa k Rhai — zvážit, až kdyby `call_many` přestalo stačit.
+
+---
+
+## 8. Kde se implementace vědomě odchýlila od tohoto plánu
+
+Tento dokument je historický záznam původního záměru a **nepřepisuje se**. Skutečný stav je v
+`src/lib.rs` (tabulka invariantů), `docs/architecture.md` a `docs/scripting.md`. Níže je seznam
+míst, kde se implementace vědomě rozešla s tím, co je napsáno výše, a proč.
+
+- **I8 (verzované, neměnné definice) nebyl implementován.** Definice jsou mutable a "last write
+  wins" — editace přepíše řádek na místě, žádná nová verze nevzniká. Historii nese výhradně run
+  log: každý `runs` řádek nese kompletní `definition_snapshot` (a jeho `definition_digest`) toho,
+  co se skutečně spustilo, takže "co dělal tenhle tool, když běžel" je vždy zodpověditelné i bez
+  verzování. Tahle záměna kupuje mnohem menší write path výměnou za ztrátu možnosti "připnout"
+  konkrétní verzi toolu; zbytek I8 postihujících úvah (jméno toolu jako kontrakt) zůstává v duchu
+  zachován tím, že přejmenování/změna slugu je vždy nová definice, ne editace staré.
+- **`call`/`call_many` se jmenují `api`/`api_many`** (plus nově `api_try`, který plán nezmiňuje —
+  viz níže). `call` je v Rhai vyhrazené klíčové slovo interpretu (`KEYWORD_FN_PTR_CALL`) — stejnojmenná
+  `register_fn` by byla tiše zastíněna, ne odmítnuta při registraci. Přejmenování bylo jediná
+  bezpečná oprava; `call_many` → `api_many` následovalo pro konzistenci pojmenování. `api_try`
+  přibyl navíc: stejné jedno volání jako `api`, ale nikdy nevyhazuje výjimku — vrací tvar
+  per-item výsledku (`ok`/`index`/`value`|`error`), takže skript může použít jednotný idiom
+  ošetřování chyb napříč `api`/`api_many`/`api_try`, místo `try`/`catch` bloku jen kolem `api`.
+- **Postgres je zdroj pravdy, ne YAML v gitu.** Plán (§6) počítal s tím, že sdílení je jednotka
+  "pack" a definice žijí primárně jako YAML v repozitáři. Místo toho je zdroj pravdy databáze —
+  YAML pack (`pack::export`/`pack::import`) je čistě přenosný, credential-free formát pro přesun
+  definic mezi instancemi nebo pro `examples/demo.pack.yaml`, ne úložiště, ze kterého by se za
+  běhu četlo. Důvod je praktický: admin API (viz níže) potřebuje editovat definice za běhu, s
+  okamžitou platností a bez commitu/deploy cyklu — to jde jen proti databázi.
+- **Single-tenant nahrazen per-uživatelským vlastnictvím (`owner_id`).** Otevřené rozhodnutí č. 4
+  ("Multi-tenant, nebo single-tenant?") bylo nakonec rozhodnuto ve prospěch multi-tenantu: každá
+  z pěti definičních entit (`service`, `auth_provider`, `api_call`, `script`, `endpoint`) nese
+  reálný `owner_id` sloupec, slugy jsou unikátní per-owner (ne globálně), a sdílení mezi vlastníky
+  zůstává explicitně mimo databázi — přes export/import YAML packu, přesně jak plán zamýšlel pro
+  sdílení mezi cizími (fáze 6), jen teď platí i uvnitř jedné instance mezi jejími vlastními účty.
+  Trezor (fáze 4, envelope encryption dvou tříd credentials) se nerealizoval v této podobě —
+  credential je env var *jméno* na `auth_providers` řádku, nikdy hodnota v databázi; hodnota žije
+  jen v procesním prostředí serveru.
+- **Admin/non-admin rozlišení bylo zavedeno a pak zase zrušeno.** Fáze 5 plánu předpokládala
+  odlišný "control plane" endpoint pro agenta, který si sám vytváří tooly (`discover` → `draft` →
+  `test` → `promote`), s schvalováním nad úrovní session člověkem. To se nerealizovalo; místo toho
+  vznikl web UI (viz další bod) ovládaný přímo člověkem, a jediné rozlišení, které zůstalo, je mezi
+  "session/CLI" (může číst a psát vlastní definice) a "service token/OAuth" (může jen volat tooly
+  přes `/mcp`) — žádná role "admin" mezi lidmi neexistuje.
+- **Web UI bylo postaveno, ne odloženo.** Sekce 7 ("Odloženo") výše řadí web UI mezi věci mimo
+  rozsah s poznámkou "konfigurace zůstává v gitu" — to platilo, dokud byl zdroj pravdy YAML v
+  gitu (viz výše). Jakmile se zdrojem pravdy stal Postgres, potřeba administrativního UI nad ním
+  přestala být odložitelná: `server::api` je čitelné a zapisovatelné JSON API nad každou definiční
+  entitou (CRUD + testovací spuštění `POST /api/{api_calls,scripts}/{slug}/test`) a Vue 3 SPA nad
+  ním je zabudované přímo do binárky (`rust-embed`), takže nasazení zůstává jeden soubor.
+- **I7 bylo přeformulováno.** Původní znění ("bez hodin, bez randomu") bylo nutné zmírnit, protože
+  skript potřebuje reálnou práci s datem/časem, aby byl k něčemu při transformaci dat. Mechanická
+  půlka I7 — stabilní pořadí iterace, výsledky fan-outu ve vstupním pořadí, rozpočty připisované
+  v indexovém pořadí — zůstává bezpodmínečná a nezměněná. Do skriptu nově vstupují dvě oddělené,
+  explicitně pojmenované funkce: `execution_start()` (jeden zmrazený okamžik, konstantní po celý
+  běh — reprodukovatelné) a `now()` (živé hodiny reálného času — nereprodukovatelné). Volba mezi
+  nimi je viditelná přímo ve zdrojovém textu skriptu, ne skrytá uvnitř enginu. `BasicTimePackage`
+  (a s ním `timestamp()`) zůstává vyloučen ze stejného důvodu, pro který ho I7 v původním znění
+  zakazovalo úplně — hlídá to golden test nad registrovanou sadou funkcí enginu.

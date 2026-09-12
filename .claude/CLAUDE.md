@@ -29,6 +29,41 @@ make seed         # import examples/demo.pack.yaml
 locally** — there is no container for it. `make db-create` sets up the role and database
 idempotently; `make db-reset` drops and recreates it.
 
+## Auth & ownership
+
+**There is no admin.** `users.is_admin`, `assert_admin` and `SCOPE_ADMIN` do not exist. A signed-in
+session can read and write every definition *it owns*, full stop — see `server::identity`'s
+module doc. A service token or an OAuth-authenticated MCP client can only call tools over `/mcp`;
+neither can construct a `Caller` that reaches `/api/*` (`Caller`'s `FromRequestParts` impl resolves
+exclusively from the session cookie and never inspects `Authorization` at all — a structural
+property of the router, not a per-route check).
+
+**Human login is a password form, an external OIDC provider, or both** (`server::login`,
+`server::login_oidc`, `server::oidc`), configured entirely through `A2M_OIDC_ISSUER` /
+`A2M_OIDC_CLIENT_ID` / `A2M_OIDC_CLIENT_SECRET` — all three or none. No client secret ever lives in
+the database. A returning OIDC user is matched on `(issuer, subject)`, **never** on email (email is
+mutable, provider-side); an account with no identity bound yet (a password account, or one
+pre-provisioned with `api2mcp user add --oidc-only`) is claimed on first sign-in only when the
+provider asserts `email_verified: true` and the email matches exactly.
+
+**Every definition is owned.** `owner_id` sits on `services`, `auth_providers`, `api_calls`,
+`scripts`, `endpoints`, `runs` and `service_tokens`. Slugs are unique **per owner**
+(`ux_*_owner_slug`), not globally — two different people's `demo` endpoints coexist fine.
+Sharing between owners is out-of-band, via YAML pack export/import (`pack::export`/`pack::import`),
+never a shared row.
+
+**Self-service tokens.** `service_tokens.scopes` is gone — a resolved, unrevoked, unexpired token
+may call tools, full stop. `POST/GET /api/tokens`, `DELETE /api/tokens/{id}` let a signed-in user
+mint/list/revoke their own tokens (mirrors `api2mcp token mint/list/revoke` on the CLI), with
+per-endpoint grants (`service_token_endpoints`): empty means every endpoint, non-empty means
+exactly those. `restricted` is a real column, not inferred from an empty grant set — deleting a
+granted endpoint cascades its grant rows away, and inferring "restricted" from "has grants" would
+silently *widen* a token to unrestricted the moment its one granted endpoint was deleted.
+
+The read-write admin JSON API and its test-run routes (`POST /api/api_calls/{slug}/test`,
+`POST /api/scripts/{slug}/test`) live under `server::api`; see
+[`docs/architecture.md`](../docs/architecture.md) for the full route table.
+
 ## Gotchas
 
 - **The SPA is embedded by `rust-embed` from `web/dist`,** which is a *compile-time* dependency.
@@ -45,8 +80,15 @@ idempotently; `make db-reset` drops and recreates it.
 - **Rhai gets a hand-assembled package set, never `StandardPackage`** — which includes
   `BasicTimePackage`, i.e. a wall clock inside a script. A golden test over the engine's registered
   function signatures catches an accidental re-addition.
-- **The Rhai host bindings are `api` / `api_many`, never `call`.** `call` is the reserved
-  `KEYWORD_FN_PTR_CALL`; a same-named `register_fn` is silently shadowed.
+- **The Rhai host bindings are `api` / `api_many` / `api_try`, never `call`.** `call` is the
+  reserved `KEYWORD_FN_PTR_CALL`; a same-named `register_fn` is silently shadowed rather than
+  rejected. See [`docs/scripting.md`](../docs/scripting.md) for the full script-callable surface.
+- **Never run `vue-tsc --noEmit` directly against `web/`.** The project is `composite: true`
+  (project references), so a bare `--noEmit` invocation can exit `0` while silently checking
+  nothing. Always go through `npm run typecheck` (`vue-tsc -b --force`) or `make lint`.
+- **Slugs are unique per owner, not globally.** `ux_*_owner_slug` on `services`/`auth_providers`/
+  `api_calls`/`scripts`/`endpoints` — a lookup or a pack import must always scope by `owner_id`,
+  never assume a bare slug is globally unique.
 
 ## Conventions & invariants
 

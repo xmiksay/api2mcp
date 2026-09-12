@@ -30,7 +30,7 @@ rows (or an imported YAML pack)
   EndpointPlan (immutable, cached, generation-guarded)
         │
         ├──► server::mcp     tools/list, tools/call, invoke
-        ├──► script          Rhai, api() / api_many()
+        ├──► script          Rhai, api() / api_many() / api_try()
         └──► cli             api2mcp call / script run
                  │
                  ▼
@@ -66,16 +66,60 @@ fast and the integration suite small, and it is worth defending against convenie
 | `project` | Declarative JSONPath projection. |
 | `resolve` | Rows → validated `EndpointPlan`. The invariant chokepoint. |
 | `runtime` | Budgets, dispatch, fan-out, partial failure, the audit record. |
-| `script` | Rhai: sandboxed engine, the `api`/`api_many` bindings, the sync/async bridge. |
+| `script` | Rhai: sandboxed engine, the `api`/`api_many`/`api_try` bindings, the sync/async bridge, the date/JSON/YAML/regex/text standard library. See [`docs/scripting.md`](scripting.md) for the full script-callable reference. |
 | `store` | Per-aggregate façades over the database. |
 | `entity`, `migration` | SeaORM entities and in-crate migrations. |
 | `pack` | Portable YAML export/import. |
-| `server` | MCP data plane, OAuth 2.1 AS, read-write admin JSON API, embedded SPA. |
+| `server` | MCP data plane, OAuth 2.1 AS, the read-write admin JSON API (CRUD over every definition plus `POST /api/{api_calls,scripts}/{slug}/test`, `GET /api/endpoints/{slug}/plan`), embedded SPA. |
 | `cli` | Local-process entry points, including everything an agent must never be able to do. |
+
+## Auth model
+
+Three `CallerKind` variants ([`Caller`](../src/server/identity.rs)), resolved four ways, and **no
+admin/non-admin distinction among any of them** — `users.is_admin`, `assert_admin` and
+`SCOPE_ADMIN` do not exist:
+
+| Kind | Resolved from | Can reach |
+|---|---|---|
+| `Session` | the `a2m_session` cookie (`server::login`, `server::login_oidc`), via `Caller`'s `FromRequestParts` impl | every route under `/api/*`, scoped to definitions it **owns** — full read/write, no narrower role |
+| `Session` (again) | an OAuth 2.1 access token (`server::auth::authenticate_mcp`'s OAuth branch), *not* through the extractor above | `/mcp/*` only — `Caller::from_user` is built by hand inside the MCP handler, never surfaced to `/api/*` |
+| `ServiceToken` | a bearer token minted by `api2mcp token mint` or `POST /api/tokens` | `/mcp/*` only, restricted to its granted endpoints (or every endpoint, if unrestricted) — never `/api/*` |
+| `Cli` | running the `api2mcp` binary directly | everything; a process that can run it already has full DB and credential access |
+
+An OAuth-authenticated caller carries the same `CallerKind::Session` tag as a cookie-authenticated
+one (deliberately — it stands in for its granting user's full access, not a narrower delegation),
+but the two are never interchangeable in practice: `Caller`'s `FromRequestParts` impl (what every
+`/api/*` handler actually uses) resolves *exclusively* from the session cookie and never inspects
+`Authorization` at all, so an OAuth bearer token cannot construct an `/api/*`-usable `Caller` any
+more than a service token can. That is what makes "neither an OAuth token nor a service token ever
+reaches `/api/*`" a structural property of the router rather than a
+per-route checklist item.
+
+**Human login** is a server-rendered password form (`GET`/`POST /login`), an external OIDC provider
+(`GET /login/oidc/start` / `.../callback`), or both — configured entirely through
+`A2M_OIDC_ISSUER`/`A2M_OIDC_CLIENT_ID`/`A2M_OIDC_CLIENT_SECRET` (all three or none; no client secret
+ever lives in the database). A returning OIDC user is matched on `(issuer, subject)`, never email —
+email is mutable provider-side data, so matching a *linked* account on it would let a changed email
+hijack it. An account with no identity bound yet (a plain password account, or one pre-provisioned
+with `api2mcp user add --oidc-only`) is claimed on the first OIDC sign-in whose asserted email is
+`email_verified: true` and matches exactly — safe specifically because that row has no identity to
+take over yet. Login and OAuth consent are server-rendered, not SPA views (see
+[Deliberate non-obvious choices](#deliberate-non-obvious-choices)).
+
+**MCP clients authenticate two ways**, both resolved by `server::auth::authenticate_mcp`: an
+OAuth 2.1 access token (this crate's own authorization server, `server::oauth` — RFC 9728/8414
+discovery, RFC 7591 dynamic client registration, PKCE-S256-only authorization code grant, a
+server-rendered consent screen, refresh with rotation and family-reuse detection) stands in for its
+granting user's full session; a service token stands in only for itself, restricted to whatever
+endpoints it was granted. Both are hashed at rest with sha256, never argon2 — a token is 244+ bits
+of server-generated randomness, so a fast hash costs an attacker exactly as much as it costs the
+server, and a KDF on every MCP call would tax every request for a property tokens already have for
+free. Passwords go through argon2id instead, precisely because a human-chosen password lacks that
+entropy floor.
 
 ## Data model
 
-Five definition entities plus identity and audit.
+Five definition entities, each independently owned, plus identity, tokens and audit.
 
 | Entity | Holds |
 |---|---|
@@ -87,6 +131,21 @@ Five definition entities plus identity and audit.
 
 Grouping is by **tags, many-to-many** — not a tree. A tag comes from the service, the domain and
 the read/write class; an endpoint selects with an expression over them.
+
+**`owner_id` is a real column** on `service`, `auth_provider`, `api_call`, `script`, `endpoint`,
+`run` and `service_token` — not something inferred through a join. Each aggregate is independently
+owned, so every store method filters on it directly. Slugs (`auth_provider.slug`, `api_call.slug`,
+`script.slug`, `service.slug`, `endpoint.slug`) are `UNIQUE` **per owner** (`ux_*_owner_slug`), not
+globally: two different people defining an endpoint called `demo` must both succeed. `tags` and its
+two membership joins deliberately get **no** `owner_id` — a tag is a shared vocabulary, and
+membership hangs off an already-owned row, so selecting by tag is scoped the moment the item it's
+attached to is.
+
+Identity and tokens: `users` (password hash and/or `oidc_issuer`/`oidc_subject`, no role column),
+`sessions` (hashed browser session cookies), `service_tokens` + `service_token_endpoints` (a
+token's per-endpoint grants — see [Deliberate non-obvious choices](#deliberate-non-obvious-choices)),
+and the OAuth AS's own `oauth_clients`/`oauth_codes`/`oauth_tokens`/`oauth_consents`/
+`oauth_consent_requests`.
 
 **No column anywhere can hold a credential value** — only `credential_env_key`, an env var name.
 That is invariant I4's structural half. `script_api_calls` is I1's declarative half.
