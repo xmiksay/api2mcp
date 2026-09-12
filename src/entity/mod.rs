@@ -37,6 +37,7 @@ pub mod script_api_calls;
 pub mod script_params;
 pub mod script_tags;
 pub mod scripts;
+pub mod service_token_endpoints;
 pub mod service_tokens;
 pub mod services;
 pub mod sessions;

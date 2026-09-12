@@ -55,7 +55,12 @@ pub async fn setup() -> Result<Option<Harness>> {
         .await?;
     let minted = stores
         .service_token()
-        .mint(user.id, "mcp test token".to_owned(), None)
+        .mint(
+            user.id,
+            "mcp test token".to_owned(),
+            None,
+            Default::default(),
+        )
         .await?;
 
     let fixture = Fixture::start().await;

@@ -1,8 +1,15 @@
 //! m0005 — `endpoints` (a tag-expression selection of tools, exposed at
 //! `POST /mcp/{slug}`), `endpoint_aliases` (rename a selected api_call/script as seen
-//! through this endpoint) and `endpoint_auth_providers` — I5's human-set join: which
-//! auth providers an endpoint may bind to. No MCP tool or write route touches this
-//! table; only `pack/import.rs` and the `cli` write it.
+//! through this endpoint), `endpoint_auth_providers` — I5's human-set join: which
+//! auth providers an endpoint may bind to — and `service_token_endpoints`, the join a
+//! self-service token's grant list lives in (`store::service_token`,
+//! `server::auth::authenticate_mcp`). No rows for a token means unrestricted (every
+//! endpoint, the permissive GitHub-classic-PAT-style default); a non-empty row set means
+//! exactly those endpoints. Cascades both ways: deleting a token drops its grants
+//! (`fk_service_token_endpoints_token`), and deleting an endpoint drops any grant that
+//! named it (`fk_service_token_endpoints_endpoint`) rather than leaving one dangling.
+//! Amended into this migration (not a new one) because the branch that added self-service
+//! tokens is unmerged and nothing built on it is deployed yet.
 
 use sea_orm_migration::prelude::*;
 
@@ -51,6 +58,21 @@ enum EndpointAuthProviders {
     Table,
     EndpointId,
     AuthProviderId,
+}
+
+/// Redeclared from `m0001_init`'s own table, not imported — see `migration`'s module doc for
+/// why every migration keeps its own copy of any `Iden` enum it needs.
+#[derive(DeriveIden)]
+enum ServiceTokens {
+    Table,
+    Id,
+}
+
+#[derive(DeriveIden)]
+enum ServiceTokenEndpoints {
+    Table,
+    ServiceTokenId,
+    EndpointId,
 }
 
 #[async_trait::async_trait]
@@ -197,10 +219,57 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        manager
+            .create_table(
+                Table::create()
+                    .table(ServiceTokenEndpoints::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(ServiceTokenEndpoints::ServiceTokenId)
+                            .uuid()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(ServiceTokenEndpoints::EndpointId)
+                            .uuid()
+                            .not_null(),
+                    )
+                    .primary_key(
+                        Index::create()
+                            .col(ServiceTokenEndpoints::ServiceTokenId)
+                            .col(ServiceTokenEndpoints::EndpointId),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_service_token_endpoints_token")
+                            .from(
+                                ServiceTokenEndpoints::Table,
+                                ServiceTokenEndpoints::ServiceTokenId,
+                            )
+                            .to(ServiceTokens::Table, ServiceTokens::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_service_token_endpoints_endpoint")
+                            .from(
+                                ServiceTokenEndpoints::Table,
+                                ServiceTokenEndpoints::EndpointId,
+                            )
+                            .to(Endpoints::Table, Endpoints::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .drop_table(Table::drop().table(ServiceTokenEndpoints::Table).to_owned())
+            .await?;
         manager
             .drop_table(Table::drop().table(EndpointAuthProviders::Table).to_owned())
             .await?;

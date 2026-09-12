@@ -60,14 +60,18 @@ async fn minted_token_resolves_revoked_and_expired_do_not() -> Result<()> {
 
     let minted = stores
         .service_token()
-        .mint(user.id, "ci".into(), None)
+        .mint(user.id, "ci".into(), None, Default::default())
         .await?;
     let headers = bearer_headers(&minted.plaintext);
 
-    let caller = auth::authenticate_mcp(&db.conn, &cfg, &headers)
+    let (caller, grants) = auth::authenticate_mcp(&db.conn, &cfg, &headers)
         .await
         .map_err(|_| anyhow::anyhow!("expected the minted token to authenticate"))?;
     assert_eq!(caller.id, user.id);
+    assert!(
+        grants.is_empty(),
+        "an unrestricted mint grants every endpoint"
+    );
 
     // Revoked: the same token no longer resolves.
     stores.service_token().revoke(minted.record.id).await?;
@@ -84,6 +88,7 @@ async fn minted_token_resolves_revoked_and_expired_do_not() -> Result<()> {
             user.id,
             "expiring".into(),
             Some(Utc::now() - ChronoDuration::seconds(1)),
+            Default::default(),
         )
         .await?;
     let expired_headers = bearer_headers(&expired.plaintext);
@@ -115,7 +120,7 @@ async fn service_tokens_row_never_contains_the_plaintext() -> Result<()> {
         .await?;
     let minted = stores
         .service_token()
-        .mint(user.id, "dump-test".into(), None)
+        .mint(user.id, "dump-test".into(), None, Default::default())
         .await?;
 
     let row = service_tokens::Entity::find_by_id(minted.record.id)

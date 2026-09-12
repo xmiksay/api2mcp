@@ -9,6 +9,17 @@
 //! carrying `WWW-Authenticate: Bearer resource_metadata="…"`, the RFC 9728 discovery hook an
 //! OAuth-aware MCP client follows to find the authorization server.
 //!
+//! **Endpoint grants.** Alongside the resolved [`Caller`], [`authenticate_mcp`] returns the
+//! set of endpoint slugs that credential is restricted to (`ServiceTokenRecord::endpoints`,
+//! `store::service_token`'s own doc) — empty means unrestricted, which is what every non-
+//! service-token credential gets (a session, the CLI, or an OAuth access token stands in for
+//! its granting user's full session, not for a narrower token row). This travels as a plain
+//! `BTreeSet<Slug>` rather than a `Caller` field: `Caller` is resolved from a session cookie
+//! by its own `FromRequestParts` impl (`server::identity`) with no notion of a request's
+//! target endpoint, so there is nowhere on it to hang a per-request restriction — the caller
+//! (`server::mcp::resolve_plan`) is the one place that has both this set and the endpoint
+//! slug being requested, and is where the restriction is actually enforced.
+//!
 //! **Two hashing schemes, deliberately not shared:** [`hash_token`] is sha256
 //! ([`crate::store::sha256_hex`]) — right for a service token or session cookie, both
 //! 256-bit CSPRNG output ([`new_token`]) with no human-guessable structure, so a fast hash
@@ -21,6 +32,8 @@
 //! [`create_session`]/[`resolve_session`]/[`delete_session`] are thin wrappers over
 //! [`crate::store::SessionStore`], which is where the queries live.
 
+use std::collections::BTreeSet;
+
 use axum::http::{HeaderMap, header};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -32,6 +45,7 @@ use uuid::Uuid;
 use anyhow::{Context, Result};
 
 use crate::config::Config;
+use crate::model::Slug;
 use crate::store::OauthStore;
 use crate::store::ServiceTokenStore;
 use crate::store::UserStore;
@@ -54,22 +68,28 @@ pub struct BearerChallenge {
 /// service token. No credential, or a credential that fails to resolve against either store,
 /// all come back as the same [`BearerChallenge`] — a caller must not be able to tell
 /// "missing" from "invalid" from the response shape alone.
+///
+/// Returns the resolved [`Caller`] alongside its endpoint-grant set (empty = every endpoint) —
+/// see this module's own doc for why that travels separately rather than on `Caller` itself.
 pub async fn authenticate_mcp(
     db: &DatabaseConnection,
     cfg: &Config,
     headers: &HeaderMap,
-) -> std::result::Result<Caller, BearerChallenge> {
+) -> std::result::Result<(Caller, BTreeSet<Slug>), BearerChallenge> {
     let Some(token) = bearer_token(headers) else {
         return Err(challenge(cfg));
     };
 
     if let Some(caller) = oauth_caller(db, token).await {
-        return Ok(caller);
+        return Ok((caller, BTreeSet::new()));
     }
 
     let store = ServiceTokenStore::new(db.clone());
     match store.resolve(token).await {
-        Ok(Some(record)) => Ok(Caller::from_service_token(&record)),
+        Ok(Some(record)) => {
+            let caller = Caller::from_service_token(&record);
+            Ok((caller, record.endpoints))
+        }
         Ok(None) => Err(challenge(cfg)),
         Err(e) => {
             // Fail closed: a store error resolving the token is not evidence the token is

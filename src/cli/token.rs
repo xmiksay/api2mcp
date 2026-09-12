@@ -1,7 +1,8 @@
 //! `api2mcp token mint|list|revoke` — service-token lifecycle management, run directly
-//! against the database (there is no admin HTTP API yet; that's chunk C14). `mint` is the
-//! only place in the CLI allowed to print a plaintext token — `list` never prints anything
-//! secret, since [`crate::store::ServiceTokenRecord`] has nowhere to put one.
+//! against the database (`server::api::tokens` is the same lifecycle over HTTP, session-
+//! authenticated, for a signed-in user to self-serve). `mint` is the only place in the CLI
+//! allowed to print a plaintext token — `list` never prints anything secret, since
+//! [`crate::store::ServiceTokenRecord`] has nowhere to put one.
 //!
 //! Single-tenant for now (see `m0007_seed_first_user`): there is no `token`/`user` flag
 //! combination that creates a *second* user, so `mint`/`list` default to the sole existing
@@ -10,15 +11,19 @@
 //! There is no `--scope` flag, and no `scopes` column to display: the admin/mcp split a
 //! service token's scope list used to choose between is gone (see `server::identity`'s module
 //! doc), and with it every reason a token would ever need one. A resolved, unrevoked, unexpired
-//! token may call tools over `/mcp` — that's the whole rule now.
+//! token may call tools over `/mcp`, restricted to `--endpoint` when given at least once —
+//! that's the whole rule now.
+
+use std::collections::BTreeSet;
 
 use anyhow::{Context, Result, bail};
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use uuid::Uuid;
 
 use crate::cli::TokenAction;
 use crate::config::Config;
 use crate::db;
+use crate::model::Slug;
 use crate::store::{StoreError, Stores, UserRecord};
 
 pub async fn run(action: TokenAction) -> Result<()> {
@@ -27,17 +32,42 @@ pub async fn run(action: TokenAction) -> Result<()> {
     let stores = Stores::new(conn);
 
     match action {
-        TokenAction::Mint { label, owner } => mint(&stores, label, owner).await,
+        TokenAction::Mint {
+            label,
+            owner,
+            endpoints,
+            expires_in_days,
+        } => mint(&stores, label, owner, endpoints, expires_in_days).await,
         TokenAction::List { owner } => list(&stores, owner).await,
         TokenAction::Revoke { id } => revoke(&stores, &id).await,
     }
 }
 
-async fn mint(stores: &Stores, label: String, owner: Option<String>) -> Result<()> {
+async fn mint(
+    stores: &Stores,
+    label: String,
+    owner: Option<String>,
+    endpoints: Vec<String>,
+    expires_in_days: Option<i64>,
+) -> Result<()> {
     let owner = resolve_owner(stores, owner.as_deref()).await?;
+    let endpoints: BTreeSet<Slug> = endpoints
+        .iter()
+        .map(|s| {
+            s.parse()
+                .with_context(|| format!("{s:?} is not a valid endpoint slug"))
+        })
+        .collect::<Result<_>>()?;
+    let expires_at = expires_in_days
+        .map(|days| {
+            Duration::try_days(days)
+                .map(|d| Utc::now() + d)
+                .ok_or_else(|| anyhow::anyhow!("{days} days is out of range"))
+        })
+        .transpose()?;
     let minted = stores
         .service_token()
-        .mint(owner.id, label, None)
+        .mint(owner.id, label, expires_at, endpoints)
         .await
         .context("minting service token")?;
 
@@ -45,9 +75,10 @@ async fn mint(stores: &Stores, label: String, owner: Option<String>) -> Result<(
     println!();
     println!("  {}", minted.plaintext);
     println!();
-    println!("id:    {}", minted.record.id);
-    println!("owner: {}", owner.email);
-    println!("label: {}", minted.record.label);
+    println!("id:        {}", minted.record.id);
+    println!("owner:     {}", owner.email);
+    println!("label:     {}", minted.record.label);
+    println!("endpoints: {}", format_endpoints(&minted.record.endpoints));
     Ok(())
 }
 
@@ -65,8 +96,8 @@ async fn list(stores: &Stores, owner: Option<String>) -> Result<()> {
     }
 
     println!(
-        "{:<36}  {:<8}  {:<20}  {:<8}  created_at",
-        "id", "prefix", "label", "status"
+        "{:<36}  {:<8}  {:<20}  {:<8}  {:<20}  created_at",
+        "id", "prefix", "label", "status", "endpoints"
     );
     for t in tokens {
         let status = if t.revoked_at.is_some() {
@@ -77,15 +108,30 @@ async fn list(stores: &Stores, owner: Option<String>) -> Result<()> {
             "active"
         };
         println!(
-            "{:<36}  {:<8}  {:<20}  {:<8}  {}",
+            "{:<36}  {:<8}  {:<20}  {:<8}  {:<20}  {}",
             t.id,
             t.token_prefix,
             t.label,
             status,
+            format_endpoints(&t.endpoints),
             t.created_at.to_rfc3339(),
         );
     }
     Ok(())
+}
+
+/// `"*"` for an unrestricted token (the empty-grant-list default), else a comma-joined slug
+/// list — matches the wire contract's own "empty means every endpoint" convention
+/// (`server::api::tokens`).
+fn format_endpoints(endpoints: &BTreeSet<Slug>) -> String {
+    if endpoints.is_empty() {
+        return "*".to_owned();
+    }
+    endpoints
+        .iter()
+        .map(Slug::as_str)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 async fn revoke(stores: &Stores, id: &str) -> Result<()> {

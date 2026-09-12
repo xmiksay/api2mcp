@@ -33,6 +33,7 @@ mod scripts;
 mod services;
 mod tags;
 mod test_run;
+mod tokens;
 mod validate_write;
 
 use axum::Router;
@@ -53,6 +54,7 @@ pub fn router() -> Router<AppState> {
         .merge(endpoints::router())
         .merge(tags::router())
         .merge(runs::router())
+        .merge(tokens::router())
 }
 
 #[cfg(test)]

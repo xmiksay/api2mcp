@@ -12,6 +12,15 @@
 //! [`crate::resolve::EndpointPlan`]); [`registry`] renders a plan into MCP's tool-descriptor
 //! shape; [`invoke`] is the `invoke`/`list_tools` dispatcher; [`rpc`] is the wire format;
 //! [`instructions`] is the `initialize` response's static text.
+//!
+//! **Endpoint grants.** [`resolve_plan`] is the one place an endpoint slug turns into a
+//! plan for every method that needs one (`initialize`, `tools/list`, `tools/call`), so it is
+//! also the one place a service token's endpoint restriction
+//! (`server::auth::authenticate_mcp`'s second return value) is enforced — not a per-handler
+//! check a later sibling method could forget. A restricted token naming some other slug gets
+//! exactly [`build_endpoint_not_found`]'s response: the same shape [`crate::resolve::build_plan`]
+//! itself produces for a slug with no row at all. That indistinguishability is the point — a
+//! `403`-shaped "exists but you can't reach it" would tell an attacker which slugs to go after.
 
 mod handlers;
 mod instructions;
@@ -19,6 +28,7 @@ mod invoke;
 mod registry;
 mod rpc;
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use axum::body::Bytes;
@@ -78,8 +88,8 @@ async fn handle(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let caller = match authenticate_mcp(&state.db, &state.cfg, &headers).await {
-        Ok(caller) => caller,
+    let (caller, endpoint_grants) = match authenticate_mcp(&state.db, &state.cfg, &headers).await {
+        Ok(pair) => pair,
         Err(challenge) => return unauthorized(challenge),
     };
 
@@ -94,7 +104,7 @@ async fn handle(
         return StatusCode::ACCEPTED.into_response();
     }
 
-    let resp = dispatch_method(&state, &endpoint_slug, &caller, req).await;
+    let resp = dispatch_method(&state, &endpoint_slug, &caller, &endpoint_grants, req).await;
     (StatusCode::OK, Json(resp)).into_response()
 }
 
@@ -102,10 +112,11 @@ async fn dispatch_method(
     state: &AppState,
     endpoint_slug: &str,
     caller: &Caller,
+    endpoint_grants: &BTreeSet<Slug>,
     req: JsonRpcRequest,
 ) -> JsonRpcResponse {
     match req.method.as_str() {
-        "initialize" => match resolve_plan(state, endpoint_slug, &req.id).await {
+        "initialize" => match resolve_plan(state, endpoint_slug, endpoint_grants, &req.id).await {
             Ok(plan) => JsonRpcResponse::success(req.id, initialize_result(&plan)),
             Err(resp) => resp,
         },
@@ -114,8 +125,10 @@ async fn dispatch_method(
             // OAuth access token or a resolved, unrevoked, unexpired service token, either of
             // which *is* "may call tools" in full. The admin-only service token that used to
             // fail a narrower check here is gone (Decision 1; see `server::identity`'s module
-            // doc) — there is no longer a distinct credential kind to exclude.
-            let plan = match resolve_plan(state, endpoint_slug, &req.id).await {
+            // doc) — there is no longer a distinct credential kind to exclude. The endpoint
+            // restriction (as opposed to a blanket "may call tools") is enforced inside
+            // `resolve_plan`, below.
+            let plan = match resolve_plan(state, endpoint_slug, endpoint_grants, &req.id).await {
                 Ok(plan) => plan,
                 Err(resp) => return resp,
             };
@@ -131,12 +144,16 @@ async fn dispatch_method(
     }
 }
 
-/// Parses `endpoint_slug` and resolves it through `state.plans` (the compiled-plan cache), or
-/// builds the framed JSON-RPC error for either failure — a bad slug (`-32602`, a request problem)
-/// or a resolve failure (`-32001`, this endpoint's own definitions don't compile right now).
+/// Parses `endpoint_slug`, checks it against `endpoint_grants` (empty = every endpoint), and
+/// resolves it through `state.plans` (the compiled-plan cache) — or builds the framed JSON-RPC
+/// error for whichever of the three ways this can fail: a bad slug (`-32602`, a request
+/// problem), a slug outside a restricted token's grant list, or a resolve failure (`-32001`
+/// either way — see [`build_endpoint_not_found`] and this module's own doc for why a grant
+/// miss must look exactly like a missing endpoint, never a distinct "forbidden").
 async fn resolve_plan(
     state: &AppState,
     endpoint_slug: &str,
+    endpoint_grants: &BTreeSet<Slug>,
     id: &Option<Value>,
 ) -> Result<Arc<EndpointPlan>, JsonRpcResponse> {
     let slug: Slug = endpoint_slug.parse().map_err(|e| {
@@ -146,11 +163,26 @@ async fn resolve_plan(
             format!("invalid endpoint {endpoint_slug:?}: {e}"),
         )
     })?;
+    if !endpoint_grants.is_empty() && !endpoint_grants.contains(&slug) {
+        return Err(build_endpoint_not_found(id, &slug));
+    }
     state
         .plans
         .get_or_build(&state.stores(), &slug)
         .await
         .map_err(|e| JsonRpcResponse::error(id.clone(), -32001, redact_message(&e.to_string())))
+}
+
+/// The same `-32001` shape [`crate::resolve::build_plan`] produces for a slug with no
+/// `endpoints` row at all (`ResolveError::EndpointNotFound`'s `Display` text, reproduced here
+/// rather than imported since nothing about a grant miss ever reaches `resolve::build_plan` —
+/// it is rejected one step earlier, in [`resolve_plan`]).
+fn build_endpoint_not_found(id: &Option<Value>, slug: &Slug) -> JsonRpcResponse {
+    JsonRpcResponse::error(
+        id.clone(),
+        -32001,
+        redact_message(&format!("endpoint {:?} does not exist", slug.as_str())),
+    )
 }
 
 /// Builds the `401` response carrying the `WWW-Authenticate` bearer challenge that points an
@@ -188,6 +220,24 @@ fn initialize_result(plan: &EndpointPlan) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pins the whole point of [`build_endpoint_not_found`]: its message must read exactly
+    /// like `resolve::ResolveError::EndpointNotFound`'s own `Display` text, or a restricted
+    /// token's rejection becomes distinguishable from a genuinely missing endpoint. Compares
+    /// through the serialized wire shape rather than a private field — `JsonRpcResponse`'s
+    /// fields are only visible inside `rpc`, its defining module.
+    #[test]
+    fn endpoint_not_found_message_matches_resolve_errors_own_wording() {
+        let slug: Slug = "some-slug".parse().unwrap();
+        let resp = build_endpoint_not_found(&Some(json!(1)), &slug);
+        let expected = crate::resolve::ResolveError::EndpointNotFound {
+            slug: slug.as_str().to_owned(),
+        }
+        .to_string();
+        let wire = serde_json::to_value(&resp).unwrap();
+        assert_eq!(wire["error"]["message"], json!(expected));
+        assert_eq!(wire["error"]["code"], json!(-32001));
+    }
 
     #[test]
     fn unauthorized_response_carries_the_www_authenticate_header() {

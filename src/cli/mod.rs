@@ -105,6 +105,14 @@ pub enum TokenAction {
         /// only needed once more than one user exists.
         #[arg(long)]
         owner: Option<String>,
+        /// Restrict the token to this endpoint slug; repeatable. Omit entirely to mint an
+        /// unrestricted token that can reach every endpoint (the default, equivalent to a
+        /// GitHub classic PAT).
+        #[arg(long = "endpoint")]
+        endpoints: Vec<String>,
+        /// Expire the token after this many days. Omit for a token that never expires.
+        #[arg(long)]
+        expires_in_days: Option<i64>,
     },
     List {
         #[arg(long)]

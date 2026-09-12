@@ -130,6 +130,7 @@ mod tests {
             expires_at: None,
             revoked_at: None,
             created_at: chrono::Utc::now(),
+            endpoints: Default::default(),
         }
     }
 

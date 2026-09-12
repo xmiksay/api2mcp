@@ -115,6 +115,18 @@ impl EndpointStore {
             .ok_or(StoreError::NotFound)
     }
 
+    /// The inverse of [`Self::id_by_slug`] — used by `store::service_token` to turn a service
+    /// token's `service_token_endpoints` rows back into the `Slug`s its grant list is expressed
+    /// in everywhere else in the crate.
+    pub(crate) async fn slug_by_id(&self, id: Uuid) -> Result<Slug, StoreError> {
+        endpoints::Entity::find_by_id(id)
+            .one(&self.db)
+            .await
+            .map_err(db_err("endpoint::slug_by_id"))?
+            .ok_or(StoreError::NotFound)
+            .and_then(|row| parse_slug(&row.slug))
+    }
+
     async fn assemble(&self, row: endpoints::Model) -> Result<EndpointDef, StoreError> {
         let id = row.id;
         let aliases = self.load_aliases(id).await?;

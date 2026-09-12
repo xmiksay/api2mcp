@@ -65,7 +65,12 @@ pub async fn setup() -> Result<Option<Harness>> {
         .await?;
     let mcp_minted = stores
         .service_token()
-        .mint(token_owner.id, "api test mcp token".to_owned(), None)
+        .mint(
+            token_owner.id,
+            "api test mcp token".to_owned(),
+            None,
+            Default::default(),
+        )
         .await?;
 
     let cfg = Config::from_lookup(|k| match k {
