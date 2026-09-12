@@ -53,6 +53,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/logout", get(get_logout))
         .nest("/api", api::router())
         .merge(oauth::router())
+        .route("/static/{*path}", get(embed::static_handler))
         .fallback(embed::spa_handler)
         .with_state(state)
         .layer(axum::middleware::from_fn(observe::log_slow_request))

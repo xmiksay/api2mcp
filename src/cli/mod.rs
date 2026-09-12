@@ -23,7 +23,8 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Run the HTTP server: MCP data plane, OAuth AS, read-only API and the embedded SPA.
+    /// Run the HTTP server: MCP data plane, OAuth AS, read-write admin JSON API and the
+    /// embedded SPA.
     Serve,
     /// Apply, roll back or inspect database migrations.
     Migrate {

@@ -153,26 +153,21 @@ fn render_page(request_id: Uuid, req: &ConsentRequest, client_name: &str) -> Str
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Authorize — api2mcp</title>
-<style>
-  body {{ font-family: system-ui, sans-serif; max-width: 26rem; margin: 4rem auto; padding: 0 1rem; }}
-  .client {{ font-weight: 600; }}
-  .scope {{ color: #555; font-size: 0.9rem; margin-bottom: 1.5rem; }}
-  .buttons {{ display: flex; gap: 0.75rem; }}
-  button {{ padding: 0.5rem 1rem; font-size: 1rem; }}
-  button[value="deny"] {{ background: none; }}
-</style>
+<link rel="stylesheet" href="/static/auth.css">
 </head>
 <body>
+<main>
 <h1>Authorize access</h1>
-<p><span class="client">{client_name}</span> wants to access your api2mcp tools.</p>
-<p class="scope">Requested scope: <code>{scope}</code></p>
+<p class="sub"><strong>{client_name}</strong> wants to call the tools on your endpoints.</p>
+<p class="scopes">Requested scope: <code>{scope}</code></p>
 <form method="post" action="/oauth/consent">
   <input type="hidden" name="request_id" value="{request_id}">
-  <div class="buttons">
+  <div class="actions">
     <button type="submit" name="decision" value="approve">Allow</button>
-    <button type="submit" name="decision" value="deny">Deny</button>
+    <button type="submit" name="decision" value="deny" class="secondary">Deny</button>
   </div>
 </form>
+</main>
 </body>
 </html>
 "#,

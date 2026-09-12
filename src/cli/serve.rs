@@ -1,6 +1,7 @@
 //! `api2mcp serve` — connects, migrates under the advisory lock (which also seeds the first
 //! user — see `migration::m0007_seed_first_user`, idempotent and a no-op once one exists),
-//! builds [`AppState`], binds, and serves until ctrl-c.
+//! builds [`AppState`], starts the background retention sweep (`server::retention`), binds,
+//! and serves until ctrl-c.
 
 use std::sync::Arc;
 
@@ -11,7 +12,7 @@ use crate::config::Config;
 use crate::db;
 use crate::http::{HickoryDns, SsrfPolicy, UpstreamPool};
 use crate::resolve::PlanCache;
-use crate::server::{AppState, build_router};
+use crate::server::{AppState, build_router, retention};
 
 pub async fn run() -> Result<()> {
     let cfg = Config::from_env()?;
@@ -30,7 +31,8 @@ pub async fn run() -> Result<()> {
         },
     ));
     let plans = Arc::new(PlanCache::new());
-    let state = AppState::new(conn, cfg.clone(), upstream, plans);
+    let state = AppState::new(conn.clone(), cfg.clone(), upstream, plans);
+    let retention_task = retention::spawn(conn, cfg.clone());
 
     let router = build_router(state);
     let listener = TcpListener::bind(cfg.bind_addr())
@@ -50,6 +52,10 @@ pub async fn run() -> Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("serving")?;
+
+    // The sweep loop never returns on its own (it only exits via cancellation), so it must be
+    // stopped explicitly here rather than left running past the server it belongs to.
+    retention_task.abort();
 
     Ok(())
 }

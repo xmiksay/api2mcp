@@ -241,18 +241,12 @@ fn render_page(next: &str, error: Option<&str>, oidc_link: Option<&(String, Stri
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in — api2mcp</title>
-<style>
-  body {{ font-family: system-ui, sans-serif; max-width: 22rem; margin: 4rem auto; padding: 0 1rem; }}
-  label {{ display: block; margin-bottom: 1rem; font-size: 0.9rem; }}
-  input {{ display: block; width: 100%; padding: 0.5rem; margin-top: 0.25rem; box-sizing: border-box; font-size: 1rem; }}
-  button, .oidc-btn {{ padding: 0.5rem 1rem; font-size: 1rem; }}
-  .oidc-btn {{ display: block; text-align: center; text-decoration: none; border: 1px solid #ccc; border-radius: 0.25rem; }}
-  .divider {{ text-align: center; color: #888; }}
-  .error {{ color: #b00020; }}
-</style>
+<link rel="stylesheet" href="/static/auth.css">
 </head>
 <body>
+<main>
 <h1>api2mcp</h1>
+<p class="sub">Sign in to manage your endpoints</p>
 {error_html}
 {oidc_html}
 <form method="post" action="/login">
@@ -261,6 +255,7 @@ fn render_page(next: &str, error: Option<&str>, oidc_link: Option<&(String, Stri
   <label>Password<input type="password" name="password" required></label>
   <button type="submit">Sign in</button>
 </form>
+</main>
 </body>
 </html>
 "#,
@@ -345,8 +340,8 @@ mod tests {
     #[test]
     fn render_page_omits_the_oidc_link_when_none() {
         let html = render_page("/runs", None, None);
-        // The `.oidc-btn` *rule* is always in the static <style> block; what must be absent is
-        // an element actually using it.
+        // The `.oidc-btn` rule lives in the linked stylesheet regardless; what must be absent
+        // here is an element actually using it.
         assert!(!html.contains(r#"class="oidc-btn""#));
     }
 

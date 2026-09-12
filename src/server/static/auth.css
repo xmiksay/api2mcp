@@ -1,0 +1,173 @@
+/* Styling for the server-rendered auth pages (sign-in, OAuth consent).
+ *
+ * This is a file rather than a `<style>` block because the CSP is
+ * `default-src 'self'` with no `style-src 'unsafe-inline'`. An inline block is simply blocked,
+ * which is what left these pages rendering as unstyled browser-default HTML — the CSS was there,
+ * the browser refused it. Serving it same-origin satisfies the policy without widening it.
+ *
+ * It also cannot come from the SPA's Tailwind bundle: `web/dist` holds a build.rs placeholder on
+ * a fresh clone and in CI, and the auth flow must work there. So these tokens are duplicated from
+ * `web/src/style.css` on purpose — the duplication buys an auth flow that does not depend on the
+ * frontend having been built. Keep them in step by hand; they are few and they rarely move. */
+
+:root {
+  --bg: #0a0e14;
+  --surface: #0f141c;
+  --border: #212a36;
+  --border-strong: #2f3b4a;
+  --ink: #dbe4f0;
+  --ink-dim: #8794a6;
+  --ink-faint: #56637a;
+  --read: #22d3ee;
+  --error: #f87171;
+  --font: "JetBrains Mono", "Berkeley Mono", ui-monospace, "SF Mono", "Cascadia Code", Consolas,
+    monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+main {
+  width: 100%;
+  max-width: 24rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 1.75rem;
+}
+
+h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.sub {
+  margin: 0 0 1.5rem;
+  color: var(--ink-faint);
+  font-size: 0.75rem;
+}
+
+label {
+  display: block;
+  margin-bottom: 1rem;
+  color: var(--ink-dim);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+input[type="text"],
+input[type="email"],
+input[type="password"] {
+  display: block;
+  width: 100%;
+  margin-top: 0.375rem;
+  padding: 0.5rem 0.625rem;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 0.25rem;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 0.875rem;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+input:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--read);
+  outline-offset: 1px;
+}
+
+button {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  background: var(--read);
+  border: 1px solid var(--read);
+  border-radius: 0.25rem;
+  color: var(--bg);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:hover { filter: brightness(1.08); }
+
+button.secondary {
+  background: transparent;
+  border-color: var(--border-strong);
+  color: var(--ink-dim);
+}
+
+.oidc-btn {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.25rem;
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.8125rem;
+  text-align: center;
+  text-decoration: none;
+}
+
+.oidc-btn:hover { border-color: var(--read); color: var(--read); }
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1.25rem 0;
+  color: var(--ink-faint);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.error {
+  margin: 0 0 1rem;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--error);
+  border-radius: 0.25rem;
+  color: var(--error);
+  font-size: 0.75rem;
+}
+
+.scopes {
+  margin: 0 0 1.25rem;
+  padding: 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  color: var(--ink-dim);
+  font-size: 0.75rem;
+}
+
+.actions { display: flex; gap: 0.5rem; }
+.actions form { flex: 1; margin: 0; }

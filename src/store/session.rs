@@ -84,8 +84,9 @@ impl SessionStore {
         Ok(())
     }
 
-    /// Drops every session whose expiry has passed. Called by the retention task; sessions are
-    /// otherwise only removed on logout, so without this the table grows without bound.
+    /// Drops every session whose expiry has passed. Called by `server::retention`'s background
+    /// sweep; sessions are otherwise only removed on logout, so without this the table grows
+    /// without bound.
     pub async fn purge_expired(&self) -> Result<u64, StoreError> {
         let res = sessions::Entity::delete_many()
             .filter(sessions::Column::ExpiresAt.lt(Utc::now()))

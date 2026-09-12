@@ -17,6 +17,36 @@ use rust_embed::RustEmbed;
 #[folder = "web/dist"]
 struct SpaAssets;
 
+/// Assets served regardless of whether the SPA was ever built.
+///
+/// The server-rendered auth pages need CSS, and it cannot come from either of the two obvious
+/// places: an inline `<style>` block is blocked by the `default-src 'self'` CSP, and the SPA's
+/// Tailwind bundle does not exist on a fresh clone or in CI, where `web/dist` is a build.rs
+/// placeholder. Embedding a small stylesheet separately keeps the auth flow working with no
+/// dependency on the frontend having been built — which is the same reason those pages are
+/// server-rendered in the first place.
+#[derive(RustEmbed)]
+#[folder = "src/server/static"]
+struct StaticAssets;
+
+/// Serves [`StaticAssets`] under `/static`. Content-addressed by hand rather than by hash, so it
+/// is cached for an hour rather than forever — long enough to matter, short enough that a change
+/// ships without anyone thinking about cache busting.
+pub async fn static_handler(axum::extract::Path(path): axum::extract::Path<String>) -> Response {
+    let Some(file) = StaticAssets::get(&path) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let mime = mime_guess::from_path(&path).first_or_octet_stream();
+    (
+        [
+            (header::CONTENT_TYPE, mime.to_string()),
+            (header::CACHE_CONTROL, "public, max-age=3600".to_string()),
+        ],
+        file.data.into_owned(),
+    )
+        .into_response()
+}
+
 /// The SPA fallback handler: serves a hashed static asset with a forever cache, `index.html`
 /// (or any other non-file route) with `no-store`, and a `404` for any path under `/api/` that
 /// didn't already match a real route — the one thing this handler must never do for such a path
@@ -70,6 +100,15 @@ fn serve_index() -> Response {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_auth_stylesheet_is_embedded() {
+        // The auth pages link this rather than inlining a <style> block, because the CSP is
+        // `default-src 'self'` with no `style-src 'unsafe-inline'` — an inline block is silently
+        // blocked, which is what once left those pages rendering unstyled. If this asset ever
+        // stops being embedded they break the same way, quietly.
+        assert!(super::StaticAssets::get("auth.css").is_some());
+    }
+
     use super::*;
     use axum::body::Body;
 

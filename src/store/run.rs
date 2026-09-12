@@ -3,10 +3,10 @@
 //! of the tool-definition aggregates `model` describes), so this store defines its own
 //! plain, scalar-only request/response types, same reasoning as `store::user`.
 
-use chrono::Utc;
+use chrono::{DateTime, Duration, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect, Select, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, DatabaseConnection,
+    EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select, Set, Statement, TransactionTrait,
 };
 use uuid::Uuid;
 
@@ -164,6 +164,59 @@ impl RunStore {
             .map_err(db_err("run::list"))?;
         rows.into_iter().map(summary_to_model).collect()
     }
+
+    /// Deletes `runs` older than `retention_days`, in batches of at most `batch_size` rows,
+    /// looping until a pass deletes fewer than `batch_size` — so a first sweep on a long-lived
+    /// instance (potentially millions of eligible rows) never holds one long-running
+    /// transaction open and stalls live traffic. `run_calls` needs no separate delete: its FK
+    /// (`migration::m0006_runs`'s `fk_run_calls_run`) is `ON DELETE CASCADE`.
+    ///
+    /// Raw SQL, not `delete_many()`: `sea_orm`'s query builder has no `LIMIT` on `DELETE`, so a
+    /// bounded batch has to be expressed as a subquery — same reasoning as `db::
+    /// run_migrations_locked`'s advisory lock being raw SQL too.
+    pub async fn purge_expired(
+        &self,
+        retention_days: u32,
+        batch_size: u64,
+    ) -> Result<u64, StoreError> {
+        // `batch_size == 0` can't make progress (every pass would delete 0 rows, which is also
+        // the loop's "done" signal) — bail rather than spin forever. Only reachable if a future
+        // caller passes a bad constant; production always calls this with a fixed, non-zero one.
+        let (Some(cutoff), false) = (cutoff_for(retention_days), batch_size == 0) else {
+            return Ok(0);
+        };
+        let mut total = 0u64;
+        loop {
+            let res = self
+                .db
+                .execute(Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    "DELETE FROM runs WHERE id IN \
+                     (SELECT id FROM runs WHERE created_at < $1 LIMIT $2)",
+                    [cutoff.into(), (batch_size as i64).into()],
+                ))
+                .await
+                .map_err(db_err("run::purge_expired"))?;
+            let deleted = res.rows_affected();
+            total += deleted;
+            if deleted < batch_size {
+                break;
+            }
+        }
+        Ok(total)
+    }
+}
+
+/// `retention_days == 0` means "keep forever", not "delete everything" — a config typo (or an
+/// env var that fails to parse and silently lands on a zero default some other way) must never
+/// be read as "purge every run immediately". `None` here is what makes [`RunStore::purge_expired`]
+/// short-circuit before issuing a single `DELETE`.
+fn cutoff_for(retention_days: u32) -> Option<DateTime<Utc>> {
+    if retention_days == 0 {
+        None
+    } else {
+        Some(Utc::now() - Duration::days(retention_days.into()))
+    }
 }
 
 fn summary_to_model(row: runs::Model) -> Result<RunSummary, StoreError> {
@@ -234,3 +287,7 @@ fn call_to_model(row: run_calls::Model) -> Result<RunCall, StoreError> {
         response_body: row.body_redacted,
     })
 }
+
+#[cfg(test)]
+#[path = "run_tests.rs"]
+mod tests;

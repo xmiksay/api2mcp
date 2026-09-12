@@ -10,6 +10,7 @@ pub mod login_oidc;
 pub mod mcp;
 pub mod oauth;
 pub mod oidc;
+pub mod retention;
 pub mod router;
 pub mod state;
 
