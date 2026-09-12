@@ -126,6 +126,8 @@ const routes: RouteRecordRaw[] = [
   },
 
   { path: '/health', name: 'health', component: () => import('@/views/HealthView.vue') },
+
+  { path: '/tokens', name: 'tokens', component: () => import('@/views/TokensListView.vue') },
 ]
 
 export const router = createRouter({ history: createWebHistory(), routes })

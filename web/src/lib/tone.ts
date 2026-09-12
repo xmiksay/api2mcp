@@ -29,6 +29,19 @@ export function boolTone(value: boolean, whenTrue: Tone = "ok", whenFalse: Tone 
   return value ? whenTrue : whenFalse;
 }
 
+export type TokenState = "live" | "expired" | "revoked";
+
+/** Revocation always wins even past expiry — it's the more deliberate of the two facts. */
+export function tokenState(revokedAt: string | null, expiresAt: string | null): TokenState {
+  if (revokedAt) return "revoked";
+  if (expiresAt !== null && new Date(expiresAt).getTime() <= Date.now()) return "expired";
+  return "live";
+}
+
+export function tokenStateTone(state: TokenState): Tone {
+  return state === "live" ? "ok" : state === "expired" ? "timeout" : "error";
+}
+
 const CLASSES: Record<Tone, string> = {
   read: "text-read border-read/40 bg-read/10",
   write: "text-write border-write/40 bg-write/10",

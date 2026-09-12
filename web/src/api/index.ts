@@ -11,3 +11,4 @@ export { tagsApi } from "./tags";
 export { runsApi } from "./runs";
 export { healthApi } from "./health";
 export { meApi } from "./me";
+export { tokensApi } from "./tokens";

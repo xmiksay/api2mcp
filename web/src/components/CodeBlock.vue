@@ -5,7 +5,8 @@
 import { computed, ref } from "vue";
 import { useClipboard } from "@/composables/useClipboard";
 
-const props = withDefaults(defineProps<{ code: string; collapseAfterLines?: number }>(), {
+const props = withDefaults(defineProps<{ code: string; lang?: string; collapseAfterLines?: number }>(), {
+  lang: "rhai",
   collapseAfterLines: 24,
 });
 
@@ -17,7 +18,7 @@ const { copied, copy: copyText } = useClipboard();
 <template>
   <div class="relative border border-border bg-surface">
     <div class="flex items-center justify-between border-b border-border px-2 py-1">
-      <span class="text-[10px] tracking-[0.15em] text-ink-faint uppercase">rhai</span>
+      <span class="text-[10px] tracking-[0.15em] text-ink-faint uppercase">{{ lang }}</span>
       <button
         type="button"
         class="text-[10px] tracking-wide text-ink-dim uppercase hover:text-read"

@@ -264,3 +264,34 @@ export interface ScriptTestResult {
   calls: ScriptCallView[];
   failure: ScriptFailure | null;
 }
+
+// --- Access tokens (POST/GET /api/tokens, DELETE /api/tokens/{id}) -------------------------------
+// The self-serve counterpart to the CLI-issued token: lets a signed-in user mint their own MCP
+// credential without shell access. `endpoints` holds slugs; empty means every endpoint.
+
+export interface TokenCreateRequest {
+  label: string;
+  expires_in_days: number | null;
+  endpoints: string[];
+}
+
+/** `token` is the plaintext — returned only from the create call, never again. */
+export interface TokenCreateResponse {
+  id: string;
+  token: string;
+  token_prefix: string;
+  label: string;
+  expires_at: string | null;
+  endpoints: string[];
+}
+
+export interface TokenView {
+  id: string;
+  token_prefix: string;
+  label: string;
+  created_at: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+  revoked_at: string | null;
+  endpoints: string[];
+}

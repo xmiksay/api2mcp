@@ -21,6 +21,10 @@ const groups: { heading: string; items: NavItem[] }[] = [
     items: [{ to: "/runs", label: "runs" }],
   },
   {
+    heading: "account",
+    items: [{ to: "/tokens", label: "tokens" }],
+  },
+  {
     heading: "system",
     items: [{ to: "/health", label: "health" }],
   },

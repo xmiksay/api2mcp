@@ -38,6 +38,9 @@ pub async fn run() -> Result<()> {
         .with_context(|| format!("binding {}", cfg.bind_addr()))?;
 
     tracing::info!(bind = %cfg.bind_addr(), "api2mcp listening");
+    // Printed rather than logged: it is the next thing someone needs, not a diagnostic. Without
+    // a header the client authenticates through OAuth — the 401 advertises the authorization
+    // server — which is why no token appears here; `api2mcp token mint` prints the header form.
     println!(
         "claude mcp add --transport http api2mcp {}/mcp/{}",
         cfg.base_url, cfg.default_endpoint
