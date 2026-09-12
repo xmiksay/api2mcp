@@ -206,6 +206,9 @@ export interface RunCallView {
   seq: number;
   api_call_slug: string;
   service_slug: string;
+  method: string;
+  url_redacted: string;
+  headers_redacted: unknown | null;
   status_code: number | null;
   response_bytes: number | null;
   response_truncated: boolean;
@@ -214,7 +217,49 @@ export interface RunCallView {
   raw: unknown | null;
 }
 
+export type RunCallerKind = "oauth" | "service_token";
+
+/** One entry of a run's `errors[]` envelope — `store::run`/`runtime::recorder::errors_json`. */
+export interface RunErrorEntry {
+  index: number;
+  /** The failed item's own label from the fan-out input — stable across repeat runs of the same
+   * input shape, unlike `error`'s message text. */
+  name: string;
+  error: string;
+}
+
+/** `runtime::budget::snapshot_json` — the ceilings that applied to this run and what it actually
+ * used against each. A `max_*` of `null` means that axis had no ceiling. */
+export interface RunBudgetSnapshot {
+  max_calls: number | null;
+  max_bytes: number | null;
+  max_pages: number | null;
+  wall_clock_ms: number | null;
+  calls_used: number;
+  bytes_used: number;
+  pages_used: number;
+}
+
+export interface RunTimings {
+  elapsed_ms: number;
+}
+
 export interface RunDetailView extends RunSummaryView {
+  caller_kind: RunCallerKind;
+  caller_id: string;
+  request_id: string;
+  /** The run's frozen wall-clock start (`runtime::budget::BudgetMeter::execution_start`) — what
+   * makes a script built on `execution_start()` replayable from this record. */
+  execution_start: string;
+  /** The full compiled definition as it executed. Definitions are mutable and last-write-wins,
+   * so this is the only record of what the tool looked like at this moment. */
+  definition_snapshot: unknown;
+  definition_digest: string;
+  input_redacted: unknown;
+  output_redacted: unknown | null;
+  errors: RunErrorEntry[] | null;
+  budget_snapshot: RunBudgetSnapshot | null;
+  timings: RunTimings | null;
   calls: RunCallView[];
 }
 
