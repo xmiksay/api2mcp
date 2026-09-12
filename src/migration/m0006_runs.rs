@@ -4,10 +4,26 @@
 //! upstream request a run made, keyed by `seq` — the **input index of the fan-out, not
 //! its completion index** (I7 made durable: completion order is never observable, so it
 //! must never be recorded either).
+//!
+//! `runs.owner_id` — a user sees only runs against their own definitions. `endpoint_slug`
+//! alone can no longer answer "whose run is this": slugs are unique per owner
+//! (`m0003_definitions`'s own doc), so two different people's endpoints can share a slug.
+//! Set from the resolved `EndpointPlan::owner_id` (the endpoint definition's own owner) at
+//! record time, not from `caller_id` — that column is a free-form string (`"cli"`,
+//! `"admin-test:<uuid>"`, a token owner's uuid, ...) with no single parseable shape, where
+//! `owner_id` is a plain, always-present foreign key. Amended into this migration (not a new
+//! one) — same unmerged-branch reasoning as `m0003`.
 
 use sea_orm_migration::prelude::*;
 
 use super::helpers::{timestamptz_now, uuid_col, uuid_pk};
+
+/// Redeclared from `m0001_init`'s own table — see `migration`'s module doc.
+#[derive(DeriveIden)]
+enum Users {
+    Table,
+    Id,
+}
 
 pub struct Migration;
 
@@ -21,6 +37,7 @@ impl MigrationName for Migration {
 enum Runs {
     Table,
     Id,
+    OwnerId,
     EndpointSlug,
     ToolName,
     TargetKind,
@@ -72,6 +89,7 @@ impl MigrationTrait for Migration {
                     .table(Runs::Table)
                     .if_not_exists()
                     .col(uuid_pk(Runs::Id))
+                    .col(uuid_col(Runs::OwnerId))
                     .col(ColumnDef::new(Runs::EndpointSlug).text().not_null())
                     .col(ColumnDef::new(Runs::ToolName).text().not_null())
                     .col(ColumnDef::new(Runs::TargetKind).text().not_null())
@@ -129,14 +147,32 @@ impl MigrationTrait for Migration {
                         "budget_exceeded",
                         "timeout",
                     ]))
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_runs_owner")
+                            .from(Runs::Table, Runs::OwnerId)
+                            .to(Users::Table, Users::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
                     .to_owned(),
             )
             .await?;
         manager
             .create_index(
                 Index::create()
-                    .name("ix_runs_endpoint_slug_created_at")
+                    .name("ix_runs_owner_created_at")
                     .table(Runs::Table)
+                    .col(Runs::OwnerId)
+                    .col(Runs::CreatedAt)
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .create_index(
+                Index::create()
+                    .name("ix_runs_owner_endpoint_slug_created_at")
+                    .table(Runs::Table)
+                    .col(Runs::OwnerId)
                     .col(Runs::EndpointSlug)
                     .col(Runs::CreatedAt)
                     .to_owned(),

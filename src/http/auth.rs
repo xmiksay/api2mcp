@@ -63,6 +63,7 @@ mod tests {
     // other test happened to have it set at the same moment.
     fn provider(bound_origin: &str, credential_env_key: &str) -> AuthProvider {
         AuthProvider {
+            owner_id: uuid::Uuid::nil(),
             slug: Slug::from_str("demo-auth").expect("valid slug"),
             service_slug: Slug::from_str("demo").expect("valid slug"),
             kind: AuthKind::StaticHeader,

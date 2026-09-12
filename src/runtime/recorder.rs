@@ -43,6 +43,7 @@ pub async fn record(stores: &Stores, run: RunRecord<'_>) -> Result<Uuid, StoreEr
     let (target_kind, target_slug) = target_of(run.tool);
 
     let new_run = NewRun {
+        owner_id: run.plan.owner_id,
         endpoint_slug: run.plan.slug.clone(),
         tool_name: run.tool.name.clone(),
         target_kind,

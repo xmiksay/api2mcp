@@ -18,8 +18,9 @@ fn slug(s: &str) -> Slug {
     s.parse().expect("valid slug")
 }
 
-fn minimal_endpoint(name: &str) -> EndpointDef {
+fn minimal_endpoint(owner_id: uuid::Uuid, name: &str) -> EndpointDef {
     EndpointDef {
+        owner_id,
         slug: slug(name),
         // No api_call carries this tag — the plan this endpoint resolves to is simply empty,
         // which is fine: these tests only need the endpoint row and its id to exist, never a
@@ -83,7 +84,7 @@ async fn a_token_minted_with_an_endpoint_carries_it_in_its_grant_set() -> Result
             password: "hunter2-hunter2".to_owned(),
         })
         .await?;
-    let endpoint = minimal_endpoint("grant-ep-a");
+    let endpoint = minimal_endpoint(user.id, "grant-ep-a");
     stores.endpoint().create(&endpoint).await?;
 
     let minted = stores
@@ -156,7 +157,7 @@ async fn deleting_a_granted_endpoint_leaves_no_dangling_grant_row() -> Result<()
             password: "hunter2-hunter2".to_owned(),
         })
         .await?;
-    let endpoint = minimal_endpoint("grant-ep-cascade");
+    let endpoint = minimal_endpoint(user.id, "grant-ep-cascade");
     stores.endpoint().create(&endpoint).await?;
     let minted = stores
         .service_token()
@@ -168,7 +169,7 @@ async fn deleting_a_granted_endpoint_leaves_no_dangling_grant_row() -> Result<()
         )
         .await?;
 
-    stores.endpoint().delete(&endpoint.slug).await?;
+    stores.endpoint().delete(user.id, &endpoint.slug).await?;
 
     // No row in the join table still points at the now-gone endpoint (or, since this token
     // had exactly one grant, at all) — the FK's `ON DELETE CASCADE`, not an orphaned row a

@@ -31,11 +31,16 @@ pub struct Harness {
     pub stores: Stores,
     pub router: Router,
     pub cfg: Config,
+    /// The patched, validated demo pack — not yet imported for anyone. Ownership is per-user
+    /// now, so importing it happens in [`login_cookie`], under whichever user is signing in for
+    /// that test, rather than here under some owner no login could ever match.
+    pub demo: Pack,
 }
 
-/// A scratch DB with the demo pack imported against a running fixture (so a round trip can
-/// prove a token minted here is actually usable on `/mcp`, exactly like `tests/mcp.rs`), and a
-/// router built from `oauth::router()` merged with `mcp::router()`.
+/// A scratch DB pointed at a running fixture (so a round trip can prove a token minted here is
+/// actually usable on `/mcp`, exactly like `tests/mcp.rs`) and a router built from
+/// `oauth::router()` merged with `mcp::router()`. The demo pack is parsed and patched to the
+/// fixture's own address here, but not imported — see [`Harness::demo`]'s own doc.
 pub async fn setup() -> Result<Option<Harness>> {
     let Some(db) = ScratchDb::create().await? else {
         eprintln!("TEST_DATABASE_URL unset — skipping");
@@ -58,7 +63,6 @@ pub async fn setup() -> Result<Option<Harness>> {
     svc.base_url = fixture.base_url().to_string();
     svc.origin_allowlist = BTreeSet::from([fixture.base_url().to_string()]);
     pack::validate(&demo).expect("patched demo pack is still valid");
-    pack::import(&stores, &demo, false).await?;
     // Leak the fixture so its listener outlives `setup` for the duration of the test process
     // — mirrors `tests/mcp.rs`'s own fixture lifetime handling.
     std::mem::forget(fixture);
@@ -86,25 +90,29 @@ pub async fn setup() -> Result<Option<Harness>> {
         stores,
         router,
         cfg,
+        demo,
     }))
 }
 
-/// Registers a user + browser session directly through the store (setup, not under test) and
+/// Registers a user + browser session directly through the store (setup, not under test),
+/// imports `h.demo` owned by that new user (so an OAuth-authenticated call as them can actually
+/// reach it — a pack imported under anyone else would be invisible to their session), and
 /// returns the `Cookie` header value the OAuth handlers will read.
-pub async fn login_cookie(
-    stores: &Stores,
-    db: &sea_orm::DatabaseConnection,
-    email: &str,
-) -> Result<String> {
-    let user = stores
+pub async fn login_cookie(h: &Harness, email: &str) -> Result<String> {
+    let user = h
+        .stores
         .user()
         .create(NewUser {
             email: email.to_owned(),
             password: "correct horse battery staple".to_owned(),
         })
         .await?;
-    let token =
-        api2mcp::server::auth::create_session(db, user.id, std::time::Duration::from_secs(3600))
-            .await?;
+    pack::import(&h.stores, &h.demo, false, user.id).await?;
+    let token = api2mcp::server::auth::create_session(
+        &h.db.conn,
+        user.id,
+        std::time::Duration::from_secs(3600),
+    )
+    .await?;
     Ok(format!("{SESSION_COOKIE_NAME}={token}"))
 }

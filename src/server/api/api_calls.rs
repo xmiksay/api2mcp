@@ -14,6 +14,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::Value;
+use uuid::Uuid;
 
 use crate::model::{ApiCall, Tag};
 use crate::pack::PackApiCall;
@@ -41,11 +42,11 @@ fn to_view(c: &ApiCall, tags: &BTreeSet<Tag>) -> ApiCallView {
     }
 }
 
-async fn find(state: &AppState, slug: &str) -> Result<TaggedApiCall, ApiError> {
+async fn find(state: &AppState, owner_id: Uuid, slug: &str) -> Result<TaggedApiCall, ApiError> {
     let all = state
         .stores()
         .api_call()
-        .list_all()
+        .list_all(owner_id)
         .await
         .map_err(ApiError::from_store)?;
     all.into_iter()
@@ -55,12 +56,12 @@ async fn find(state: &AppState, slug: &str) -> Result<TaggedApiCall, ApiError> {
 
 async fn list(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
 ) -> Result<Json<Vec<ApiCallView>>, ApiError> {
     let all = state
         .stores()
         .api_call()
-        .list_all()
+        .list_all(caller.id)
         .await
         .map_err(ApiError::from_store)?;
     Ok(Json(
@@ -70,16 +71,16 @@ async fn list(
 
 async fn get_one(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<Json<ApiCallView>, ApiError> {
-    let t = find(&state, &slug).await?;
+    let t = find(&state, caller.id, &slug).await?;
     Ok(Json(to_view(&t.api_call, &t.tags)))
 }
 
 async fn create(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
     Json(body): Json<ApiCallCreate>,
 ) -> Result<(StatusCode, Json<ApiCallView>), ApiError> {
     let slug = parse_slug(&body.slug).map_err(ApiError::BadRequest)?;
@@ -94,11 +95,12 @@ async fn create(
     let tags = tags_from_pack(&body.def.tags).map_err(ApiError::BadRequest)?;
     validate_change(
         &state.stores(),
+        caller.id,
         PendingChange::UpsertApiCall(body.slug.clone(), body.def.clone()),
     )
     .await
     .map_err(ApiError::Validation)?;
-    let call = api_call_from_pack(slug, service_slug, auth_provider_slug, &body.def)
+    let call = api_call_from_pack(caller.id, slug, service_slug, auth_provider_slug, &body.def)
         .map_err(ApiError::BadRequest)?;
     state
         .stores()
@@ -111,11 +113,11 @@ async fn create(
 
 async fn update(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
     Path(slug): Path<String>,
     Json(body): Json<PackApiCall>,
 ) -> Result<Json<ApiCallView>, ApiError> {
-    let existing = find(&state, &slug).await?;
+    let existing = find(&state, caller.id, &slug).await?;
     if existing.api_call.service_slug.as_str() != body.service {
         return Err(ApiError::BadRequest(
             "cannot move an api_call to a different service via PUT; delete and recreate it instead"
@@ -131,12 +133,14 @@ async fn update(
     let tags = tags_from_pack(&body.tags).map_err(ApiError::BadRequest)?;
     validate_change(
         &state.stores(),
+        caller.id,
         PendingChange::UpsertApiCall(slug.clone(), body.clone()),
     )
     .await
     .map_err(ApiError::Validation)?;
     let parsed_slug = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     let call = api_call_from_pack(
+        caller.id,
         parsed_slug,
         existing.api_call.service_slug,
         auth_provider_slug,
@@ -154,17 +158,25 @@ async fn update(
 
 async fn remove(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let existing = find(&state, &slug).await?;
-    validate_change(&state.stores(), PendingChange::RemoveApiCall(slug))
-        .await
-        .map_err(ApiError::Validation)?;
+    let existing = find(&state, caller.id, &slug).await?;
+    validate_change(
+        &state.stores(),
+        caller.id,
+        PendingChange::RemoveApiCall(slug),
+    )
+    .await
+    .map_err(ApiError::Validation)?;
     state
         .stores()
         .api_call()
-        .delete(&existing.api_call.service_slug, &existing.api_call.slug)
+        .delete(
+            caller.id,
+            &existing.api_call.service_slug,
+            &existing.api_call.slug,
+        )
         .await
         .map_err(ApiError::from_store)?;
     Ok(StatusCode::NO_CONTENT)

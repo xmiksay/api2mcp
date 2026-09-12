@@ -36,12 +36,12 @@ fn to_view(s: &ScriptDef, tags: &BTreeSet<Tag>) -> ScriptView {
 
 async fn list(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
 ) -> Result<Json<Vec<ScriptView>>, ApiError> {
     let all = state
         .stores()
         .script()
-        .list_all()
+        .list_all(caller.id)
         .await
         .map_err(ApiError::from_store)?;
     Ok(Json(
@@ -51,14 +51,14 @@ async fn list(
 
 async fn get_one(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<Json<ScriptView>, ApiError> {
     let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     let t = state
         .stores()
         .script()
-        .get(&parsed)
+        .get(caller.id, &parsed)
         .await
         .map_err(ApiError::from_store)?
         .ok_or_else(|| ApiError::NotFound(format!("script {slug:?} not found")))?;
@@ -67,18 +67,19 @@ async fn get_one(
 
 async fn create(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
     Json(body): Json<ScriptCreate>,
 ) -> Result<(StatusCode, Json<ScriptView>), ApiError> {
     let slug = parse_slug(&body.slug).map_err(ApiError::BadRequest)?;
     let tags = tags_from_pack(&body.def.tags).map_err(ApiError::BadRequest)?;
     validate_change(
         &state.stores(),
+        caller.id,
         PendingChange::UpsertScript(body.slug.clone(), body.def.clone()),
     )
     .await
     .map_err(ApiError::Validation)?;
-    let script = script_from_pack(slug, &body.def).map_err(ApiError::BadRequest)?;
+    let script = script_from_pack(caller.id, slug, &body.def).map_err(ApiError::BadRequest)?;
     state
         .stores()
         .script()
@@ -90,7 +91,7 @@ async fn create(
 
 async fn update(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
     Path(slug): Path<String>,
     Json(body): Json<PackScript>,
 ) -> Result<Json<ScriptView>, ApiError> {
@@ -98,11 +99,12 @@ async fn update(
     let tags = tags_from_pack(&body.tags).map_err(ApiError::BadRequest)?;
     validate_change(
         &state.stores(),
+        caller.id,
         PendingChange::UpsertScript(slug.clone(), body.clone()),
     )
     .await
     .map_err(ApiError::Validation)?;
-    let script = script_from_pack(parsed, &body).map_err(ApiError::BadRequest)?;
+    let script = script_from_pack(caller.id, parsed, &body).map_err(ApiError::BadRequest)?;
     state
         .stores()
         .script()
@@ -114,17 +116,21 @@ async fn update(
 
 async fn remove(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
-    validate_change(&state.stores(), PendingChange::RemoveScript(slug))
-        .await
-        .map_err(ApiError::Validation)?;
+    validate_change(
+        &state.stores(),
+        caller.id,
+        PendingChange::RemoveScript(slug),
+    )
+    .await
+    .map_err(ApiError::Validation)?;
     state
         .stores()
         .script()
-        .delete(&parsed)
+        .delete(caller.id, &parsed)
         .await
         .map_err(ApiError::from_store)?;
     Ok(StatusCode::NO_CONTENT)

@@ -24,6 +24,7 @@ use fixture::{Behavior, Fixture};
 fn plan_for(fixture: &Fixture, name: &str) -> EndpointPlan {
     let service = service_for(fixture);
     let call = ApiCall {
+        owner_id: uuid::Uuid::nil(),
         slug: slug(name),
         service_slug: service.slug.clone(),
         auth_provider_slug: None,
@@ -48,6 +49,7 @@ fn plan_for(fixture: &Fixture, name: &str) -> EndpointPlan {
         projection: None,
     };
     EndpointPlan {
+        owner_id: uuid::Uuid::nil(),
         slug: slug("ep-status"),
         write_ceiling: Access::Read,
         instructions: None,

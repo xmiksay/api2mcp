@@ -22,6 +22,7 @@ use api2mcp::resolve::build_plan;
 use api2mcp::store::Stores;
 use fixture::harness::loopback_pool;
 use fixture::{Behavior, Fixture};
+use uuid::Uuid;
 
 fn slug(s: &str) -> Slug {
     s.parse().expect("valid slug")
@@ -31,9 +32,10 @@ fn tag(s: &str) -> Tag {
     Tag(slug(s))
 }
 
-fn service(name: &str) -> Service {
+fn service(owner_id: Uuid, name: &str) -> Service {
     let base_url: url::Url = format!("https://{name}.example.com/").parse().unwrap();
     Service {
+        owner_id,
         slug: slug(name),
         base_url: base_url.clone(),
         origin_allowlist: BTreeSet::from([Origin::of(&base_url).unwrap()]),
@@ -47,10 +49,11 @@ fn service(name: &str) -> Service {
 
 /// Seeds one service, one tagged api_call, and one endpoint selecting it — the smallest
 /// definition set that still gives `resolve::build_plan` something to compile.
-async fn seed_minimal(stores: &Stores, suffix: &str) -> Result<Slug> {
-    let svc = service(&format!("svc-{suffix}"));
+async fn seed_minimal(stores: &Stores, owner_id: Uuid, suffix: &str) -> Result<Slug> {
+    let svc = service(owner_id, &format!("svc-{suffix}"));
     stores.service().create(&svc).await?;
     let call = ApiCall {
+        owner_id,
         slug: slug(&format!("call-{suffix}")),
         service_slug: svc.slug.clone(),
         auth_provider_slug: None,
@@ -72,6 +75,7 @@ async fn seed_minimal(stores: &Stores, suffix: &str) -> Result<Slug> {
         .create(&call, &BTreeSet::from([tag("expose")]))
         .await?;
     let ep = EndpointDef {
+        owner_id,
         slug: slug(&format!("ep-{suffix}")),
         tag_expr: TagExpr::Has(tag("expose")),
         write_ceiling: Access::Read,
@@ -97,9 +101,10 @@ async fn pack_export_reimport_reproduces_identical_resolve_digest() -> Result<()
     };
     source.migrate_up().await?;
     let source_stores = Stores::new(source.conn.clone());
-    let ep_slug = seed_minimal(&source_stores, "digest").await?;
+    let source_owner = source.create_user().await?;
+    let ep_slug = seed_minimal(&source_stores, source_owner, "digest").await?;
 
-    let exported = pack::export_endpoint(&source_stores, &ep_slug).await?;
+    let exported = pack::export_endpoint(&source_stores, source_owner, &ep_slug).await?;
     pack::validate(&exported).expect("exported pack is always valid");
 
     let Some(target) = ScratchDb::create().await? else {
@@ -108,10 +113,11 @@ async fn pack_export_reimport_reproduces_identical_resolve_digest() -> Result<()
     };
     target.migrate_up().await?;
     let target_stores = Stores::new(target.conn.clone());
-    pack::import(&target_stores, &exported, false).await?;
+    let target_owner = target.create_user().await?;
+    pack::import(&target_stores, &exported, false, target_owner).await?;
 
-    let plan_source = build_plan(&source_stores, &ep_slug).await?;
-    let plan_target = build_plan(&target_stores, &ep_slug).await?;
+    let plan_source = build_plan(&source_stores, source_owner, &ep_slug).await?;
+    let plan_target = build_plan(&target_stores, target_owner, &ep_slug).await?;
     assert_eq!(plan_source.digest, plan_target.digest);
     assert_eq!(plan_source.origins, plan_target.origins);
 
@@ -128,8 +134,9 @@ async fn dry_run_writes_nothing() -> Result<()> {
     };
     db.migrate_up().await?;
     let stores = Stores::new(db.conn.clone());
-    let ep_slug = seed_minimal(&stores, "dryrun-source").await?;
-    let exported = pack::export_endpoint(&stores, &ep_slug).await?;
+    let owner = db.create_user().await?;
+    let ep_slug = seed_minimal(&stores, owner, "dryrun-source").await?;
+    let exported = pack::export_endpoint(&stores, owner, &ep_slug).await?;
 
     let Some(target) = ScratchDb::create().await? else {
         eprintln!("TEST_DATABASE_URL unset — skipping");
@@ -137,18 +144,25 @@ async fn dry_run_writes_nothing() -> Result<()> {
     };
     target.migrate_up().await?;
     let target_stores = Stores::new(target.conn.clone());
+    let target_owner = target.create_user().await?;
 
-    let report = pack::import(&target_stores, &exported, true).await?;
+    let report = pack::import(&target_stores, &exported, true, target_owner).await?;
     assert!(
         !report.is_idempotent_no_op(),
         "a dry run into an empty db reports creates"
     );
-    assert!(target_stores.endpoint().get(&ep_slug).await?.is_none());
+    assert!(
+        target_stores
+            .endpoint()
+            .get(target_owner, &ep_slug)
+            .await?
+            .is_none()
+    );
     for slug_str in exported.services.keys() {
         assert!(
             target_stores
                 .service()
-                .get_by_slug(&slug(slug_str))
+                .get_by_slug(target_owner, &slug(slug_str))
                 .await?
                 .is_none()
         );
@@ -167,8 +181,9 @@ async fn import_is_idempotent_in_state_and_digest() -> Result<()> {
     };
     db.migrate_up().await?;
     let stores = Stores::new(db.conn.clone());
-    let ep_slug = seed_minimal(&stores, "idem-source").await?;
-    let exported = pack::export_endpoint(&stores, &ep_slug).await?;
+    let owner = db.create_user().await?;
+    let ep_slug = seed_minimal(&stores, owner, "idem-source").await?;
+    let exported = pack::export_endpoint(&stores, owner, &ep_slug).await?;
 
     let Some(target) = ScratchDb::create().await? else {
         eprintln!("TEST_DATABASE_URL unset — skipping");
@@ -176,17 +191,22 @@ async fn import_is_idempotent_in_state_and_digest() -> Result<()> {
     };
     target.migrate_up().await?;
     let target_stores = Stores::new(target.conn.clone());
+    let target_owner = target.create_user().await?;
 
-    let first = pack::import(&target_stores, &exported, false).await?;
+    let first = pack::import(&target_stores, &exported, false, target_owner).await?;
     assert!(!first.is_idempotent_no_op());
-    let digest_after_first = build_plan(&target_stores, &ep_slug).await?.digest;
+    let digest_after_first = build_plan(&target_stores, target_owner, &ep_slug)
+        .await?
+        .digest;
 
-    let second = pack::import(&target_stores, &exported, false).await?;
+    let second = pack::import(&target_stores, &exported, false, target_owner).await?;
     assert!(
         second.is_idempotent_no_op(),
         "re-importing an unchanged pack must be a no-op"
     );
-    let digest_after_second = build_plan(&target_stores, &ep_slug).await?.digest;
+    let digest_after_second = build_plan(&target_stores, target_owner, &ep_slug)
+        .await?
+        .digest;
     assert_eq!(digest_after_first, digest_after_second);
 
     db.teardown().await?;
@@ -264,6 +284,7 @@ async fn demo_pack_resolves_and_runs_against_the_fixture() -> Result<()> {
     };
     db.migrate_up().await?;
     let stores = Stores::new(db.conn.clone());
+    let owner = db.create_user().await?;
 
     let f = Fixture::start().await;
     f.set(
@@ -285,8 +306,8 @@ async fn demo_pack_resolves_and_runs_against_the_fixture() -> Result<()> {
     svc.origin_allowlist = BTreeSet::from([f.base_url().to_string()]);
     pack::validate(&demo).expect("patched demo pack is still valid");
 
-    pack::import(&stores, &demo, false).await?;
-    let plan = build_plan(&stores, &slug("demo")).await?;
+    pack::import(&stores, &demo, false, owner).await?;
+    let plan = build_plan(&stores, owner, &slug("demo")).await?;
 
     let policy = SsrfPolicy {
         allow_loopback: true,

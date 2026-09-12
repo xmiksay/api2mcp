@@ -182,7 +182,7 @@ async fn pkce_plain_is_refused() -> Result<()> {
             false,
         )
         .await?;
-    let cookie = login_cookie(&h.stores, &h.db.conn, "plain@example.com").await?;
+    let cookie = login_cookie(&h, "plain@example.com").await?;
 
     let uri = format!(
         "/oauth/authorize?{}",

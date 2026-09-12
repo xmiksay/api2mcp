@@ -18,6 +18,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use uuid::Uuid;
+
 use crate::model::Slug;
 use crate::store::AuthProviderStore;
 
@@ -26,6 +28,7 @@ use super::plan::PlannedApiCall;
 
 pub async fn assert_bound(
     auth_providers: &AuthProviderStore,
+    owner_id: Uuid,
     calls: &BTreeMap<Slug, PlannedApiCall>,
     endpoint_scope: &BTreeSet<Slug>,
 ) -> Result<(), ResolveError> {
@@ -34,7 +37,7 @@ pub async fn assert_bound(
             continue;
         };
         let provider = auth_providers
-            .get(&planned.api_call.service_slug, provider_slug)
+            .get(owner_id, &planned.api_call.service_slug, provider_slug)
             .await
             .map_err(|e| ResolveError::Store(e.to_string()))?
             .ok_or_else(|| {
@@ -71,9 +74,10 @@ mod tests {
     use crate::model::{Access, ApiCall, AuthKind, AuthProvider, Origin, Pagination, Service};
     use crate::store::test_support::ScratchDb;
 
-    fn service(slug: &str) -> Service {
+    fn service(owner_id: Uuid, slug: &str) -> Service {
         let base_url: url::Url = format!("https://{slug}.example.com/").parse().unwrap();
         Service {
+            owner_id,
             slug: slug.parse().unwrap(),
             base_url: base_url.clone(),
             origin_allowlist: BTreeSet::from([Origin::of(&base_url).unwrap()]),
@@ -85,8 +89,14 @@ mod tests {
         }
     }
 
-    fn api_call(service_slug: &Slug, slug: &str, provider: Option<&str>) -> ApiCall {
+    fn api_call(
+        owner_id: Uuid,
+        service_slug: &Slug,
+        slug: &str,
+        provider: Option<&str>,
+    ) -> ApiCall {
         ApiCall {
+            owner_id,
             slug: slug.parse().unwrap(),
             service_slug: service_slug.clone(),
             auth_provider_slug: provider.map(|p| p.parse().unwrap()),
@@ -105,8 +115,14 @@ mod tests {
         }
     }
 
-    fn provider(service_slug: &Slug, slug: &str, bound_origin: &str) -> AuthProvider {
+    fn provider(
+        owner_id: Uuid,
+        service_slug: &Slug,
+        slug: &str,
+        bound_origin: &str,
+    ) -> AuthProvider {
         AuthProvider {
+            owner_id,
             slug: slug.parse().unwrap(),
             service_slug: service_slug.clone(),
             kind: AuthKind::StaticHeader,
@@ -138,18 +154,19 @@ mod tests {
         };
 
         let stores = crate::store::Stores::new(db.db.clone());
-        let svc = service("auth-bind-mismatch");
+        let owner_id = db.create_user().await.unwrap();
+        let svc = service(owner_id, "auth-bind-mismatch");
         stores.service().create(&svc).await.unwrap();
         let providers = AuthProviderStore::new(db.db.clone());
         // Bound to a *different* origin than the service the api_call actually targets.
-        let p = provider(&svc.slug, "prov", "https://elsewhere.example.com");
+        let p = provider(owner_id, &svc.slug, "prov", "https://elsewhere.example.com");
         providers.create(&p).await.unwrap();
 
-        let call = api_call(&svc.slug, "call-a", Some("prov"));
+        let call = api_call(owner_id, &svc.slug, "call-a", Some("prov"));
         let mut calls = BTreeMap::new();
         calls.insert("call-a".parse().unwrap(), planned_call(svc, call));
 
-        let err = assert_bound(&providers, &calls, &BTreeSet::new())
+        let err = assert_bound(&providers, owner_id, &calls, &BTreeSet::new())
             .await
             .unwrap_err();
         assert!(matches!(err, ResolveError::AuthOriginMismatch { .. }));
@@ -165,28 +182,32 @@ mod tests {
         };
 
         let stores = crate::store::Stores::new(db.db.clone());
-        let svc = service("auth-bind-scope");
+        let owner_id = db.create_user().await.unwrap();
+        let svc = service(owner_id, "auth-bind-scope");
         stores.service().create(&svc).await.unwrap();
         let providers = AuthProviderStore::new(db.db.clone());
         let p = provider(
+            owner_id,
             &svc.slug,
             "prov",
             &Origin::of(&svc.base_url).unwrap().to_string(),
         );
         providers.create(&p).await.unwrap();
 
-        let call = api_call(&svc.slug, "call-a", Some("prov"));
+        let call = api_call(owner_id, &svc.slug, "call-a", Some("prov"));
         let mut calls = BTreeMap::new();
         calls.insert("call-a".parse().unwrap(), planned_call(svc, call));
 
         // Scope names a provider that isn't "prov".
         let scope = BTreeSet::from(["other-provider".parse().unwrap()]);
-        let err = assert_bound(&providers, &calls, &scope).await.unwrap_err();
+        let err = assert_bound(&providers, owner_id, &calls, &scope)
+            .await
+            .unwrap_err();
         assert!(matches!(err, ResolveError::AuthProviderOutOfScope { .. }));
 
         // An empty scope, by contrast, passes.
         assert!(
-            assert_bound(&providers, &calls, &BTreeSet::new())
+            assert_bound(&providers, owner_id, &calls, &BTreeSet::new())
                 .await
                 .is_ok()
         );

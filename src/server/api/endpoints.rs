@@ -38,12 +38,12 @@ fn to_view(e: &EndpointDef) -> EndpointView {
 
 async fn list(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
 ) -> Result<Json<Vec<EndpointView>>, ApiError> {
     let all = state
         .stores()
         .endpoint()
-        .list_all()
+        .list_all(caller.id)
         .await
         .map_err(ApiError::from_store)?;
     Ok(Json(all.iter().map(to_view).collect()))
@@ -51,14 +51,14 @@ async fn list(
 
 async fn get_one(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<Json<EndpointView>, ApiError> {
     let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     let endpoint = state
         .stores()
         .endpoint()
-        .get(&parsed)
+        .get(caller.id, &parsed)
         .await
         .map_err(ApiError::from_store)?
         .ok_or_else(|| ApiError::NotFound(format!("endpoint {slug:?} not found")))?;
@@ -67,17 +67,18 @@ async fn get_one(
 
 async fn create(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
     Json(body): Json<EndpointCreate>,
 ) -> Result<(StatusCode, Json<EndpointView>), ApiError> {
     let slug = parse_slug(&body.slug).map_err(ApiError::BadRequest)?;
     validate_change(
         &state.stores(),
+        caller.id,
         PendingChange::UpsertEndpoint(body.slug.clone(), body.def.clone()),
     )
     .await
     .map_err(ApiError::Validation)?;
-    let endpoint = endpoint_from_pack(slug, &body.def).map_err(ApiError::BadRequest)?;
+    let endpoint = endpoint_from_pack(caller.id, slug, &body.def).map_err(ApiError::BadRequest)?;
     state
         .stores()
         .endpoint()
@@ -89,18 +90,19 @@ async fn create(
 
 async fn update(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
     Path(slug): Path<String>,
     Json(body): Json<PackEndpoint>,
 ) -> Result<Json<EndpointView>, ApiError> {
     let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     validate_change(
         &state.stores(),
+        caller.id,
         PendingChange::UpsertEndpoint(slug.clone(), body.clone()),
     )
     .await
     .map_err(ApiError::Validation)?;
-    let endpoint = endpoint_from_pack(parsed, &body).map_err(ApiError::BadRequest)?;
+    let endpoint = endpoint_from_pack(caller.id, parsed, &body).map_err(ApiError::BadRequest)?;
     state
         .stores()
         .endpoint()
@@ -112,17 +114,21 @@ async fn update(
 
 async fn remove(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
-    validate_change(&state.stores(), PendingChange::RemoveEndpoint(slug))
-        .await
-        .map_err(ApiError::Validation)?;
+    validate_change(
+        &state.stores(),
+        caller.id,
+        PendingChange::RemoveEndpoint(slug),
+    )
+    .await
+    .map_err(ApiError::Validation)?;
     state
         .stores()
         .endpoint()
-        .delete(&parsed)
+        .delete(caller.id, &parsed)
         .await
         .map_err(ApiError::from_store)?;
     Ok(StatusCode::NO_CONTENT)
@@ -171,11 +177,11 @@ struct PlanView {
 
 async fn plan(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<Json<PlanView>, ApiError> {
     let endpoint_slug = parse_slug(&slug).map_err(ApiError::BadRequest)?;
-    let plan = resolve_plan(&state, &endpoint_slug).await?;
+    let plan = resolve_plan(&state, caller.id, &endpoint_slug).await?;
 
     let tools = plan
         .tools

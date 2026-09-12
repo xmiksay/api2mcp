@@ -50,15 +50,17 @@ impl ApiCallStore {
 
     pub async fn get(
         &self,
+        owner_id: Uuid,
         service_slug: &Slug,
         slug: &Slug,
     ) -> Result<Option<TaggedApiCall>, StoreError> {
-        let service_id = match self.services().id_by_slug(service_slug).await {
+        let service_id = match self.services().id_by_slug(owner_id, service_slug).await {
             Ok(id) => id,
             Err(StoreError::NotFound) => return Ok(None),
             Err(e) => return Err(e),
         };
         let Some(row) = api_calls::Entity::find()
+            .filter(api_calls::Column::OwnerId.eq(owner_id))
             .filter(api_calls::Column::ServiceId.eq(service_id))
             .filter(api_calls::Column::Slug.eq(slug.as_str()))
             .one(&self.db)
@@ -70,10 +72,11 @@ impl ApiCallStore {
         self.assemble(row, service_slug.clone()).await.map(Some)
     }
 
-    /// Every api_call across every service, for `resolve::build_plan`'s enumeration. Not
-    /// paginated: the definition set is operator-curated, not user-generated data.
-    pub async fn list_all(&self) -> Result<Vec<TaggedApiCall>, StoreError> {
+    /// Every api_call `owner_id` owns, for `resolve::build_plan`'s enumeration. Not paginated:
+    /// the definition set is operator-curated, not user-generated data.
+    pub async fn list_all(&self, owner_id: Uuid) -> Result<Vec<TaggedApiCall>, StoreError> {
         let rows = api_calls::Entity::find()
+            .filter(api_calls::Column::OwnerId.eq(owner_id))
             .order_by_asc(api_calls::Column::Slug)
             .all(&self.db)
             .await
@@ -88,7 +91,7 @@ impl ApiCallStore {
 
     pub async fn create(&self, api_call: &ApiCall, tags: &BTreeSet<Tag>) -> Result<(), StoreError> {
         if self
-            .get(&api_call.service_slug, &api_call.slug)
+            .get(api_call.owner_id, &api_call.service_slug, &api_call.slug)
             .await?
             .is_some()
         {
@@ -115,7 +118,7 @@ impl ApiCallStore {
 
     pub async fn update(&self, api_call: &ApiCall, tags: &BTreeSet<Tag>) -> Result<(), StoreError> {
         let id = self
-            .id_by_slug(&api_call.service_slug, &api_call.slug)
+            .id_by_slug(api_call.owner_id, &api_call.service_slug, &api_call.slug)
             .await?;
         let (service_id, auth_provider_id) = self.resolve_foreign_keys(api_call).await?;
         let txn = self.db.begin().await.map_err(db_err("api_call::update"))?;
@@ -131,8 +134,13 @@ impl ApiCallStore {
         txn.commit().await.map_err(db_err("api_call::update"))
     }
 
-    pub async fn delete(&self, service_slug: &Slug, slug: &Slug) -> Result<(), StoreError> {
-        let id = self.id_by_slug(service_slug, slug).await?;
+    pub async fn delete(
+        &self,
+        owner_id: Uuid,
+        service_slug: &Slug,
+        slug: &Slug,
+    ) -> Result<(), StoreError> {
+        let id = self.id_by_slug(owner_id, service_slug, slug).await?;
         let txn = self.db.begin().await.map_err(db_err("api_call::delete"))?;
         api_calls::Entity::delete_by_id(id)
             .exec(&txn)
@@ -144,11 +152,13 @@ impl ApiCallStore {
 
     pub(crate) async fn id_by_slug(
         &self,
+        owner_id: Uuid,
         service_slug: &Slug,
         slug: &Slug,
     ) -> Result<Uuid, StoreError> {
-        let service_id = self.services().id_by_slug(service_slug).await?;
+        let service_id = self.services().id_by_slug(owner_id, service_slug).await?;
         api_calls::Entity::find()
+            .filter(api_calls::Column::OwnerId.eq(owner_id))
             .filter(api_calls::Column::ServiceId.eq(service_id))
             .filter(api_calls::Column::Slug.eq(slug.as_str()))
             .one(&self.db)
@@ -158,17 +168,24 @@ impl ApiCallStore {
             .ok_or(StoreError::NotFound)
     }
 
-    /// Resolves a bare api_call slug to its primary key, with no service to scope by —
-    /// needed by `script_api_calls` writes, since `ScriptDef::callable` (a fixed part of
-    /// the model) maps an alias to a bare [`Slug`], not a `(service, slug)` pair. Safe
-    /// because `api_calls.slug` is `UNIQUE` globally (`ux_api_calls_slug`), so at most one
-    /// row can ever match.
-    pub(crate) async fn id_by_slug_global(&self, slug: &Slug) -> Result<Uuid, StoreError> {
+    /// Resolves a bare api_call slug to its primary key, scoped to `owner_id` but with no
+    /// service to scope by beyond that — needed by `script_api_calls` writes, since
+    /// `ScriptDef::callable` (a fixed part of the model) maps an alias to a bare [`Slug`], not a
+    /// `(service, slug)` pair. Safe because `api_calls.slug` is `UNIQUE` per owner
+    /// (`ux_api_calls_owner_slug`), so at most one row can ever match for a given owner — and
+    /// scoping to `owner_id` here (rather than a bare global lookup) is exactly what makes a
+    /// script's `api()` call unable to resolve another owner's api_call of the same slug.
+    pub(crate) async fn id_by_slug_for_owner(
+        &self,
+        owner_id: Uuid,
+        slug: &Slug,
+    ) -> Result<Uuid, StoreError> {
         api_calls::Entity::find()
+            .filter(api_calls::Column::OwnerId.eq(owner_id))
             .filter(api_calls::Column::Slug.eq(slug.as_str()))
             .one(&self.db)
             .await
-            .map_err(db_err("api_call::id_by_slug_global"))?
+            .map_err(db_err("api_call::id_by_slug_for_owner"))?
             .map(|r| r.id)
             .ok_or(StoreError::NotFound)
     }
@@ -205,11 +222,14 @@ impl ApiCallStore {
         &self,
         api_call: &ApiCall,
     ) -> Result<(Uuid, Option<Uuid>), StoreError> {
-        let service_id = self.services().id_by_slug(&api_call.service_slug).await?;
+        let service_id = self
+            .services()
+            .id_by_slug(api_call.owner_id, &api_call.service_slug)
+            .await?;
         let auth_provider_id = match &api_call.auth_provider_slug {
             Some(slug) => Some(
                 self.auth_providers()
-                    .id_by_slug(&api_call.service_slug, slug)
+                    .id_by_slug(api_call.owner_id, &api_call.service_slug, slug)
                     .await?,
             ),
             None => None,
@@ -234,6 +254,7 @@ fn to_active_model(
 ) -> api_calls::ActiveModel {
     api_calls::ActiveModel {
         id: Set(id),
+        owner_id: Set(api_call.owner_id),
         service_id: Set(service_id),
         auth_provider_id: Set(auth_provider_id),
         slug: Set(api_call.slug.as_str().to_owned()),
@@ -269,6 +290,7 @@ fn to_model(
     let pagination = json_to_pagination(row.pagination.as_ref())?;
 
     Ok(ApiCall {
+        owner_id: row.owner_id,
         slug: parse_slug(&row.slug)?,
         service_slug,
         auth_provider_slug,

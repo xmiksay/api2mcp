@@ -35,6 +35,7 @@ pub struct Harness {
     pub stores: Stores,
     pub router: Router,
     pub admin_cookie: String,
+    pub admin_id: uuid::Uuid,
     pub mcp_token: String,
 }
 
@@ -92,6 +93,7 @@ pub async fn setup() -> Result<Option<Harness>> {
         stores,
         router,
         admin_cookie,
+        admin_id: admin.id,
         mcp_token: mcp_minted.plaintext,
     }))
 }

@@ -34,8 +34,9 @@ fn slug(s: &str) -> Slug {
 
 /// An endpoint whose tag expression selects nothing — fine here, since every test in this
 /// file only calls `initialize`, which needs a resolvable endpoint row, not a working tool.
-fn minimal_endpoint(name: &str) -> EndpointDef {
+fn minimal_endpoint(owner_id: uuid::Uuid, name: &str) -> EndpointDef {
     EndpointDef {
+        owner_id,
         slug: slug(name),
         tag_expr: TagExpr::Has(Tag(slug("unused-tag"))),
         write_ceiling: Access::Read,
@@ -52,6 +53,7 @@ struct Grants {
     router: axum::Router,
     unrestricted_token: String,
     scoped_token: String,
+    owner_id: uuid::Uuid,
 }
 
 /// Seeds two endpoints (`grant-a`, `grant-b`), an unrestricted token, and a token restricted
@@ -64,11 +66,6 @@ async fn setup() -> Result<Option<Grants>> {
     db.migrate_up().await?;
     let stores = Stores::new(db.conn.clone());
 
-    let ep_a = minimal_endpoint("grant-a");
-    let ep_b = minimal_endpoint("grant-b");
-    stores.endpoint().create(&ep_a).await?;
-    stores.endpoint().create(&ep_b).await?;
-
     let user = stores
         .user()
         .create(NewUser {
@@ -76,6 +73,11 @@ async fn setup() -> Result<Option<Grants>> {
             password: "correct horse battery staple".to_owned(),
         })
         .await?;
+
+    let ep_a = minimal_endpoint(user.id, "grant-a");
+    let ep_b = minimal_endpoint(user.id, "grant-b");
+    stores.endpoint().create(&ep_a).await?;
+    stores.endpoint().create(&ep_b).await?;
 
     let unrestricted = stores
         .service_token()
@@ -110,6 +112,7 @@ async fn setup() -> Result<Option<Grants>> {
         router,
         unrestricted_token: unrestricted.plaintext,
         scoped_token: scoped.plaintext,
+        owner_id: user.id,
     }))
 }
 
@@ -229,7 +232,10 @@ async fn deleting_a_scoped_tokens_only_endpoint_does_not_widen_it_to_every_endpo
     // grant row away, leaving the token with an empty grant set — which must mean "reaches
     // nothing", not "reaches everything". Under an empty-means-all reading this delete would hand
     // the token `grant-b`, escalating it as a side effect of an unrelated edit.
-    stores.endpoint().delete(&slug("grant-a")).await?;
+    stores
+        .endpoint()
+        .delete(g.owner_id, &slug("grant-a"))
+        .await?;
 
     let resp = rpc(
         &g.router,

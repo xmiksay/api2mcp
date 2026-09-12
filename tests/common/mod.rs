@@ -64,6 +64,21 @@ impl ScratchDb {
         db::run_migrations_locked(&self.conn).await
     }
 
+    /// Creates a throwaway user and returns its id — every owned aggregate (`services`,
+    /// `auth_providers`, `api_calls`, `scripts`, `endpoints`, `runs`) needs a real `owner_id`
+    /// FK target, and most integration tests have no session/CLI caller to derive one from.
+    pub async fn create_user(&self) -> Result<Uuid> {
+        let email = format!("{}@example.com", Uuid::new_v4());
+        let user = api2mcp::store::UserStore::new(self.conn.clone())
+            .create(api2mcp::store::NewUser {
+                email,
+                password: "correct horse battery staple".to_owned(),
+            })
+            .await
+            .context("creating scratch user")?;
+        Ok(user.id)
+    }
+
     /// Closes the scratch connection and drops the database. Must be called explicitly —
     /// a `Drop` impl can't run the required `async` `DROP DATABASE`.
     ///

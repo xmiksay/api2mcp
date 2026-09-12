@@ -35,8 +35,13 @@ impl EndpointStore {
         Self { db }
     }
 
-    pub async fn get(&self, slug: &Slug) -> Result<Option<EndpointDef>, StoreError> {
+    pub async fn get(
+        &self,
+        owner_id: Uuid,
+        slug: &Slug,
+    ) -> Result<Option<EndpointDef>, StoreError> {
         let Some(row) = endpoints::Entity::find()
+            .filter(endpoints::Column::OwnerId.eq(owner_id))
             .filter(endpoints::Column::Slug.eq(slug.as_str()))
             .one(&self.db)
             .await
@@ -47,8 +52,9 @@ impl EndpointStore {
         self.assemble(row).await.map(Some)
     }
 
-    pub async fn list_all(&self) -> Result<Vec<EndpointDef>, StoreError> {
+    pub async fn list_all(&self, owner_id: Uuid) -> Result<Vec<EndpointDef>, StoreError> {
         let rows = endpoints::Entity::find()
+            .filter(endpoints::Column::OwnerId.eq(owner_id))
             .order_by_asc(endpoints::Column::Slug)
             .all(&self.db)
             .await
@@ -61,7 +67,7 @@ impl EndpointStore {
     }
 
     pub async fn create(&self, endpoint: &EndpointDef) -> Result<(), StoreError> {
-        if self.get(&endpoint.slug).await?.is_some() {
+        if self.get(endpoint.owner_id, &endpoint.slug).await?.is_some() {
             return Err(StoreError::Conflict(format!(
                 "endpoint {:?} already exists",
                 endpoint.slug.as_str()
@@ -74,28 +80,28 @@ impl EndpointStore {
             .await
             .map_err(db_err("endpoint::create"))?;
         self.replace_aliases(&txn, id, &endpoint.aliases).await?;
-        self.replace_auth_providers(&txn, id, &endpoint.auth_providers)
+        self.replace_auth_providers(&txn, endpoint.owner_id, id, &endpoint.auth_providers)
             .await?;
         MetaStore::bump_generation_in(&txn).await?;
         txn.commit().await.map_err(db_err("endpoint::create"))
     }
 
     pub async fn update(&self, endpoint: &EndpointDef) -> Result<(), StoreError> {
-        let id = self.id_by_slug(&endpoint.slug).await?;
+        let id = self.id_by_slug(endpoint.owner_id, &endpoint.slug).await?;
         let txn = self.db.begin().await.map_err(db_err("endpoint::update"))?;
         to_active_model(endpoint, id)?
             .update(&txn)
             .await
             .map_err(db_err("endpoint::update"))?;
         self.replace_aliases(&txn, id, &endpoint.aliases).await?;
-        self.replace_auth_providers(&txn, id, &endpoint.auth_providers)
+        self.replace_auth_providers(&txn, endpoint.owner_id, id, &endpoint.auth_providers)
             .await?;
         MetaStore::bump_generation_in(&txn).await?;
         txn.commit().await.map_err(db_err("endpoint::update"))
     }
 
-    pub async fn delete(&self, slug: &Slug) -> Result<(), StoreError> {
-        let id = self.id_by_slug(slug).await?;
+    pub async fn delete(&self, owner_id: Uuid, slug: &Slug) -> Result<(), StoreError> {
+        let id = self.id_by_slug(owner_id, slug).await?;
         let txn = self.db.begin().await.map_err(db_err("endpoint::delete"))?;
         endpoints::Entity::delete_by_id(id)
             .exec(&txn)
@@ -105,8 +111,9 @@ impl EndpointStore {
         txn.commit().await.map_err(db_err("endpoint::delete"))
     }
 
-    pub(crate) async fn id_by_slug(&self, slug: &Slug) -> Result<Uuid, StoreError> {
+    pub(crate) async fn id_by_slug(&self, owner_id: Uuid, slug: &Slug) -> Result<Uuid, StoreError> {
         endpoints::Entity::find()
+            .filter(endpoints::Column::OwnerId.eq(owner_id))
             .filter(endpoints::Column::Slug.eq(slug.as_str()))
             .one(&self.db)
             .await
@@ -207,6 +214,7 @@ impl EndpointStore {
     async fn replace_auth_providers<C: ConnectionTrait>(
         &self,
         conn: &C,
+        owner_id: Uuid,
         endpoint_id: Uuid,
         wanted: &BTreeSet<Slug>,
     ) -> Result<(), StoreError> {
@@ -217,7 +225,9 @@ impl EndpointStore {
             .map_err(db_err("endpoint::replace_auth_providers"))?;
         let providers = AuthProviderStore::new(self.db.clone());
         for slug in wanted {
-            let auth_provider_id = providers.id_by_slug_global(slug).await?;
+            // Scoped to this endpoint's own owner: an endpoint's auth-provider scope must never
+            // reach into another owner's credential bindings.
+            let auth_provider_id = providers.id_by_slug_for_owner(owner_id, slug).await?;
             endpoint_auth_providers::ActiveModel {
                 endpoint_id: Set(endpoint_id),
                 auth_provider_id: Set(auth_provider_id),
@@ -233,6 +243,7 @@ impl EndpointStore {
 fn to_active_model(endpoint: &EndpointDef, id: Uuid) -> Result<endpoints::ActiveModel, StoreError> {
     Ok(endpoints::ActiveModel {
         id: Set(id),
+        owner_id: Set(endpoint.owner_id),
         slug: Set(endpoint.slug.as_str().to_owned()),
         tag_expr: Set(tag_expr::to_string(&endpoint.tag_expr)),
         write_ceiling: Set(access_to_str(endpoint.write_ceiling).to_owned()),
@@ -249,6 +260,7 @@ fn to_model(
     auth_providers: BTreeSet<Slug>,
 ) -> Result<EndpointDef, StoreError> {
     Ok(EndpointDef {
+        owner_id: row.owner_id,
         slug: parse_slug(&row.slug)?,
         tag_expr: tag_expr::parse(&row.tag_expr)
             .map_err(|e| StoreError::Malformed(e.to_string()))?,

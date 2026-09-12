@@ -7,6 +7,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use uuid::Uuid;
+
 use crate::model::{AuthProvider, EndpointTarget, Slug, eval_tag_expr};
 use crate::store::{StoreError, Stores};
 
@@ -32,18 +34,24 @@ fn store_err(e: StoreError) -> ExportError {
 }
 
 /// Exports `slug`'s endpoint and everything it — directly or through a selected script —
-/// depends on.
-pub async fn export_endpoint(stores: &Stores, slug: &Slug) -> Result<Pack, ExportError> {
+/// depends on. Every definition read here is scoped to `owner_id` (Decision: "export is scoped
+/// to the caller's own definitions") — nothing belonging to another owner can ever end up in the
+/// resulting pack, even transitively.
+pub async fn export_endpoint(
+    stores: &Stores,
+    owner_id: Uuid,
+    slug: &Slug,
+) -> Result<Pack, ExportError> {
     let endpoint = stores
         .endpoint()
-        .get(slug)
+        .get(owner_id, slug)
         .await
         .map_err(store_err)?
         .ok_or_else(|| ExportError::EndpointNotFound(slug.as_str().to_owned()))?;
 
     let calls_by_slug: BTreeMap<Slug, _> = stores
         .api_call()
-        .list_all()
+        .list_all(owner_id)
         .await
         .map_err(store_err)?
         .into_iter()
@@ -51,23 +59,24 @@ pub async fn export_endpoint(stores: &Stores, slug: &Slug) -> Result<Pack, Expor
         .collect();
     let scripts_by_slug: BTreeMap<Slug, _> = stores
         .script()
-        .list_all()
+        .list_all(owner_id)
         .await
         .map_err(store_err)?
         .into_iter()
         .map(|s| (s.script.slug.clone(), s))
         .collect();
-    let all_services = stores.service().list().await.map_err(store_err)?;
+    let all_services = stores.service().list(owner_id).await.map_err(store_err)?;
 
-    // A global slug -> provider lookup. `EndpointDef::auth_providers` and an api_call's own
-    // `auth_provider_slug` both name a bare (service-less) slug, and `auth_providers.slug` is
-    // unique globally (see `store::auth_provider::id_by_slug_global`'s doc), so one scan over
-    // every service covers every provider this pack could possibly need.
+    // A slug -> provider lookup scoped to `owner_id`. `EndpointDef::auth_providers` and an
+    // api_call's own `auth_provider_slug` both name a bare (service-less) slug, and
+    // `auth_providers.slug` is unique per owner (see `store::auth_provider::id_by_slug_for_owner`'s
+    // doc), so one scan over every service this owner has covers every provider this pack could
+    // possibly need.
     let mut providers_by_slug: BTreeMap<Slug, AuthProvider> = BTreeMap::new();
     for svc in &all_services {
         for p in stores
             .auth_provider()
-            .list_for_service(&svc.slug)
+            .list_for_service(owner_id, &svc.slug)
             .await
             .map_err(store_err)?
         {
@@ -224,9 +233,11 @@ mod tests {
             return;
         };
         let stores = Stores::new(db.db.clone());
+        let owner_id = db.create_user().await.unwrap();
 
         let base_url: url::Url = "https://svc-export-basic.example.com/".parse().unwrap();
         let service = Service {
+            owner_id,
             slug: slug("svc-export-basic"),
             base_url: base_url.clone(),
             origin_allowlist: BTreeSet::from([Origin::of(&base_url).unwrap()]),
@@ -239,6 +250,7 @@ mod tests {
         stores.service().create(&service).await.unwrap();
 
         let call = ApiCall {
+            owner_id,
             slug: slug("call-export-basic"),
             service_slug: service.slug.clone(),
             auth_provider_slug: None,
@@ -262,6 +274,7 @@ mod tests {
             .unwrap();
 
         let endpoint = crate::model::EndpointDef {
+            owner_id,
             slug: slug("ep-export-basic"),
             tag_expr: crate::model::TagExpr::Has(Tag(slug("expose"))),
             write_ceiling: Access::Read,
@@ -273,7 +286,9 @@ mod tests {
         };
         stores.endpoint().create(&endpoint).await.unwrap();
 
-        let pack = export_endpoint(&stores, &endpoint.slug).await.unwrap();
+        let pack = export_endpoint(&stores, owner_id, &endpoint.slug)
+            .await
+            .unwrap();
         assert!(pack.api_calls.contains_key("call-export-basic"));
         assert!(pack.services.contains_key("svc-export-basic"));
         assert!(pack.endpoints.contains_key("ep-export-basic"));

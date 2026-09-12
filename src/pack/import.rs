@@ -27,6 +27,8 @@
 //!   every structural problem a pack can name before any of these per-row transactions opens —
 //!   which is what keeps a partial import a rare failure mode, not a routine one.
 
+use uuid::Uuid;
+
 use crate::store::{StoreError, Stores};
 
 use super::Pack;
@@ -79,20 +81,26 @@ impl ImportReport {
     }
 }
 
-/// Upserts every definition in `pack`. `dry_run = true` performs every read needed to classify
-/// each row as create/update/unchanged, but calls no store write method at all — see the module
-/// doc for why that (not a rolled-back transaction) is what makes `--dry-run` write nothing.
+/// Upserts every definition in `pack`, owned by `owner_id` — "import assigns the importing user
+/// as owner of everything it creates" (Decision). An update to a row that already existed keeps
+/// its existing owner rather than being reassigned: every store lookup below is scoped to
+/// `owner_id`, so a pack imported by a different user than the one who owns a same-slugged row
+/// simply creates that user's own separate copy instead of colliding with it. `dry_run = true`
+/// performs every read needed to classify each row as create/update/unchanged, but calls no store
+/// write method at all — see the module doc for why that (not a rolled-back transaction) is what
+/// makes `--dry-run` write nothing.
 pub async fn import(
     stores: &Stores,
     pack: &Pack,
     dry_run: bool,
+    owner_id: Uuid,
 ) -> Result<ImportReport, ImportError> {
     let mut report = ImportReport::default();
 
     for (slug_str, svc) in &pack.services {
         let slug = convert::parse_slug(slug_str)?;
-        let model = convert::service_from_pack(slug.clone(), svc)?;
-        let existing = stores.service().get_by_slug(&slug).await?;
+        let model = convert::service_from_pack(owner_id, slug.clone(), svc)?;
+        let existing = stores.service().get_by_slug(owner_id, &slug).await?;
         let change = match &existing {
             None => ImportChange::Created,
             Some(row) if row == &model => ImportChange::Unchanged,
@@ -110,8 +118,16 @@ pub async fn import(
     for (slug_str, provider) in &pack.auth_providers {
         let slug = convert::parse_slug(slug_str)?;
         let service_slug = convert::parse_slug(&provider.service)?;
-        let model = convert::auth_provider_from_pack(slug.clone(), service_slug.clone(), provider)?;
-        let existing = stores.auth_provider().get(&service_slug, &slug).await?;
+        let model = convert::auth_provider_from_pack(
+            owner_id,
+            slug.clone(),
+            service_slug.clone(),
+            provider,
+        )?;
+        let existing = stores
+            .auth_provider()
+            .get(owner_id, &service_slug, &slug)
+            .await?;
         let change = match &existing {
             None => ImportChange::Created,
             Some(row) if row == &model => ImportChange::Unchanged,
@@ -135,13 +151,17 @@ pub async fn import(
             .map(convert::parse_slug)
             .transpose()?;
         let model = convert::api_call_from_pack(
+            owner_id,
             slug.clone(),
             service_slug.clone(),
             auth_provider_slug,
             call,
         )?;
         let tags = convert::tags_from_pack(&call.tags)?;
-        let existing = stores.api_call().get(&service_slug, &slug).await?;
+        let existing = stores
+            .api_call()
+            .get(owner_id, &service_slug, &slug)
+            .await?;
         let change = match &existing {
             None => ImportChange::Created,
             Some(row) if row.api_call == model && row.tags == tags => ImportChange::Unchanged,
@@ -158,9 +178,9 @@ pub async fn import(
 
     for (slug_str, script) in &pack.scripts {
         let slug = convert::parse_slug(slug_str)?;
-        let model = convert::script_from_pack(slug.clone(), script)?;
+        let model = convert::script_from_pack(owner_id, slug.clone(), script)?;
         let tags = convert::tags_from_pack(&script.tags)?;
-        let existing = stores.script().get(&slug).await?;
+        let existing = stores.script().get(owner_id, &slug).await?;
         let change = match &existing {
             None => ImportChange::Created,
             Some(row) if row.script == model && row.tags == tags => ImportChange::Unchanged,
@@ -177,8 +197,8 @@ pub async fn import(
 
     for (slug_str, endpoint) in &pack.endpoints {
         let slug = convert::parse_slug(slug_str)?;
-        let model = convert::endpoint_from_pack(slug.clone(), endpoint)?;
-        let existing = stores.endpoint().get(&slug).await?;
+        let model = convert::endpoint_from_pack(owner_id, slug.clone(), endpoint)?;
+        let existing = stores.endpoint().get(owner_id, &slug).await?;
         let change = match &existing {
             None => ImportChange::Created,
             Some(row) if row == &model => ImportChange::Unchanged,
@@ -268,9 +288,10 @@ mod tests {
             return;
         };
         let stores = Stores::new(db.db.clone());
+        let owner_id = db.create_user().await.unwrap();
         let pack = basic_pack();
 
-        let report = import(&stores, &pack, true).await.unwrap();
+        let report = import(&stores, &pack, true, owner_id).await.unwrap();
         assert_eq!(
             report.services,
             vec![("svc-import".to_owned(), ImportChange::Created)]
@@ -283,7 +304,7 @@ mod tests {
         assert!(
             stores
                 .service()
-                .get_by_slug(&"svc-import".parse().unwrap())
+                .get_by_slug(owner_id, &"svc-import".parse().unwrap())
                 .await
                 .unwrap()
                 .is_none()
@@ -299,12 +320,13 @@ mod tests {
             return;
         };
         let stores = Stores::new(db.db.clone());
+        let owner_id = db.create_user().await.unwrap();
         let pack = basic_pack();
 
-        let first = import(&stores, &pack, false).await.unwrap();
+        let first = import(&stores, &pack, false, owner_id).await.unwrap();
         assert!(!first.is_idempotent_no_op());
 
-        let second = import(&stores, &pack, false).await.unwrap();
+        let second = import(&stores, &pack, false, owner_id).await.unwrap();
         assert!(
             second.is_idempotent_no_op(),
             "re-import must classify everything Unchanged"

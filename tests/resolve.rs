@@ -33,13 +33,14 @@ fn tag(s: &str) -> Tag {
     Tag(slug(s))
 }
 
-fn service(name: &str, allow_self: bool) -> api2mcp::model::Service {
+fn service(owner_id: uuid::Uuid, name: &str, allow_self: bool) -> api2mcp::model::Service {
     let base_url: url::Url = format!("https://{name}.example.com/").parse().unwrap();
     let mut origin_allowlist = BTreeSet::new();
     if allow_self {
         origin_allowlist.insert(Origin::of(&base_url).unwrap());
     }
     api2mcp::model::Service {
+        owner_id,
         slug: slug(name),
         base_url,
         origin_allowlist,
@@ -51,8 +52,9 @@ fn service(name: &str, allow_self: bool) -> api2mcp::model::Service {
     }
 }
 
-fn api_call(service_slug: &Slug, name: &str, access: Access) -> ApiCall {
+fn api_call(owner_id: uuid::Uuid, service_slug: &Slug, name: &str, access: Access) -> ApiCall {
     ApiCall {
+        owner_id,
         slug: slug(name),
         service_slug: service_slug.clone(),
         auth_provider_slug: None,
@@ -71,8 +73,14 @@ fn api_call(service_slug: &Slug, name: &str, access: Access) -> ApiCall {
     }
 }
 
-fn script(name: &str, callable: BTreeMap<String, Slug>, budgets: Budgets) -> ScriptDef {
+fn script(
+    owner_id: uuid::Uuid,
+    name: &str,
+    callable: BTreeMap<String, Slug>,
+    budgets: Budgets,
+) -> ScriptDef {
     ScriptDef {
+        owner_id,
         slug: slug(name),
         source: "()".to_owned(),
         params: vec![],
@@ -82,8 +90,15 @@ fn script(name: &str, callable: BTreeMap<String, Slug>, budgets: Budgets) -> Scr
     }
 }
 
-fn endpoint(name: &str, expr: TagExpr, write_ceiling: Access, budgets: Budgets) -> EndpointDef {
+fn endpoint(
+    owner_id: uuid::Uuid,
+    name: &str,
+    expr: TagExpr,
+    write_ceiling: Access,
+    budgets: Budgets,
+) -> EndpointDef {
     EndpointDef {
+        owner_id,
         slug: slug(name),
         tag_expr: expr,
         write_ceiling,
@@ -103,27 +118,29 @@ async fn resolves_exact_tool_set_and_origin_set() -> Result<()> {
     };
     db.migrate_up().await?;
     let stores = Stores::new(db.conn.clone());
+    let owner_id = db.create_user().await?;
 
-    let svc = service("svc-exact", true);
+    let svc = service(owner_id, "svc-exact", true);
     stores.service().create(&svc).await?;
-    let call = api_call(&svc.slug, "call-a", Access::Read);
+    let call = api_call(owner_id, &svc.slug, "call-a", Access::Read);
     stores
         .api_call()
         .create(&call, &BTreeSet::from([tag("expose")]))
         .await?;
-    let hidden = api_call(&svc.slug, "call-hidden", Access::Read);
+    let hidden = api_call(owner_id, &svc.slug, "call-hidden", Access::Read);
     stores
         .api_call()
         .create(&hidden, &BTreeSet::from([tag("other")]))
         .await?;
     let callable = BTreeMap::from([("helper".to_owned(), call.slug.clone())]);
-    let scr = script("script-a", callable, Budgets::default());
+    let scr = script(owner_id, "script-a", callable, Budgets::default());
     stores
         .script()
         .create(&scr, &BTreeSet::from([tag("expose")]))
         .await?;
 
     let ep = endpoint(
+        owner_id,
         "ep-exact",
         TagExpr::Has(tag("expose")),
         Access::Read,
@@ -131,7 +148,7 @@ async fn resolves_exact_tool_set_and_origin_set() -> Result<()> {
     );
     stores.endpoint().create(&ep).await?;
 
-    let plan = build_plan(&stores, &ep.slug).await?;
+    let plan = build_plan(&stores, owner_id, &ep.slug).await?;
     let mut names: Vec<&str> = plan.tools.iter().map(|t| t.name.as_str()).collect();
     names.sort_unstable();
     assert_eq!(names, vec!["call-a", "script-a"]);
@@ -151,15 +168,17 @@ async fn origin_escaping_allowlist_fails_the_whole_plan() -> Result<()> {
     };
     db.migrate_up().await?;
     let stores = Stores::new(db.conn.clone());
+    let owner_id = db.create_user().await?;
 
-    let svc = service("svc-escape", false);
+    let svc = service(owner_id, "svc-escape", false);
     stores.service().create(&svc).await?;
-    let call = api_call(&svc.slug, "call-a", Access::Read);
+    let call = api_call(owner_id, &svc.slug, "call-a", Access::Read);
     stores
         .api_call()
         .create(&call, &BTreeSet::from([tag("expose")]))
         .await?;
     let ep = endpoint(
+        owner_id,
         "ep-escape",
         TagExpr::Has(tag("expose")),
         Access::Read,
@@ -167,7 +186,7 @@ async fn origin_escaping_allowlist_fails_the_whole_plan() -> Result<()> {
     );
     stores.endpoint().create(&ep).await?;
 
-    let err = build_plan(&stores, &ep.slug).await.unwrap_err();
+    let err = build_plan(&stores, owner_id, &ep.slug).await.unwrap_err();
     assert!(matches!(err, ResolveError::OriginNotAllowed { .. }));
 
     db.teardown().await
@@ -181,15 +200,16 @@ async fn script_cannot_reach_a_declared_but_unselected_api_call() -> Result<()> 
     };
     db.migrate_up().await?;
     let stores = Stores::new(db.conn.clone());
+    let owner_id = db.create_user().await?;
 
-    let svc = service("svc-i1", true);
+    let svc = service(owner_id, "svc-i1", true);
     stores.service().create(&svc).await?;
-    let call_a = api_call(&svc.slug, "call-a", Access::Read);
+    let call_a = api_call(owner_id, &svc.slug, "call-a", Access::Read);
     stores
         .api_call()
         .create(&call_a, &BTreeSet::from([tag("expose")]))
         .await?;
-    let call_b = api_call(&svc.slug, "call-b", Access::Read);
+    let call_b = api_call(owner_id, &svc.slug, "call-b", Access::Read);
     stores
         .api_call()
         .create(&call_b, &BTreeSet::from([tag("other")]))
@@ -199,13 +219,14 @@ async fn script_cannot_reach_a_declared_but_unselected_api_call() -> Result<()> 
         ("a".to_owned(), call_a.slug.clone()),
         ("b".to_owned(), call_b.slug.clone()),
     ]);
-    let scr = script("script-i1", callable, Budgets::default());
+    let scr = script(owner_id, "script-i1", callable, Budgets::default());
     stores
         .script()
         .create(&scr, &BTreeSet::from([tag("expose")]))
         .await?;
 
     let ep = endpoint(
+        owner_id,
         "ep-i1",
         TagExpr::Has(tag("expose")),
         Access::Read,
@@ -213,7 +234,7 @@ async fn script_cannot_reach_a_declared_but_unselected_api_call() -> Result<()> 
     );
     stores.endpoint().create(&ep).await?;
 
-    let plan = build_plan(&stores, &ep.slug).await?;
+    let plan = build_plan(&stores, owner_id, &ep.slug).await?;
     let reachable = plan.callable_by.get(&scr.slug).expect("script planned");
     assert_eq!(reachable.get("a"), Some(&call_a.slug));
     assert_eq!(reachable.get("b"), None);
@@ -229,15 +250,17 @@ async fn read_ceiling_endpoint_refuses_a_write_api_call() -> Result<()> {
     };
     db.migrate_up().await?;
     let stores = Stores::new(db.conn.clone());
+    let owner_id = db.create_user().await?;
 
-    let svc = service("svc-ceiling", true);
+    let svc = service(owner_id, "svc-ceiling", true);
     stores.service().create(&svc).await?;
-    let call = api_call(&svc.slug, "call-w", Access::Write);
+    let call = api_call(owner_id, &svc.slug, "call-w", Access::Write);
     stores
         .api_call()
         .create(&call, &BTreeSet::from([tag("expose")]))
         .await?;
     let ep = endpoint(
+        owner_id,
         "ep-ceiling",
         TagExpr::Has(tag("expose")),
         Access::Read,
@@ -245,7 +268,7 @@ async fn read_ceiling_endpoint_refuses_a_write_api_call() -> Result<()> {
     );
     stores.endpoint().create(&ep).await?;
 
-    let err = build_plan(&stores, &ep.slug).await.unwrap_err();
+    let err = build_plan(&stores, owner_id, &ep.slug).await.unwrap_err();
     assert!(matches!(err, ResolveError::WriteCeilingViolation { .. }));
 
     db.teardown().await
@@ -259,8 +282,10 @@ async fn script_budget_narrows_but_never_widens_the_endpoints() -> Result<()> {
     };
     db.migrate_up().await?;
     let stores = Stores::new(db.conn.clone());
+    let owner_id = db.create_user().await?;
 
     let narrow = script(
+        owner_id,
         "script-narrow",
         BTreeMap::new(),
         Budgets {
@@ -273,6 +298,7 @@ async fn script_budget_narrows_but_never_widens_the_endpoints() -> Result<()> {
         .create(&narrow, &BTreeSet::from([tag("expose")]))
         .await?;
     let wide = script(
+        owner_id,
         "script-wide",
         BTreeMap::new(),
         Budgets {
@@ -286,6 +312,7 @@ async fn script_budget_narrows_but_never_widens_the_endpoints() -> Result<()> {
         .await?;
 
     let ep = endpoint(
+        owner_id,
         "ep-budget",
         TagExpr::Has(tag("expose")),
         Access::Read,
@@ -296,7 +323,7 @@ async fn script_budget_narrows_but_never_widens_the_endpoints() -> Result<()> {
     );
     stores.endpoint().create(&ep).await?;
 
-    let plan = build_plan(&stores, &ep.slug).await?;
+    let plan = build_plan(&stores, owner_id, &ep.slug).await?;
     // The script's own opinion (3) is narrower than the endpoint's (10) — it wins.
     assert_eq!(
         plan.tool("script-narrow")
@@ -326,15 +353,17 @@ async fn digest_is_stable_and_changes_with_a_definition() -> Result<()> {
     };
     db.migrate_up().await?;
     let stores = Stores::new(db.conn.clone());
+    let owner_id = db.create_user().await?;
 
-    let svc = service("svc-digest", true);
+    let svc = service(owner_id, "svc-digest", true);
     stores.service().create(&svc).await?;
-    let call = api_call(&svc.slug, "call-a", Access::Read);
+    let call = api_call(owner_id, &svc.slug, "call-a", Access::Read);
     stores
         .api_call()
         .create(&call, &BTreeSet::from([tag("expose")]))
         .await?;
     let ep = endpoint(
+        owner_id,
         "ep-digest",
         TagExpr::Has(tag("expose")),
         Access::Read,
@@ -342,8 +371,8 @@ async fn digest_is_stable_and_changes_with_a_definition() -> Result<()> {
     );
     stores.endpoint().create(&ep).await?;
 
-    let plan1 = build_plan(&stores, &ep.slug).await?;
-    let plan2 = build_plan(&stores, &ep.slug).await?;
+    let plan1 = build_plan(&stores, owner_id, &ep.slug).await?;
+    let plan2 = build_plan(&stores, owner_id, &ep.slug).await?;
     assert_eq!(plan1.digest, plan2.digest);
 
     let mut changed = call.clone();
@@ -353,7 +382,7 @@ async fn digest_is_stable_and_changes_with_a_definition() -> Result<()> {
         .update(&changed, &BTreeSet::from([tag("expose")]))
         .await?;
 
-    let plan3 = build_plan(&stores, &ep.slug).await?;
+    let plan3 = build_plan(&stores, owner_id, &ep.slug).await?;
     assert_ne!(plan1.digest, plan3.digest);
 
     db.teardown().await
@@ -367,15 +396,17 @@ async fn cache_returns_same_arc_until_generation_bumps() -> Result<()> {
     };
     db.migrate_up().await?;
     let stores = Stores::new(db.conn.clone());
+    let owner_id = db.create_user().await?;
 
-    let svc = service("svc-cache", true);
+    let svc = service(owner_id, "svc-cache", true);
     stores.service().create(&svc).await?;
-    let call = api_call(&svc.slug, "call-a", Access::Read);
+    let call = api_call(owner_id, &svc.slug, "call-a", Access::Read);
     stores
         .api_call()
         .create(&call, &BTreeSet::from([tag("expose")]))
         .await?;
     let ep = endpoint(
+        owner_id,
         "ep-cache",
         TagExpr::Has(tag("expose")),
         Access::Read,
@@ -384,17 +415,17 @@ async fn cache_returns_same_arc_until_generation_bumps() -> Result<()> {
     stores.endpoint().create(&ep).await?;
 
     let cache = PlanCache::new();
-    let first = cache.get_or_build(&stores, &ep.slug).await?;
-    let second = cache.get_or_build(&stores, &ep.slug).await?;
+    let first = cache.get_or_build(&stores, owner_id, &ep.slug).await?;
+    let second = cache.get_or_build(&stores, owner_id, &ep.slug).await?;
     assert!(Arc::ptr_eq(&first, &second));
 
     // Any definition write bumps `meta.definitions_generation` in the same transaction.
     stores
         .service()
-        .create(&service("svc-cache-other", true))
+        .create(&service(owner_id, "svc-cache-other", true))
         .await?;
 
-    let third = cache.get_or_build(&stores, &ep.slug).await?;
+    let third = cache.get_or_build(&stores, owner_id, &ep.slug).await?;
     assert!(!Arc::ptr_eq(&first, &third));
 
     db.teardown().await

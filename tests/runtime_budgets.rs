@@ -46,6 +46,7 @@ fn plan_with_calls_paginated(
     let mut tools = Vec::new();
     for name in names {
         let call = ApiCall {
+            owner_id: uuid::Uuid::nil(),
             slug: slug(name),
             service_slug: service.slug.clone(),
             auth_provider_slug: None,
@@ -79,6 +80,7 @@ fn plan_with_calls_paginated(
     }
 
     EndpointPlan {
+        owner_id: uuid::Uuid::nil(),
         slug: slug("ep-budgets"),
         write_ceiling: Access::Read,
         instructions: None,
@@ -245,10 +247,16 @@ async fn run_tool_persists_a_complete_run_with_no_credential_leaked() {
         std::env::set_var("A2M_TEST_RUNTIME_BUDGETS_CRED", "sh-super-secret-token");
     }
 
+    let owner_id = db.create_user().await.expect("create user");
+
     let f = Fixture::start().await;
     f.set("/call-a", Behavior::Json(serde_json::json!({"value": 42})));
     let mut plan = plan_with_calls(&f, &["call-a"]);
     plan.digest = "digest-for-persistence-test".to_owned();
+    // `runs.owner_id` is a real FK to `users` — the plan's default (nil) owner from
+    // `plan_with_calls` (which never touches the database) won't satisfy it, so this test
+    // stands in for what `resolve::build_plan` would have set from a real endpoint row.
+    plan.owner_id = owner_id;
 
     let pool = std::sync::Arc::new(api2mcp::http::UpstreamPool::new(
         std::sync::Arc::new(api2mcp::http::StaticDns::new()),
@@ -281,7 +289,7 @@ async fn run_tool_persists_a_complete_run_with_no_credential_leaked() {
     let stores = Stores::new(db.conn.clone());
     let (summary, calls) = stores
         .run()
-        .get(result.run_id)
+        .get(owner_id, result.run_id)
         .await
         .expect("db read")
         .expect("run row exists");

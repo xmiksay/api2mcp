@@ -12,6 +12,10 @@ use sea_orm::entity::prelude::*;
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
+    /// The endpoint definition's own owner (`resolve::EndpointPlan::owner_id`), not the caller —
+    /// see this table's migration doc for why `caller_id` (a free-form string) can't stand in
+    /// for this.
+    pub owner_id: Uuid,
     pub endpoint_slug: String,
     pub tool_name: String,
     /// `api_call` | `script`.

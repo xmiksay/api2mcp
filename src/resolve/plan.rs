@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 use serde_json_path::JsonPath;
+use uuid::Uuid;
 
 use crate::http::UrlTemplate;
 use crate::model::{Access, ApiCall, Budgets, Cardinality, Origin, ParamType, Service, Slug};
@@ -67,6 +68,11 @@ pub struct PlannedTool {
 /// these fields — that is the whole point of doing it once, here.
 #[derive(Debug, Clone)]
 pub struct EndpointPlan {
+    /// The endpoint definition's own owner. Every store read this plan is built from was scoped
+    /// to this same id (`resolve::build_plan`'s `owner_id` parameter) — carried here so anything
+    /// downstream of a *built* plan (auth loading, the run recorder) can read it back off the
+    /// plan instead of needing its own `owner_id` parameter threaded in separately.
+    pub owner_id: Uuid,
     pub slug: Slug,
     pub write_ceiling: Access,
     pub instructions: Option<String>,

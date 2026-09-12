@@ -18,6 +18,7 @@ use api2mcp::model::{
     ParamType, Projection, ProjectionField, ScriptDef, Service, Slug, Tag, TagExpr,
 };
 use api2mcp::store::Stores;
+use uuid::Uuid;
 
 use api_support::{admin, setup};
 use fixture::{Behavior, Fixture};
@@ -26,9 +27,15 @@ fn slug(s: &str) -> Slug {
     s.parse().expect("valid slug")
 }
 
-async fn seed_service(stores: &Stores, name: &str, fixture: &Fixture) -> Result<Slug> {
+async fn seed_service(
+    stores: &Stores,
+    owner_id: Uuid,
+    name: &str,
+    fixture: &Fixture,
+) -> Result<Slug> {
     let base_url = fixture.base_url();
     let service = Service {
+        owner_id,
         slug: slug(name),
         base_url: base_url.clone(),
         origin_allowlist: BTreeSet::from([Origin::of(&base_url)?]),
@@ -42,8 +49,9 @@ async fn seed_service(stores: &Stores, name: &str, fixture: &Fixture) -> Result<
     Ok(service.slug)
 }
 
-fn get_item_call(service_slug: &Slug) -> ApiCall {
+fn get_item_call(owner_id: Uuid, service_slug: &Slug) -> ApiCall {
     ApiCall {
+        owner_id,
         slug: slug("get-item"),
         service_slug: service_slug.clone(),
         auth_provider_slug: None,
@@ -87,8 +95,9 @@ fn get_item_call(service_slug: &Slug) -> ApiCall {
     }
 }
 
-fn list_items_call(service_slug: &Slug) -> ApiCall {
+fn list_items_call(owner_id: Uuid, service_slug: &Slug) -> ApiCall {
     ApiCall {
+        owner_id,
         slug: slug("list-items"),
         service_slug: service_slug.clone(),
         auth_provider_slug: None,
@@ -132,17 +141,18 @@ async fn api_call_test_run_returns_raw_and_projected_side_by_side_and_writes_a_r
         ),
     );
 
-    let service_slug = seed_service(&h.stores, "svc-test-run", &fixture).await?;
+    let service_slug = seed_service(&h.stores, h.admin_id, "svc-test-run", &fixture).await?;
     h.stores
         .api_call()
         .create(
-            &get_item_call(&service_slug),
+            &get_item_call(h.admin_id, &service_slug),
             &BTreeSet::from([Tag(slug("tr"))]),
         )
         .await?;
     h.stores
         .endpoint()
         .create(&EndpointDef {
+            owner_id: h.admin_id,
             slug: slug("ep-test-run"),
             tag_expr: TagExpr::Has(Tag(slug("tr"))),
             write_ceiling: Access::Read,
@@ -173,7 +183,7 @@ async fn api_call_test_run_returns_raw_and_projected_side_by_side_and_writes_a_r
     let (summary, calls) = h
         .stores
         .run()
-        .get(run_id.parse()?)
+        .get(h.admin_id, run_id.parse()?)
         .await?
         .expect("the test run was persisted");
     assert_eq!(summary.summary.tool_name, "get-item");
@@ -207,19 +217,19 @@ async fn script_test_run_reports_the_per_call_breakdown_in_input_order() -> Resu
         Behavior::Json(json!({"id": "1", "title": "One"})),
     );
 
-    let service_slug = seed_service(&h.stores, "svc-script-run", &fixture).await?;
+    let service_slug = seed_service(&h.stores, h.admin_id, "svc-script-run", &fixture).await?;
     let tag = Tag(slug("tr-script"));
     h.stores
         .api_call()
         .create(
-            &get_item_call(&service_slug),
+            &get_item_call(h.admin_id, &service_slug),
             &BTreeSet::from([tag.clone()]),
         )
         .await?;
     h.stores
         .api_call()
         .create(
-            &list_items_call(&service_slug),
+            &list_items_call(h.admin_id, &service_slug),
             &BTreeSet::from([tag.clone()]),
         )
         .await?;
@@ -227,6 +237,7 @@ async fn script_test_run_reports_the_per_call_breakdown_in_input_order() -> Resu
         .script()
         .create(
             &ScriptDef {
+                owner_id: h.admin_id,
                 slug: slug("item-summary"),
                 source: SUMMARY_SCRIPT_SOURCE.to_owned(),
                 params: Vec::new(),
@@ -243,6 +254,7 @@ async fn script_test_run_reports_the_per_call_breakdown_in_input_order() -> Resu
     h.stores
         .endpoint()
         .create(&EndpointDef {
+            owner_id: h.admin_id,
             slug: slug("ep-script-run"),
             tag_expr: TagExpr::Has(tag),
             write_ceiling: Access::Read,
@@ -282,12 +294,13 @@ async fn a_failing_script_test_reports_a_line_number_and_snippet() -> Result<()>
         return Ok(());
     };
     let fixture = Fixture::start().await;
-    let service_slug = seed_service(&h.stores, "svc-script-fail", &fixture).await?;
+    let service_slug = seed_service(&h.stores, h.admin_id, "svc-script-fail", &fixture).await?;
     let tag = Tag(slug("tr-fail"));
     h.stores
         .script()
         .create(
             &ScriptDef {
+                owner_id: h.admin_id,
                 slug: slug("broken-script"),
                 // A deliberate syntax error on an existing source line — never reaches the
                 // network, fails to compile — so `snippet_with_caret` has a real line to quote.
@@ -303,6 +316,7 @@ async fn a_failing_script_test_reports_a_line_number_and_snippet() -> Result<()>
     h.stores
         .endpoint()
         .create(&EndpointDef {
+            owner_id: h.admin_id,
             slug: slug("ep-script-fail"),
             tag_expr: TagExpr::Has(tag),
             write_ceiling: Access::Read,
@@ -338,7 +352,7 @@ async fn a_failing_script_test_reports_a_line_number_and_snippet() -> Result<()>
 
     // The run is still persisted — a test run is a real run, success or not.
     let run_id: uuid::Uuid = body["run_id"].as_str().unwrap().parse()?;
-    assert!(h.stores.run().get(run_id).await?.is_some());
+    assert!(h.stores.run().get(h.admin_id, run_id).await?.is_some());
 
     h.db.teardown().await
 }

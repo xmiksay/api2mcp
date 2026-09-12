@@ -53,7 +53,7 @@ async fn tools_call_on_a_real_api_call_returns_a_projected_result_and_writes_a_r
     let runs = h
         .stores
         .run()
-        .list_for_endpoint(&"demo".parse().unwrap(), 10)
+        .list_for_endpoint(h.owner_id, &"demo".parse().unwrap(), 10)
         .await?;
     assert_eq!(runs.len(), 1, "exactly one run should have been recorded");
     assert_eq!(runs[0].tool_name, "get-item");

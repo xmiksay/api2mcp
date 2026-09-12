@@ -28,7 +28,7 @@ async fn full_round_trip_register_authorize_consent_token_and_call_mcp() -> Resu
     let Some(h) = setup().await? else {
         return Ok(());
     };
-    let cookie = login_cookie(&h.stores, &h.db.conn, "roundtrip@example.com").await?;
+    let cookie = login_cookie(&h, "roundtrip@example.com").await?;
     let (verifier, challenge) = pkce_pair();
 
     let register_body = json!({ "redirect_uris": [REDIRECT_URI] });
@@ -129,7 +129,7 @@ async fn code_cannot_be_replayed_after_a_successful_exchange() -> Result<()> {
     let Some(h) = setup().await? else {
         return Ok(());
     };
-    let cookie = login_cookie(&h.stores, &h.db.conn, "replay@example.com").await?;
+    let cookie = login_cookie(&h, "replay@example.com").await?;
     let (verifier, challenge) = pkce_pair();
     let (client, _) = h
         .stores
@@ -191,7 +191,7 @@ async fn an_issued_access_token_authenticates_on_mcp() -> Result<()> {
     let Some(h) = setup().await? else {
         return Ok(());
     };
-    let cookie = login_cookie(&h.stores, &h.db.conn, "mcp-user@example.com").await?;
+    let cookie = login_cookie(&h, "mcp-user@example.com").await?;
     let (verifier, challenge) = pkce_pair();
     let (client, _) = h
         .stores

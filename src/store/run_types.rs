@@ -34,6 +34,10 @@ pub enum RunStatus {
 
 #[derive(Debug, Clone)]
 pub struct NewRun {
+    /// The endpoint definition's own owner (`resolve::EndpointPlan::owner_id`) — see
+    /// `migration::m0006_runs`'s own doc for why this, not `caller_id`, is what a run is scoped
+    /// by.
+    pub owner_id: Uuid,
     pub endpoint_slug: Slug,
     pub tool_name: String,
     pub target_kind: RunTargetKind,

@@ -3,7 +3,7 @@
 //! Subcommands are the local-process entry points for everything an agent must never be able to
 //! do: importing definitions, minting tokens, binding an auth provider to an origin (I5).
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
 pub mod call;
@@ -43,6 +43,10 @@ pub enum Command {
         /// Endpoint to resolve the tool against. Defaults to `cfg.default_endpoint`.
         #[arg(long)]
         endpoint: Option<String>,
+        /// Email of the user whose definitions to resolve against. Defaults to the sole user
+        /// account when omitted — only needed once more than one user exists.
+        #[arg(long)]
+        user: Option<String>,
     },
     /// Execute a script.
     Script {
@@ -53,6 +57,10 @@ pub enum Command {
     Export {
         #[arg(long)]
         endpoint: String,
+        /// Email of the user whose definitions to export. Defaults to the sole user account
+        /// when omitted — only needed once more than one user exists.
+        #[arg(long)]
+        user: Option<String>,
     },
     /// Import a YAML pack. Last write wins; definitions are not versioned.
     Import {
@@ -60,6 +68,10 @@ pub enum Command {
         /// Validate and report without writing.
         #[arg(long)]
         dry_run: bool,
+        /// Email of the user who will own everything this pack creates. Defaults to the sole
+        /// user account when omitted — only needed once more than one user exists.
+        #[arg(long)]
+        user: Option<String>,
     },
     /// Manage service tokens.
     Token {
@@ -85,6 +97,10 @@ pub enum ScriptAction {
         /// Endpoint to resolve the tool against. Defaults to `cfg.default_endpoint`.
         #[arg(long)]
         endpoint: Option<String>,
+        /// Email of the user whose definitions to resolve against. Defaults to the sole user
+        /// account when omitted — only needed once more than one user exists.
+        #[arg(long)]
+        user: Option<String>,
     },
 }
 
@@ -157,18 +173,53 @@ pub async fn run(cli: Cli) -> Result<()> {
             args,
             raw,
             endpoint,
-        } => call::run(&name, &args, raw, endpoint.as_deref()).await,
+            user,
+        } => call::run(&name, &args, raw, endpoint.as_deref(), user.as_deref()).await,
         Command::Script { action } => match action {
             ScriptAction::Run {
                 name,
                 args,
                 endpoint,
-            } => script::run(&name, &args, endpoint.as_deref()).await,
+                user,
+            } => script::run(&name, &args, endpoint.as_deref(), user.as_deref()).await,
         },
-        Command::Export { endpoint } => pack::export(&endpoint).await,
-        Command::Import { path, dry_run } => pack::import(&path, dry_run).await,
+        Command::Export { endpoint, user } => pack::export(&endpoint, user.as_deref()).await,
+        Command::Import {
+            path,
+            dry_run,
+            user,
+        } => pack::import(&path, dry_run, user.as_deref()).await,
         Command::Token { action } => token::run(action).await,
         Command::User { action } => user::run(action).await,
+    }
+}
+
+/// Resolves `--user <email>` when given, else falls back to the sole user account — the shared
+/// rule `call`/`script run`/`import`/`export` all need, since none of them have a session cookie
+/// to derive an owner from. A single-person self-hosted box never has to pass `--user`; a
+/// multi-user one must not have this guess, so more than one user with no `--user` is a hard
+/// error rather than picking one arbitrarily. Mirrors `cli::token::resolve_owner`, which predates
+/// this and already had to solve the identical problem for `token mint`/`list`.
+pub(crate) async fn resolve_user(
+    stores: &crate::store::Stores,
+    email: Option<&str>,
+) -> Result<crate::store::UserRecord> {
+    if let Some(email) = email {
+        return stores
+            .user()
+            .get_by_email(email)
+            .await
+            .context("looking up --user")?
+            .ok_or_else(|| anyhow::anyhow!("no such user: {email:?}"));
+    }
+    let mut users = stores.user().list().await.context("listing users")?;
+    match users.len() {
+        0 => bail!(
+            "no users exist yet — set A2M_SEED_EMAIL/A2M_SEED_PASSWORD before running \
+             migrations, then retry"
+        ),
+        1 => Ok(users.remove(0)),
+        _ => bail!("more than one user exists — pass --user <email> to disambiguate"),
     }
 }
 
@@ -219,69 +270,5 @@ pub fn retype_args_for_params(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn args_parse_as_json_with_a_string_fallback() {
-        let got = parse_args(&["n=3".into(), "s=hello".into(), "b=true".into()]).unwrap();
-        assert_eq!(got["n"], json!(3));
-        assert_eq!(got["s"], json!("hello"));
-        assert_eq!(got["b"], json!(true));
-    }
-
-    #[test]
-    fn a_value_containing_equals_keeps_its_tail() {
-        let got = parse_args(&["q=a=b".into()]).unwrap();
-        assert_eq!(got["q"], json!("a=b"));
-    }
-
-    #[test]
-    fn retyping_narrows_a_number_onto_a_string_param() {
-        use crate::model::{Param, ParamLocation, ParamType};
-        let p = Param {
-            name: "id".into(),
-            location: ParamLocation::Path,
-            ty: ParamType::String,
-            required: true,
-            default: None,
-            fixed: None,
-            enum_values: None,
-            description: None,
-            position: 0,
-        };
-        let mut args = parse_args(&["id=3".into()]).expect("parses");
-        assert_eq!(args["id"], json!(3), "parse_args guesses a number");
-        retype_args_for_params(&[p], &mut args);
-        assert_eq!(args["id"], json!("3"), "retyped to the declared string");
-    }
-
-    #[test]
-    fn retyping_leaves_a_non_string_param_alone() {
-        use crate::model::{Param, ParamLocation, ParamType};
-        let p = Param {
-            name: "limit".into(),
-            location: ParamLocation::Query,
-            ty: ParamType::Integer,
-            required: false,
-            default: None,
-            fixed: None,
-            enum_values: None,
-            description: None,
-            position: 0,
-        };
-        let mut args = parse_args(&["limit=10".into()]).expect("parses");
-        retype_args_for_params(&[p], &mut args);
-        assert_eq!(
-            args["limit"],
-            json!(10),
-            "an integer param keeps its number"
-        );
-    }
-
-    #[test]
-    fn a_missing_equals_is_an_error() {
-        assert!(parse_args(&["oops".into()]).is_err());
-    }
-}
+#[path = "mod_tests.rs"]
+mod tests;

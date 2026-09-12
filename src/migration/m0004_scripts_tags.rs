@@ -17,10 +17,23 @@
 //! `timeout_ms`: `Budgets::fold` (I6) is element-wise `min` across all five axes, so a
 //! script that can only narrow `wall_clock` could never narrow the other four — the
 //! invariant needs every axis representable here, not just one.
+//!
+//! `scripts.owner_id` is a real column, same reasoning as `m0003_definitions`'s own doc.
+//! `tags`/`api_call_tags`/`script_tags` deliberately get **no** `owner_id`: tags are a shared
+//! vocabulary, and membership rows hang off an already-owned `api_call`/`script` row, so
+//! selecting by tag is scoped automatically the moment the item it's attached to is. Amended
+//! into this migration (not a new one) — same unmerged-branch reasoning as `m0003`.
 
 use sea_orm_migration::prelude::*;
 
 use super::helpers::{timestamptz_now, uuid_col, uuid_pk};
+
+/// Redeclared from `m0001_init`'s own table — see `migration`'s module doc.
+#[derive(DeriveIden)]
+enum Users {
+    Table,
+    Id,
+}
 
 pub struct Migration;
 
@@ -40,6 +53,7 @@ enum ApiCalls {
 enum Scripts {
     Table,
     Id,
+    OwnerId,
     Slug,
     Description,
     Source,
@@ -106,6 +120,7 @@ impl MigrationTrait for Migration {
                     .table(Scripts::Table)
                     .if_not_exists()
                     .col(uuid_pk(Scripts::Id))
+                    .col(uuid_col(Scripts::OwnerId))
                     .col(ColumnDef::new(Scripts::Slug).text().not_null())
                     .col(ColumnDef::new(Scripts::Description).text().null())
                     .col(ColumnDef::new(Scripts::Source).text().not_null())
@@ -119,14 +134,22 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Scripts::MaxConcurrency).integer().null())
                     .col(timestamptz_now(Scripts::CreatedAt))
                     .col(timestamptz_now(Scripts::UpdatedAt))
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_scripts_owner")
+                            .from(Scripts::Table, Scripts::OwnerId)
+                            .to(Users::Table, Users::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
                     .to_owned(),
             )
             .await?;
         manager
             .create_index(
                 Index::create()
-                    .name("ux_scripts_slug")
+                    .name("ux_scripts_owner_slug")
                     .table(Scripts::Table)
+                    .col(Scripts::OwnerId)
                     .col(Scripts::Slug)
                     .unique()
                     .to_owned(),

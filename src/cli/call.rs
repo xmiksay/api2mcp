@@ -68,10 +68,16 @@ pub struct CallOutcome {
 /// `tests/cli.rs`; see [`execute`]'s own doc for what *is* covered there.
 pub(crate) async fn setup(
     endpoint: Option<&str>,
+    user: Option<&str>,
 ) -> Result<(Stores, Arc<UpstreamPool>, SsrfPolicy, EndpointPlan)> {
     let cfg = Config::from_env()?;
     let conn = db::connect(&cfg.database_url).await?;
     let stores = Stores::new(conn);
+
+    // No session or bearer token to derive an owner from here — see `cli::resolve_user`'s own
+    // doc for why `--user` (defaulting to the sole user account) is the CLI's answer to the
+    // question every other transport gets for free from `Caller`.
+    let owner = crate::cli::resolve_user(&stores, user).await?;
 
     let slug_str = endpoint.unwrap_or(&cfg.default_endpoint);
     let endpoint_slug: Slug = slug_str
@@ -83,7 +89,7 @@ pub(crate) async fn setup(
     };
     let pool = Arc::new(UpstreamPool::new(Arc::new(HickoryDns::new()), policy));
 
-    let plan = resolve::build_plan(&stores, &endpoint_slug)
+    let plan = resolve::build_plan(&stores, owner.id, &endpoint_slug)
         .await
         .with_context(|| format!("resolving endpoint {endpoint_slug:?}"))?;
 
@@ -186,9 +192,10 @@ pub async fn run(
     arg_pairs: &[String],
     raw: bool,
     endpoint: Option<&str>,
+    user: Option<&str>,
 ) -> Result<()> {
     let args = Value::Object(crate::cli::parse_args(arg_pairs)?);
-    let (stores, pool, policy, plan) = setup(endpoint).await?;
+    let (stores, pool, policy, plan) = setup(endpoint, user).await?;
     let outcome = execute(&stores, &pool, policy, &plan, name, args).await?;
 
     println!("run_id: {}", outcome.run_id);

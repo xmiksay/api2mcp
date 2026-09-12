@@ -5,6 +5,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 
+use uuid::Uuid;
+
 use crate::model::{ApiCall, EndpointDef, EndpointTarget, ScriptDef, Slug, Tag};
 use crate::pack::{PackApiCall, PackEndpoint, PackEndpointTarget, PackScript};
 use crate::resolve::tag_expr;
@@ -36,6 +38,7 @@ pub fn api_call_to_pack(c: &ApiCall, tags: &BTreeSet<Tag>) -> PackApiCall {
 }
 
 pub fn api_call_from_pack(
+    owner_id: Uuid,
     slug: Slug,
     service_slug: Slug,
     auth_provider_slug: Option<Slug>,
@@ -44,6 +47,7 @@ pub fn api_call_from_pack(
     let method = http::Method::from_str(&c.method)
         .map_err(|e| format!("http method {:?}: {e}", c.method))?;
     Ok(ApiCall {
+        owner_id,
         slug,
         service_slug,
         auth_provider_slug,
@@ -85,13 +89,14 @@ pub fn script_to_pack(s: &ScriptDef, tags: &BTreeSet<Tag>) -> PackScript {
     }
 }
 
-pub fn script_from_pack(slug: Slug, s: &PackScript) -> Result<ScriptDef, String> {
+pub fn script_from_pack(owner_id: Uuid, slug: Slug, s: &PackScript) -> Result<ScriptDef, String> {
     let callable = s
         .callable
         .iter()
         .map(|(alias, target)| Ok((alias.clone(), parse_slug(target)?)))
         .collect::<Result<BTreeMap<_, _>, String>>()?;
     Ok(ScriptDef {
+        owner_id,
         slug,
         source: s.source.clone(),
         params: s
@@ -139,7 +144,11 @@ pub fn endpoint_to_pack(e: &EndpointDef) -> PackEndpoint {
     }
 }
 
-pub fn endpoint_from_pack(slug: Slug, e: &PackEndpoint) -> Result<EndpointDef, String> {
+pub fn endpoint_from_pack(
+    owner_id: Uuid,
+    slug: Slug,
+    e: &PackEndpoint,
+) -> Result<EndpointDef, String> {
     let tag_expr = tag_expr::parse(&e.tag_expr).map_err(|err| format!("tag_expr: {err}"))?;
     let aliases = e
         .aliases
@@ -152,6 +161,7 @@ pub fn endpoint_from_pack(slug: Slug, e: &PackEndpoint) -> Result<EndpointDef, S
         .map(|s| parse_slug(s))
         .collect::<Result<BTreeSet<_>, _>>()?;
     Ok(EndpointDef {
+        owner_id,
         slug,
         tag_expr,
         write_ceiling: access_from_str(&e.write_ceiling)?,
@@ -171,7 +181,9 @@ mod tests {
 
     #[test]
     fn api_call_round_trips_through_pack_shape() {
+        let owner_id = Uuid::new_v4();
         let call = ApiCall {
+            owner_id,
             slug: "call-a".parse().unwrap(),
             service_slug: "svc".parse().unwrap(),
             auth_provider_slug: None,
@@ -202,14 +214,22 @@ mod tests {
         let pack = api_call_to_pack(&call, &tags);
         assert!(matches!(pack.pagination, PackPagination::None));
         assert!(matches!(pack.params[0].location, PackParamLocation::Path));
-        let back =
-            api_call_from_pack(call.slug.clone(), call.service_slug.clone(), None, &pack).unwrap();
+        let back = api_call_from_pack(
+            owner_id,
+            call.slug.clone(),
+            call.service_slug.clone(),
+            None,
+            &pack,
+        )
+        .unwrap();
         assert_eq!(back, call);
     }
 
     #[test]
     fn endpoint_round_trips_through_pack_shape() {
+        let owner_id = Uuid::new_v4();
         let endpoint = EndpointDef {
+            owner_id,
             slug: "ep".parse().unwrap(),
             tag_expr: crate::model::TagExpr::Has(Tag("demo".parse().unwrap())),
             write_ceiling: crate::model::Access::Read,
@@ -223,7 +243,7 @@ mod tests {
             auth_providers: BTreeSet::new(),
         };
         let pack = endpoint_to_pack(&endpoint);
-        let back = endpoint_from_pack(endpoint.slug.clone(), &pack).unwrap();
+        let back = endpoint_from_pack(owner_id, endpoint.slug.clone(), &pack).unwrap();
         assert_eq!(back, endpoint);
     }
 }

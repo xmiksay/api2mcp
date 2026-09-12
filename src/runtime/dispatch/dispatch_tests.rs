@@ -12,6 +12,7 @@ use crate::runtime::budget::BudgetAxis;
 fn service() -> Service {
     let base_url: url::Url = "https://svc.example.com/".parse().unwrap();
     Service {
+        owner_id: uuid::Uuid::nil(),
         slug: "svc".parse().unwrap(),
         base_url: base_url.clone(),
         origin_allowlist: BTreeSet::from([Origin::of(&base_url).unwrap()]),
@@ -25,6 +26,7 @@ fn service() -> Service {
 
 fn api_call(slug: &str) -> ApiCall {
     ApiCall {
+        owner_id: uuid::Uuid::nil(),
         slug: slug.parse().unwrap(),
         service_slug: "svc".parse().unwrap(),
         auth_provider_slug: None,
@@ -67,6 +69,7 @@ fn bare_plan() -> EndpointPlan {
     };
 
     EndpointPlan {
+        owner_id: uuid::Uuid::nil(),
         slug: "ep".parse().unwrap(),
         write_ceiling: Access::Read,
         instructions: None,

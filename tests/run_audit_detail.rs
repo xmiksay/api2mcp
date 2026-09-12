@@ -26,9 +26,15 @@ fn slug(s: &str) -> Slug {
     s.parse().expect("valid slug")
 }
 
-async fn seed_service(stores: &Stores, name: &str, fixture: &Fixture) -> Result<Slug> {
+async fn seed_service(
+    stores: &Stores,
+    owner_id: uuid::Uuid,
+    name: &str,
+    fixture: &Fixture,
+) -> Result<Slug> {
     let base_url = fixture.base_url();
     let service = Service {
+        owner_id,
         slug: slug(name),
         base_url: base_url.clone(),
         origin_allowlist: BTreeSet::from([Origin::of(&base_url)?]),
@@ -42,8 +48,14 @@ async fn seed_service(stores: &Stores, name: &str, fixture: &Fixture) -> Result<
     Ok(service.slug)
 }
 
-fn plain_get_call(slug_str: &str, service_slug: &Slug, path: &str) -> ApiCall {
+fn plain_get_call(
+    owner_id: uuid::Uuid,
+    slug_str: &str,
+    service_slug: &Slug,
+    path: &str,
+) -> ApiCall {
     ApiCall {
+        owner_id,
         slug: slug(slug_str),
         service_slug: service_slug.clone(),
         auth_provider_slug: None,
@@ -70,18 +82,19 @@ async fn execution_start_round_trips_and_the_detail_route_exposes_the_full_recor
     let fixture = Fixture::start().await;
     fixture.set("/thing", Behavior::Json(json!({"n": 1})));
 
-    let service_slug = seed_service(&h.stores, "svc-detail", &fixture).await?;
+    let service_slug = seed_service(&h.stores, h.admin_id, "svc-detail", &fixture).await?;
     let tag = Tag(slug("tag-detail"));
     h.stores
         .api_call()
         .create(
-            &plain_get_call("thing", &service_slug, "/thing"),
+            &plain_get_call(h.admin_id, "thing", &service_slug, "/thing"),
             &BTreeSet::from([tag.clone()]),
         )
         .await?;
     h.stores
         .endpoint()
         .create(&EndpointDef {
+            owner_id: h.admin_id,
             slug: slug("ep-detail"),
             tag_expr: TagExpr::Has(tag),
             write_ceiling: Access::Read,
@@ -165,7 +178,7 @@ async fn a_credential_used_by_a_call_appears_in_neither_the_list_nor_the_detail_
     let fixture = Fixture::start().await;
     fixture.set("/secure", Behavior::Json(json!({"ok": true})));
 
-    let service_slug = seed_service(&h.stores, "svc-cred", &fixture).await?;
+    let service_slug = seed_service(&h.stores, h.admin_id, "svc-cred", &fixture).await?;
     let bound_origin = Origin::of(&fixture.base_url())?.to_string();
 
     let (status, resp) = admin(
@@ -189,7 +202,7 @@ async fn a_credential_used_by_a_call_appears_in_neither_the_list_nor_the_detail_
         "seeding auth provider: {resp:?}"
     );
 
-    let mut call = plain_get_call("secure-thing", &service_slug, "/secure");
+    let mut call = plain_get_call(h.admin_id, "secure-thing", &service_slug, "/secure");
     call.auth_provider_slug = Some(slug("cred-provider"));
     let tag = Tag(slug("tag-cred"));
     h.stores
@@ -199,6 +212,7 @@ async fn a_credential_used_by_a_call_appears_in_neither_the_list_nor_the_detail_
     h.stores
         .endpoint()
         .create(&EndpointDef {
+            owner_id: h.admin_id,
             slug: slug("ep-cred"),
             tag_expr: TagExpr::Has(tag),
             write_ceiling: Access::Read,

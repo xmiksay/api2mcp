@@ -15,6 +15,8 @@
 
 use std::collections::BTreeSet;
 
+use uuid::Uuid;
+
 use crate::model::{
     Access, AuthKind, AuthProvider, Budgets, Cardinality, Origin, Pagination, Param, ParamLocation,
     ParamType, Projection, ProjectionField, Service, Slug, Tag,
@@ -225,7 +227,7 @@ pub fn service_to_pack(s: &Service) -> PackService {
     }
 }
 
-pub fn service_from_pack(slug: Slug, s: &PackService) -> Result<Service, String> {
+pub fn service_from_pack(owner_id: Uuid, slug: Slug, s: &PackService) -> Result<Service, String> {
     let base_url = parse_url(&s.base_url)?;
     let origin_allowlist = s
         .origin_allowlist
@@ -233,6 +235,7 @@ pub fn service_from_pack(slug: Slug, s: &PackService) -> Result<Service, String>
         .map(|o| parse_origin(o))
         .collect::<Result<BTreeSet<_>, _>>()?;
     Ok(Service {
+        owner_id,
         slug,
         base_url,
         origin_allowlist,
@@ -272,11 +275,13 @@ pub fn auth_provider_to_pack(p: &AuthProvider) -> PackAuthProvider {
 }
 
 pub fn auth_provider_from_pack(
+    owner_id: Uuid,
     slug: Slug,
     service_slug: Slug,
     p: &PackAuthProvider,
 ) -> Result<AuthProvider, String> {
     Ok(AuthProvider {
+        owner_id,
         slug,
         service_slug,
         kind: auth_kind_from_pack(p.kind),
@@ -331,8 +336,10 @@ mod tests {
 
     #[test]
     fn service_round_trips_through_pack_shape() {
+        let owner_id = Uuid::new_v4();
         let base_url: url::Url = "https://svc.example.com/".parse().unwrap();
         let service = Service {
+            owner_id,
             slug: "svc".parse().unwrap(),
             base_url: base_url.clone(),
             origin_allowlist: BTreeSet::from([Origin::of(&base_url).unwrap()]),
@@ -343,7 +350,7 @@ mod tests {
             max_response_bytes: 1_000_000,
         };
         let pack = service_to_pack(&service);
-        let back = service_from_pack(service.slug.clone(), &pack).unwrap();
+        let back = service_from_pack(owner_id, service.slug.clone(), &pack).unwrap();
         assert_eq!(back, service);
     }
 

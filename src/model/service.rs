@@ -5,11 +5,16 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
+use uuid::Uuid;
+
 use super::origin::Origin;
 use super::slug::Slug;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Service {
+    /// The user who created this service. A user owns everything they create and can use only
+    /// their own — `slug` is unique per owner (`UNIQUE(owner_id, slug)`), not globally.
+    pub owner_id: Uuid,
     pub slug: Slug,
     pub base_url: url::Url,
     /// Origins any of this service's api_calls may resolve to. Design correction #7: publish-time

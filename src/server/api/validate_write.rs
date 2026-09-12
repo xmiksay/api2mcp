@@ -21,6 +21,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use uuid::Uuid;
+
 use crate::pack::{Pack, PackApiCall, PackAuthProvider, PackEndpoint, PackScript, PackService};
 use crate::store::{StoreError, Stores};
 
@@ -43,10 +45,12 @@ pub enum PendingChange {
     RemoveEndpoint(String),
 }
 
-/// Builds a [`Pack`] holding every definition currently in the database — the "current state of
-/// the world" a pending change is validated against.
-pub async fn build_full_pack(stores: &Stores) -> Result<Pack, StoreError> {
-    let services = stores.service().list().await?;
+/// Builds a [`Pack`] holding every definition `owner_id` owns — the "current state of the
+/// world" a pending change is validated against. Scoped to one owner, not the whole database:
+/// a user owns everything they create and can use only their own, so the snapshot a form
+/// submission is checked against must never let another owner's slugs or references leak in.
+pub async fn build_full_pack(stores: &Stores, owner_id: Uuid) -> Result<Pack, StoreError> {
+    let services = stores.service().list(owner_id).await?;
     let mut services_map = BTreeMap::new();
     for svc in &services {
         services_map.insert(
@@ -56,16 +60,16 @@ pub async fn build_full_pack(stores: &Stores) -> Result<Pack, StoreError> {
     }
 
     let mut auth_providers = BTreeMap::new();
-    for p in stores.auth_provider().list_all().await? {
+    for p in stores.auth_provider().list_all(owner_id).await? {
         auth_providers.insert(
             p.slug.as_str().to_owned(),
             super::convert::auth_provider_to_pack(&p),
         );
     }
 
-    let tagged_calls = stores.api_call().list_all().await?;
-    let tagged_scripts = stores.script().list_all().await?;
-    let endpoints = stores.endpoint().list_all().await?;
+    let tagged_calls = stores.api_call().list_all(owner_id).await?;
+    let tagged_scripts = stores.script().list_all(owner_id).await?;
+    let endpoints = stores.endpoint().list_all(owner_id).await?;
 
     let mut api_calls = BTreeMap::new();
     let mut tags: BTreeSet<String> = BTreeSet::new();
@@ -153,8 +157,12 @@ fn apply_change(pack: &mut Pack, change: PendingChange) {
 /// the result. `Ok(())` means the change is safe to persist; `Err` carries every failure found,
 /// each already rendered to a message safe to return to a client (`pack::ValidationError`'s
 /// `Display`, which never formats a credential — see that type's own tests).
-pub async fn validate_change(stores: &Stores, change: PendingChange) -> Result<(), Vec<String>> {
-    let mut pack = build_full_pack(stores)
+pub async fn validate_change(
+    stores: &Stores,
+    owner_id: Uuid,
+    change: PendingChange,
+) -> Result<(), Vec<String>> {
+    let mut pack = build_full_pack(stores, owner_id)
         .await
         .map_err(|e| vec![e.to_string()])?;
     apply_change(&mut pack, change);
@@ -186,8 +194,10 @@ mod tests {
             return;
         };
         let stores = Stores::new(db.db.clone());
+        let owner_id = db.create_user().await.unwrap();
         let result = validate_change(
             &stores,
+            owner_id,
             PendingChange::UpsertService("svc-validate-write".to_owned(), service_body()),
         )
         .await;
@@ -202,10 +212,12 @@ mod tests {
             return;
         };
         let stores = Stores::new(db.db.clone());
+        let owner_id = db.create_user().await.unwrap();
         let mut body = service_body();
         body.origin_allowlist = BTreeSet::new();
         let result = validate_change(
             &stores,
+            owner_id,
             PendingChange::UpsertService("svc-validate-write-bad".to_owned(), body),
         )
         .await;

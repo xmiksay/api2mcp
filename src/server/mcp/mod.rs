@@ -115,10 +115,12 @@ async fn dispatch_method(
     req: JsonRpcRequest,
 ) -> JsonRpcResponse {
     match req.method.as_str() {
-        "initialize" => match resolve_plan(state, endpoint_slug, endpoint_grants, &req.id).await {
-            Ok(plan) => JsonRpcResponse::success(req.id, initialize_result(&plan)),
-            Err(resp) => resp,
-        },
+        "initialize" => {
+            match resolve_plan(state, endpoint_slug, caller, endpoint_grants, &req.id).await {
+                Ok(plan) => JsonRpcResponse::success(req.id, initialize_result(&plan)),
+                Err(resp) => resp,
+            }
+        }
         "tools/list" | "tools/call" => {
             // No scope check: `caller` already passed `authenticate_mcp` to get here — an
             // OAuth access token or a resolved, unrevoked, unexpired service token, either of
@@ -127,10 +129,11 @@ async fn dispatch_method(
             // doc) — there is no longer a distinct credential kind to exclude. The endpoint
             // restriction (as opposed to a blanket "may call tools") is enforced inside
             // `resolve_plan`, below.
-            let plan = match resolve_plan(state, endpoint_slug, endpoint_grants, &req.id).await {
-                Ok(plan) => plan,
-                Err(resp) => return resp,
-            };
+            let plan =
+                match resolve_plan(state, endpoint_slug, caller, endpoint_grants, &req.id).await {
+                    Ok(plan) => plan,
+                    Err(resp) => return resp,
+                };
             if req.method == "tools/list" {
                 handlers::tools_list(req.id, &plan)
             } else {
@@ -152,6 +155,7 @@ async fn dispatch_method(
 async fn resolve_plan(
     state: &AppState,
     endpoint_slug: &str,
+    caller: &Caller,
     endpoint_grants: &EndpointGrants,
     id: &Option<Value>,
 ) -> Result<Arc<EndpointPlan>, JsonRpcResponse> {
@@ -167,9 +171,12 @@ async fn resolve_plan(
     if !endpoint_grants.allows(&slug) {
         return Err(build_endpoint_not_found(id, &slug));
     }
+    // Ownership and endpoint grants compose: `caller.id` (the token's or session's owner) scopes
+    // the lookup to that owner's own definitions, so another owner's endpoint of the same slug
+    // resolves to exactly the same not-found response as one that doesn't exist at all.
     state
         .plans
-        .get_or_build(&state.stores(), &slug)
+        .get_or_build(&state.stores(), caller.id, &slug)
         .await
         .map_err(|e| JsonRpcResponse::error(id.clone(), -32001, redact_message(&e.to_string())))
 }

@@ -59,6 +59,7 @@ mod tests {
             allowlist.insert(Origin::of(&base_url).unwrap());
         }
         Service {
+            owner_id: uuid::Uuid::nil(),
             slug: slug.parse().unwrap(),
             base_url,
             origin_allowlist: allowlist,
@@ -73,6 +74,7 @@ mod tests {
     fn planned(service: Service, call_slug: &str) -> PlannedApiCall {
         let origin = Origin::of(&service.base_url).unwrap();
         let api_call = ApiCall {
+            owner_id: uuid::Uuid::nil(),
             slug: call_slug.parse().unwrap(),
             service_slug: service.slug.clone(),
             auth_provider_slug: None,

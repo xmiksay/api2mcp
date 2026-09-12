@@ -102,41 +102,52 @@ async fn up_down_up_round_trips() -> Result<()> {
     db.teardown().await
 }
 
-/// `api_calls.slug` is `UNIQUE` globally (`ux_api_calls_slug`), not per-service — a bare
-/// slug is what `script_api_calls`, `endpoint_aliases.target_slug` and pack import/export
-/// all reference, so two services defining the same slug must be a constraint violation,
-/// not a runtime ambiguity `store::api_call` has to resolve after the fact.
+/// `api_calls.slug` is `UNIQUE` per owner (`ux_api_calls_owner_slug`), not per-service — a
+/// bare slug is what `script_api_calls`, `endpoint_aliases.target_slug` and pack import/
+/// export all reference, so two services *belonging to the same owner* defining the same
+/// slug must be a constraint violation, not a runtime ambiguity `store::api_call` has to
+/// resolve after the fact. (Two different owners defining the same slug is fine — that is
+/// the whole point of per-owner uniqueness — so this test pins the narrower, still-true
+/// half of the old "globally unique" claim.)
 #[tokio::test]
-async fn api_call_slug_is_unique_across_services() -> Result<()> {
+async fn api_call_slug_is_unique_across_services_for_the_same_owner() -> Result<()> {
     let Some(db) = ScratchDb::create().await? else {
         eprintln!("TEST_DATABASE_URL unset — skipping");
         return Ok(());
     };
     db.migrate_up().await?;
     let stores = Stores::new(db.conn.clone());
+    let owner_id = db.create_user().await?;
 
-    let a = sample_service("dup-slug-svc-a");
-    let b = sample_service("dup-slug-svc-b");
+    let a = sample_service(owner_id, "dup-slug-svc-a");
+    let b = sample_service(owner_id, "dup-slug-svc-b");
     stores.service().create(&a).await?;
     stores.service().create(&b).await?;
 
     stores
         .api_call()
-        .create(&sample_api_call(&a.slug, "shared"), &BTreeSet::new())
+        .create(
+            &sample_api_call(owner_id, &a.slug, "shared"),
+            &BTreeSet::new(),
+        )
         .await?;
     let err = stores
         .api_call()
-        .create(&sample_api_call(&b.slug, "shared"), &BTreeSet::new())
+        .create(
+            &sample_api_call(owner_id, &b.slug, "shared"),
+            &BTreeSet::new(),
+        )
         .await
-        .expect_err("a globally-unique slug must reject a second service reusing it");
+        .expect_err("an owner-unique slug must reject a second service reusing it");
     assert!(matches!(err, StoreError::Db), "got {err:?} instead");
 
     db.teardown().await
 }
 
-fn sample_service(name: &str) -> Service {
+fn sample_service(owner_id: uuid::Uuid, name: &str) -> Service {
     let base_url: url::Url = format!("https://{name}.example.com/").parse().unwrap();
     Service {
+        owner_id,
         slug: name.parse().unwrap(),
         base_url: base_url.clone(),
         origin_allowlist: BTreeSet::from([Origin::of(&base_url).unwrap()]),
@@ -148,8 +159,9 @@ fn sample_service(name: &str) -> Service {
     }
 }
 
-fn sample_api_call(service_slug: &Slug, name: &str) -> ApiCall {
+fn sample_api_call(owner_id: uuid::Uuid, service_slug: &Slug, name: &str) -> ApiCall {
     ApiCall {
+        owner_id,
         slug: name.parse().unwrap(),
         service_slug: service_slug.clone(),
         auth_provider_slug: None,

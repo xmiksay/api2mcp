@@ -16,6 +16,7 @@ use serde_json::json;
 
 use api2mcp::model::{Access, ApiCall, EndpointDef, Origin, Pagination, Service, Tag, TagExpr};
 use api2mcp::store::Stores;
+use uuid::Uuid;
 
 use api_support::{admin, anonymous, bearer, setup};
 
@@ -23,11 +24,12 @@ fn slug(s: &str) -> api2mcp::model::Slug {
     s.parse().expect("valid slug")
 }
 
-/// Seeds one service, one tagged api_call, and one endpoint selecting it — enough for
-/// `GET .../plan` to have something real to resolve.
-async fn seed_minimal(stores: &Stores) -> Result<()> {
+/// Seeds one service, one tagged api_call, and one endpoint selecting it, all owned by
+/// `owner_id` — enough for `GET .../plan` to have something real to resolve.
+async fn seed_minimal(stores: &Stores, owner_id: Uuid) -> Result<()> {
     let base_url: url::Url = "https://svc-api-read.example.com/".parse()?;
     let service = Service {
+        owner_id,
         slug: slug("svc-api-read"),
         base_url: base_url.clone(),
         origin_allowlist: BTreeSet::from([Origin::of(&base_url)?]),
@@ -40,6 +42,7 @@ async fn seed_minimal(stores: &Stores) -> Result<()> {
     stores.service().create(&service).await?;
 
     let call = ApiCall {
+        owner_id,
         slug: slug("call-api-read"),
         service_slug: service.slug.clone(),
         auth_provider_slug: None,
@@ -62,6 +65,7 @@ async fn seed_minimal(stores: &Stores) -> Result<()> {
         .await?;
 
     let endpoint = EndpointDef {
+        owner_id,
         slug: slug("ep-api-read"),
         tag_expr: TagExpr::Has(Tag(slug("read-tag"))),
         write_ceiling: Access::Read,
@@ -130,7 +134,7 @@ async fn list_tags_reflects_seeded_tags() -> Result<()> {
     let Some(h) = setup().await? else {
         return Ok(());
     };
-    seed_minimal(&h.stores).await?;
+    seed_minimal(&h.stores, h.admin_id).await?;
 
     let (status, body) = admin(&h, Method::GET, "/api/tags", None).await;
     assert_eq!(status, StatusCode::OK);
@@ -150,7 +154,7 @@ async fn endpoint_plan_exposes_tools_and_the_reachable_origin_set() -> Result<()
     let Some(h) = setup().await? else {
         return Ok(());
     };
-    seed_minimal(&h.stores).await?;
+    seed_minimal(&h.stores, h.admin_id).await?;
 
     let (status, body) = admin(&h, Method::GET, "/api/endpoints/ep-api-read/plan", None).await;
     assert_eq!(status, StatusCode::OK, "body: {body:?}");
@@ -182,7 +186,7 @@ async fn runs_list_is_empty_before_anything_ran_and_a_missing_run_id_is_404() ->
     let Some(h) = setup().await? else {
         return Ok(());
     };
-    seed_minimal(&h.stores).await?;
+    seed_minimal(&h.stores, h.admin_id).await?;
 
     let (status, body) = admin(&h, Method::GET, "/api/runs?endpoint=ep-api-read", None).await;
     assert_eq!(status, StatusCode::OK);

@@ -112,6 +112,7 @@ mod tests {
 
     fn service(slug: &str) -> Service {
         Service {
+            owner_id: uuid::Uuid::nil(),
             slug: Slug::from_str(slug).expect("valid slug"),
             base_url: url::Url::parse("https://api.example.com").expect("valid url"),
             origin_allowlist: BTreeSet::new(),

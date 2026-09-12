@@ -25,7 +25,7 @@ pub struct HealthView {
 
 pub async fn health(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
 ) -> Result<Json<HealthView>, ApiError> {
     let db_connected = state.db.ping().await.is_ok();
     // A migration query only makes sense once connectivity is established — probing it on a
@@ -38,11 +38,13 @@ pub async fn health(
     } else {
         0
     };
+    // Scoped to the caller's own endpoints, same as every other read in `server::api` — there is
+    // no more a system-wide "every endpoint" count to report than there is a system-wide list.
     let endpoint_count = if db_connected {
         state
             .stores()
             .endpoint()
-            .list_all()
+            .list_all(caller.id)
             .await
             .map(|rows| rows.len())
             .unwrap_or(0)

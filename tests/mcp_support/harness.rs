@@ -36,6 +36,7 @@ pub struct Harness {
     pub stores: Stores,
     pub router: Router,
     pub token: String,
+    pub owner_id: uuid::Uuid,
 }
 
 pub async fn setup() -> Result<Option<Harness>> {
@@ -82,7 +83,7 @@ pub async fn setup() -> Result<Option<Harness>> {
     svc.base_url = fixture.base_url().to_string();
     svc.origin_allowlist = BTreeSet::from([fixture.base_url().to_string()]);
     pack::validate(&demo).expect("patched demo pack is still valid");
-    pack::import(&stores, &demo, false).await?;
+    pack::import(&stores, &demo, false, user.id).await?;
 
     let cfg = Config::from_lookup(|k| match k {
         "DATABASE_URL" => Some("postgres://unused/unused".to_owned()),
@@ -103,6 +104,7 @@ pub async fn setup() -> Result<Option<Harness>> {
         stores,
         router,
         token: minted.plaintext,
+        owner_id: user.id,
     }))
 }
 

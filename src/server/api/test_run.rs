@@ -70,11 +70,12 @@ fn to_status_view(status: RunStatus) -> RunStatusView {
 
 pub async fn resolve_plan(
     state: &AppState,
+    owner_id: Uuid,
     endpoint_slug: &Slug,
 ) -> Result<Arc<EndpointPlan>, ApiError> {
     state
         .plans
-        .get_or_build(&state.stores(), endpoint_slug)
+        .get_or_build(&state.stores(), owner_id, endpoint_slug)
         .await
         .map_err(|e| match e {
             ResolveError::EndpointNotFound { .. } => ApiError::NotFound(e.to_string()),
@@ -119,7 +120,7 @@ pub async fn run_api_call_test(
     args: Value,
     caller: &Caller,
 ) -> Result<ApiCallTestResult, ApiError> {
-    let plan = resolve_plan(state, endpoint_slug).await?;
+    let plan = resolve_plan(state, caller.id, endpoint_slug).await?;
     let tool = find_tool(&plan, false, api_call_slug).ok_or_else(|| {
         ApiError::NotFound(format!(
             "api_call {:?} is not exposed by endpoint {:?}",
@@ -140,7 +141,7 @@ pub async fn run_api_call_test(
         .await
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
-    let raw = last_run_call(&state.stores(), result.run_id)
+    let raw = last_run_call(&state.stores(), caller.id, result.run_id)
         .await?
         .and_then(|c| c.response_body);
 
@@ -155,11 +156,12 @@ pub async fn run_api_call_test(
 
 async fn last_run_call(
     stores: &Stores,
+    owner_id: Uuid,
     run_id: Uuid,
 ) -> Result<Option<crate::store::RunCall>, ApiError> {
     let found = stores
         .run()
-        .get(run_id)
+        .get(owner_id, run_id)
         .await
         .map_err(ApiError::from_store)?;
     Ok(found.and_then(|(_, calls)| calls.into_iter().next_back()))
@@ -199,7 +201,7 @@ pub async fn run_script_test(
     args: Value,
     caller: &Caller,
 ) -> Result<ScriptTestResult, ApiError> {
-    let plan = resolve_plan(state, endpoint_slug).await?;
+    let plan = resolve_plan(state, caller.id, endpoint_slug).await?;
     let tool = find_tool(&plan, true, script_slug).ok_or_else(|| {
         ApiError::NotFound(format!(
             "script {:?} is not exposed by endpoint {:?}",
@@ -261,7 +263,7 @@ pub async fn run_script_test(
     .await
     .map_err(ApiError::from_store)?;
 
-    let calls = script_call_views(&stores, run_id).await?;
+    let calls = script_call_views(&stores, caller.id, run_id).await?;
     let status_view = to_status_view(status);
 
     Ok(match outcome {
@@ -289,10 +291,14 @@ fn to_script_failure(err: RunScriptError) -> ScriptFailure {
     }
 }
 
-async fn script_call_views(stores: &Stores, run_id: Uuid) -> Result<Vec<ScriptCallView>, ApiError> {
+async fn script_call_views(
+    stores: &Stores,
+    owner_id: Uuid,
+    run_id: Uuid,
+) -> Result<Vec<ScriptCallView>, ApiError> {
     let found = stores
         .run()
-        .get(run_id)
+        .get(owner_id, run_id)
         .await
         .map_err(ApiError::from_store)?;
     let calls = found.map(|(_, calls)| calls).unwrap_or_default();

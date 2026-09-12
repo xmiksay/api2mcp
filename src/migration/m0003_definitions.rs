@@ -8,17 +8,27 @@
 //! plan's literal `TEXT[]`, for the same `postgres-array`-feature reason as m0001's
 //! `service_tokens.scopes`.
 //!
-//! `auth_providers.slug` and `api_calls.slug` are `UNIQUE` globally, not per-service: a
-//! bare slug is what `script_api_calls`, `endpoint_aliases.target_slug` and
+//! `auth_providers.slug` and `api_calls.slug` are `UNIQUE` per **owner**, not per-service and
+//! not globally: a bare slug is what `script_api_calls`, `endpoint_aliases.target_slug` and
 //! `endpoint_auth_providers` all reference, and pack import/export round-trips the same
-//! bare form. A per-service index would make that reference ambiguous whenever two
-//! services defined the same slug — a runtime failure standing in for a constraint the
-//! database can enforce outright. Slugs are already service-qualified by convention
-//! (`gitlab.mr.list`), so global uniqueness costs nothing in practice.
+//! bare form — but two different people defining the same slug (`demo`) must both succeed,
+//! since each owns their own namespace. `owner_id` is therefore a real column on every table
+//! here (`services`, `auth_providers`, `api_calls`), not something inferred through a join —
+//! each aggregate is independently owned, so a direct column lets every store method filter on
+//! it without walking a foreign key first. Amended into this migration (not a new one) because
+//! the branch that added the skeleton is unmerged and nothing built on it is deployed yet.
 
 use sea_orm_migration::prelude::*;
 
 use super::helpers::{timestamptz_now, uuid_col, uuid_col_null, uuid_pk};
+
+/// Redeclared from `m0001_init`'s own table, not imported — see `migration`'s module doc for
+/// why every migration keeps its own copy of any `Iden` enum it needs.
+#[derive(DeriveIden)]
+enum Users {
+    Table,
+    Id,
+}
 
 pub struct Migration;
 
@@ -32,6 +42,7 @@ impl MigrationName for Migration {
 enum Services {
     Table,
     Id,
+    OwnerId,
     Slug,
     BaseUrl,
     OriginAllowlist,
@@ -48,6 +59,7 @@ enum Services {
 enum AuthProviders {
     Table,
     Id,
+    OwnerId,
     ServiceId,
     Slug,
     Kind,
@@ -65,6 +77,7 @@ enum AuthProviders {
 enum ApiCalls {
     Table,
     Id,
+    OwnerId,
     ServiceId,
     AuthProviderId,
     Slug,
@@ -109,6 +122,7 @@ impl MigrationTrait for Migration {
                     .table(Services::Table)
                     .if_not_exists()
                     .col(uuid_pk(Services::Id))
+                    .col(uuid_col(Services::OwnerId))
                     .col(ColumnDef::new(Services::Slug).text().not_null())
                     .col(ColumnDef::new(Services::BaseUrl).text().not_null())
                     .col(
@@ -140,14 +154,22 @@ impl MigrationTrait for Migration {
                     )
                     .col(timestamptz_now(Services::CreatedAt))
                     .col(timestamptz_now(Services::UpdatedAt))
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_services_owner")
+                            .from(Services::Table, Services::OwnerId)
+                            .to(Users::Table, Users::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
                     .to_owned(),
             )
             .await?;
         manager
             .create_index(
                 Index::create()
-                    .name("ux_services_slug")
+                    .name("ux_services_owner_slug")
                     .table(Services::Table)
+                    .col(Services::OwnerId)
                     .col(Services::Slug)
                     .unique()
                     .to_owned(),
@@ -160,6 +182,7 @@ impl MigrationTrait for Migration {
                     .table(AuthProviders::Table)
                     .if_not_exists()
                     .col(uuid_pk(AuthProviders::Id))
+                    .col(uuid_col(AuthProviders::OwnerId))
                     .col(uuid_col(AuthProviders::ServiceId))
                     .col(ColumnDef::new(AuthProviders::Slug).text().not_null())
                     .col(ColumnDef::new(AuthProviders::Kind).text().not_null())
@@ -187,14 +210,22 @@ impl MigrationTrait for Migration {
                             .to(Services::Table, Services::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_auth_providers_owner")
+                            .from(AuthProviders::Table, AuthProviders::OwnerId)
+                            .to(Users::Table, Users::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
                     .to_owned(),
             )
             .await?;
         manager
             .create_index(
                 Index::create()
-                    .name("ux_auth_providers_slug")
+                    .name("ux_auth_providers_owner_slug")
                     .table(AuthProviders::Table)
+                    .col(AuthProviders::OwnerId)
                     .col(AuthProviders::Slug)
                     .unique()
                     .to_owned(),
@@ -207,6 +238,7 @@ impl MigrationTrait for Migration {
                     .table(ApiCalls::Table)
                     .if_not_exists()
                     .col(uuid_pk(ApiCalls::Id))
+                    .col(uuid_col(ApiCalls::OwnerId))
                     .col(uuid_col(ApiCalls::ServiceId))
                     .col(uuid_col_null(ApiCalls::AuthProviderId))
                     .col(ColumnDef::new(ApiCalls::Slug).text().not_null())
@@ -268,14 +300,22 @@ impl MigrationTrait for Migration {
                             .to(AuthProviders::Table, AuthProviders::Id)
                             .on_delete(ForeignKeyAction::SetNull),
                     )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_api_calls_owner")
+                            .from(ApiCalls::Table, ApiCalls::OwnerId)
+                            .to(Users::Table, Users::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
                     .to_owned(),
             )
             .await?;
         manager
             .create_index(
                 Index::create()
-                    .name("ux_api_calls_slug")
+                    .name("ux_api_calls_owner_slug")
                     .table(ApiCalls::Table)
+                    .col(ApiCalls::OwnerId)
                     .col(ApiCalls::Slug)
                     .unique()
                     .to_owned(),

@@ -103,7 +103,7 @@ fn summary_view(s: &RunSummary) -> RunSummaryView {
 
 async fn list(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
     Query(q): Query<RunsQuery>,
 ) -> Result<Json<Vec<RunSummaryView>>, ApiError> {
     let endpoint_slug = q
@@ -122,7 +122,7 @@ async fn list(
     let runs = state
         .stores()
         .run()
-        .list(&filter)
+        .list(caller.id, &filter)
         .await
         .map_err(ApiError::from_store)?;
     Ok(Json(runs.iter().map(summary_view).collect()))
@@ -196,13 +196,13 @@ struct RunDetailView {
 
 async fn get_one(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
     Path(id): Path<Uuid>,
 ) -> Result<Json<RunDetailView>, ApiError> {
     let (detail, calls) = state
         .stores()
         .run()
-        .get(id)
+        .get(caller.id, id)
         .await
         .map_err(ApiError::from_store)?
         .ok_or_else(|| ApiError::NotFound(format!("run {id} not found")))?;

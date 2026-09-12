@@ -6,6 +6,8 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
+use uuid::Uuid;
+
 use super::api_call::Access;
 use super::budget::Budgets;
 use super::slug::Slug;
@@ -21,6 +23,10 @@ pub enum EndpointTarget {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EndpointDef {
+    /// The user who created this endpoint. See `model::Service::owner_id`. Every alias target
+    /// and every entry in `auth_providers` must belong to this same owner (enforced at write
+    /// time, `store::endpoint`).
+    pub owner_id: Uuid,
     pub slug: Slug,
     pub tag_expr: TagExpr,
     /// The highest `Access` any api_call/script selected by this endpoint may declare.

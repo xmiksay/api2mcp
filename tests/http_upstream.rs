@@ -196,6 +196,7 @@ async fn a_redirect_to_a_different_allowlisted_origin_does_not_carry_the_first_o
     service.origin_allowlist = BTreeSet::from([origin_a_id.clone(), origin_b_id]);
 
     let provider = AuthProvider {
+        owner_id: uuid::Uuid::nil(),
         slug: slug("demo-auth"),
         service_slug: service.slug.clone(),
         kind: AuthKind::StaticHeader,
@@ -291,6 +292,7 @@ async fn static_dns_pointing_the_service_hostname_at_a_metadata_ip_fails_at_conn
         .expect("valid url");
     let origin = Origin::of(&base_url).expect("valid origin");
     let service = Service {
+        owner_id: uuid::Uuid::nil(),
         slug: slug("spoofed"),
         base_url: base_url.clone(),
         origin_allowlist: BTreeSet::from([origin]),

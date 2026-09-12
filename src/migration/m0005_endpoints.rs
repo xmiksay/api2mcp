@@ -10,10 +10,20 @@
 //! named it (`fk_service_token_endpoints_endpoint`) rather than leaving one dangling.
 //! Amended into this migration (not a new one) because the branch that added self-service
 //! tokens is unmerged and nothing built on it is deployed yet.
+//!
+//! `endpoints.owner_id` is a real column, same reasoning as `m0003_definitions`'s own doc —
+//! amended in here for the same unmerged-branch reason.
 
 use sea_orm_migration::prelude::*;
 
 use super::helpers::{timestamptz_now, uuid_col, uuid_pk};
+
+/// Redeclared from `m0001_init`'s own table — see `migration`'s module doc.
+#[derive(DeriveIden)]
+enum Users {
+    Table,
+    Id,
+}
 
 pub struct Migration;
 
@@ -33,6 +43,7 @@ enum AuthProviders {
 enum Endpoints {
     Table,
     Id,
+    OwnerId,
     Slug,
     TagExpr,
     WriteCeiling,
@@ -84,6 +95,7 @@ impl MigrationTrait for Migration {
                     .table(Endpoints::Table)
                     .if_not_exists()
                     .col(uuid_pk(Endpoints::Id))
+                    .col(uuid_col(Endpoints::OwnerId))
                     .col(ColumnDef::new(Endpoints::Slug).text().not_null())
                     .col(ColumnDef::new(Endpoints::TagExpr).text().not_null())
                     .col(
@@ -108,14 +120,22 @@ impl MigrationTrait for Migration {
                     .col(timestamptz_now(Endpoints::CreatedAt))
                     .col(timestamptz_now(Endpoints::UpdatedAt))
                     .check(Expr::col(Endpoints::WriteCeiling).is_in(["read", "write"]))
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_endpoints_owner")
+                            .from(Endpoints::Table, Endpoints::OwnerId)
+                            .to(Users::Table, Users::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
                     .to_owned(),
             )
             .await?;
         manager
             .create_index(
                 Index::create()
-                    .name("ux_endpoints_slug")
+                    .name("ux_endpoints_owner_slug")
                     .table(Endpoints::Table)
+                    .col(Endpoints::OwnerId)
                     .col(Endpoints::Slug)
                     .unique()
                     .to_owned(),

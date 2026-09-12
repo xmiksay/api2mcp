@@ -136,9 +136,14 @@ pub async fn execute(
     })
 }
 
-pub async fn run(name: &str, arg_pairs: &[String], endpoint: Option<&str>) -> Result<()> {
+pub async fn run(
+    name: &str,
+    arg_pairs: &[String],
+    endpoint: Option<&str>,
+    user: Option<&str>,
+) -> Result<()> {
     let args = Value::Object(crate::cli::parse_args(arg_pairs)?);
-    let (stores, pool, policy, plan) = call::setup(endpoint).await?;
+    let (stores, pool, policy, plan) = call::setup(endpoint, user).await?;
     let outcome = execute(&stores, &pool, policy, &plan, name, args).await?;
 
     println!("run_id: {}", outcome.run_id);

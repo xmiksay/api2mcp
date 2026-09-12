@@ -4,6 +4,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 
+use uuid::Uuid;
+
 use crate::model::{ApiCall, EndpointDef, EndpointTarget, ScriptDef, Slug, Tag};
 use crate::resolve::tag_expr;
 
@@ -35,6 +37,7 @@ pub(crate) fn api_call_to_pack(c: &ApiCall, tags: &BTreeSet<Tag>) -> PackApiCall
 }
 
 pub(crate) fn api_call_from_pack(
+    owner_id: Uuid,
     slug: Slug,
     service_slug: Slug,
     auth_provider_slug: Option<Slug>,
@@ -43,6 +46,7 @@ pub(crate) fn api_call_from_pack(
     let method = http::Method::from_str(&c.method)
         .map_err(|e| ConvertError::Method(c.method.clone(), e.to_string()))?;
     Ok(ApiCall {
+        owner_id,
         slug,
         service_slug,
         auth_provider_slug,
@@ -84,13 +88,18 @@ pub(crate) fn script_to_pack(s: &ScriptDef, tags: &BTreeSet<Tag>) -> PackScript 
     }
 }
 
-pub(crate) fn script_from_pack(slug: Slug, s: &PackScript) -> Result<ScriptDef, ConvertError> {
+pub(crate) fn script_from_pack(
+    owner_id: Uuid,
+    slug: Slug,
+    s: &PackScript,
+) -> Result<ScriptDef, ConvertError> {
     let callable = s
         .callable
         .iter()
         .map(|(alias, target)| Ok((alias.clone(), parse_slug(target)?)))
         .collect::<Result<BTreeMap<_, _>, ConvertError>>()?;
     Ok(ScriptDef {
+        owner_id,
         slug,
         source: s.source.clone(),
         params: s
@@ -139,6 +148,7 @@ pub(crate) fn endpoint_to_pack(e: &EndpointDef) -> PackEndpoint {
 }
 
 pub(crate) fn endpoint_from_pack(
+    owner_id: Uuid,
     slug: Slug,
     e: &PackEndpoint,
 ) -> Result<EndpointDef, ConvertError> {
@@ -155,6 +165,7 @@ pub(crate) fn endpoint_from_pack(
         .map(|s| parse_slug(s))
         .collect::<Result<BTreeSet<_>, _>>()?;
     Ok(EndpointDef {
+        owner_id,
         slug,
         tag_expr,
         write_ceiling: access_from_str(&e.write_ceiling)?,

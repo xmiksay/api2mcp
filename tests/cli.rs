@@ -25,6 +25,7 @@ use api2mcp::pack::{self, Pack};
 use api2mcp::resolve::{EndpointPlan, build_plan};
 use api2mcp::script::RunScriptError;
 use api2mcp::store::{RunStatus, Stores};
+use uuid::Uuid;
 
 use common::ScratchDb;
 use fixture::harness::loopback_pool;
@@ -43,12 +44,13 @@ fn policy() -> SsrfPolicy {
 /// Seeds a scratch database from `examples/demo.pack.yaml` patched to point at `f`, and resolves
 /// the "demo" endpoint. Returns `None` when `TEST_DATABASE_URL` is unset — every test using this
 /// must check that case and return early, same convention as `tests/common::ScratchDb`.
-async fn seed(f: &Fixture) -> Result<Option<(ScratchDb, Stores, EndpointPlan)>> {
+async fn seed(f: &Fixture) -> Result<Option<(ScratchDb, Stores, EndpointPlan, Uuid)>> {
     let Some(db) = ScratchDb::create().await? else {
         return Ok(None);
     };
     db.migrate_up().await?;
     let stores = Stores::new(db.conn.clone());
+    let owner = db.create_user().await?;
 
     f.set(
         "/items/1",
@@ -71,16 +73,16 @@ async fn seed(f: &Fixture) -> Result<Option<(ScratchDb, Stores, EndpointPlan)>> 
     svc.base_url = f.base_url().to_string();
     svc.origin_allowlist = BTreeSet::from([f.base_url().to_string()]);
     pack::validate(&demo).expect("patched demo pack is still valid");
-    pack::import(&stores, &demo, false).await?;
+    pack::import(&stores, &demo, false, owner).await?;
 
-    let plan = build_plan(&stores, &slug("demo")).await?;
-    Ok(Some((db, stores, plan)))
+    let plan = build_plan(&stores, owner, &slug("demo")).await?;
+    Ok(Some((db, stores, plan, owner)))
 }
 
 #[tokio::test]
 async fn call_prints_the_projected_value_and_raw_shows_what_it_dropped() -> Result<()> {
     let f = Fixture::start().await;
-    let Some((db, stores, plan)) = seed(&f).await? else {
+    let Some((db, stores, plan, owner)) = seed(&f).await? else {
         eprintln!("TEST_DATABASE_URL unset — skipping");
         return Ok(());
     };
@@ -110,7 +112,7 @@ async fn call_prints_the_projected_value_and_raw_shows_what_it_dropped() -> Resu
 
     let (summary, _calls) = stores
         .run()
-        .get(outcome.run_id)
+        .get(owner, outcome.run_id)
         .await?
         .expect("the run was recorded");
     assert_eq!(summary.summary.tool_name, "get-item");
@@ -122,7 +124,7 @@ async fn call_prints_the_projected_value_and_raw_shows_what_it_dropped() -> Resu
 #[tokio::test]
 async fn call_on_an_unknown_slug_fails_cleanly_instead_of_panicking() -> Result<()> {
     let f = Fixture::start().await;
-    let Some((db, stores, plan)) = seed(&f).await? else {
+    let Some((db, stores, plan, _owner)) = seed(&f).await? else {
         eprintln!("TEST_DATABASE_URL unset — skipping");
         return Ok(());
     };
@@ -139,7 +141,7 @@ async fn call_on_an_unknown_slug_fails_cleanly_instead_of_panicking() -> Result<
 #[tokio::test]
 async fn call_on_a_script_tool_fails_cleanly_rather_than_dispatching_it() -> Result<()> {
     let f = Fixture::start().await;
-    let Some((db, stores, plan)) = seed(&f).await? else {
+    let Some((db, stores, plan, _owner)) = seed(&f).await? else {
         eprintln!("TEST_DATABASE_URL unset — skipping");
         return Ok(());
     };
@@ -157,7 +159,7 @@ async fn call_on_a_script_tool_fails_cleanly_rather_than_dispatching_it() -> Res
 #[tokio::test]
 async fn script_run_composes_two_api_calls_in_input_order_with_a_breakdown() -> Result<()> {
     let f = Fixture::start().await;
-    let Some((db, stores, plan)) = seed(&f).await? else {
+    let Some((db, stores, plan, owner)) = seed(&f).await? else {
         eprintln!("TEST_DATABASE_URL unset — skipping");
         return Ok(());
     };
@@ -182,7 +184,7 @@ async fn script_run_composes_two_api_calls_in_input_order_with_a_breakdown() -> 
 
     let (summary, _calls) = stores
         .run()
-        .get(outcome.run_id)
+        .get(owner, outcome.run_id)
         .await?
         .expect("the run was recorded");
     assert_eq!(summary.summary.tool_name, "item-summary");
@@ -194,7 +196,7 @@ async fn script_run_composes_two_api_calls_in_input_order_with_a_breakdown() -> 
 #[tokio::test]
 async fn script_run_surfaces_the_failing_line_and_a_non_ok_status() -> Result<()> {
     let f = Fixture::start().await;
-    let Some((db, stores, _plan)) = seed(&f).await? else {
+    let Some((db, stores, _plan, owner)) = seed(&f).await? else {
         eprintln!("TEST_DATABASE_URL unset — skipping");
         return Ok(());
     };
@@ -205,6 +207,7 @@ async fn script_run_surfaces_the_failing_line_and_a_non_ok_status() -> Result<()
     // with no dependency on fixture behaviour. Tagged `demo` so the "demo" endpoint's
     // `has(demo)` tag_expr picks it up once the plan is rebuilt.
     let broken = ScriptDef {
+        owner_id: owner,
         slug: slug("broken-script"),
         source: "let x = 1;\napi(\"not-declared\", #{});\n".to_owned(),
         params: vec![],
@@ -216,7 +219,7 @@ async fn script_run_surfaces_the_failing_line_and_a_non_ok_status() -> Result<()
         .script()
         .create(&broken, &BTreeSet::from([Tag(slug("demo"))]))
         .await?;
-    let plan = build_plan(&stores, &slug("demo")).await?;
+    let plan = build_plan(&stores, owner, &slug("demo")).await?;
 
     let outcome =
         script::execute(&stores, &pool, policy(), &plan, "broken-script", json!({})).await?;

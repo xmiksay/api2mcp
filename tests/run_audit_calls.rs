@@ -26,9 +26,15 @@ fn slug(s: &str) -> Slug {
     s.parse().expect("valid slug")
 }
 
-async fn seed_service(stores: &Stores, name: &str, fixture: &Fixture) -> Result<Slug> {
+async fn seed_service(
+    stores: &Stores,
+    owner_id: uuid::Uuid,
+    name: &str,
+    fixture: &Fixture,
+) -> Result<Slug> {
     let base_url = fixture.base_url();
     let service = Service {
+        owner_id,
         slug: slug(name),
         base_url: base_url.clone(),
         origin_allowlist: BTreeSet::from([Origin::of(&base_url)?]),
@@ -42,8 +48,9 @@ async fn seed_service(stores: &Stores, name: &str, fixture: &Fixture) -> Result<
     Ok(service.slug)
 }
 
-fn call_with_required_id(service_slug: &Slug) -> ApiCall {
+fn call_with_required_id(owner_id: uuid::Uuid, service_slug: &Slug) -> ApiCall {
     ApiCall {
+        owner_id,
         slug: slug("thing"),
         service_slug: service_slug.clone(),
         auth_provider_slug: None,
@@ -80,18 +87,19 @@ async fn a_404_response_still_writes_a_run_calls_row_and_names_the_failure() -> 
     let fixture = Fixture::start().await;
     fixture.set("/things/1", Behavior::Status(404));
 
-    let service_slug = seed_service(&h.stores, "svc-404", &fixture).await?;
+    let service_slug = seed_service(&h.stores, h.admin_id, "svc-404", &fixture).await?;
     let tag = Tag(slug("tag-404"));
     h.stores
         .api_call()
         .create(
-            &call_with_required_id(&service_slug),
+            &call_with_required_id(h.admin_id, &service_slug),
             &BTreeSet::from([tag.clone()]),
         )
         .await?;
     h.stores
         .endpoint()
         .create(&EndpointDef {
+            owner_id: h.admin_id,
             slug: slug("ep-404"),
             tag_expr: TagExpr::Has(tag),
             write_ceiling: Access::Read,
@@ -120,7 +128,7 @@ async fn a_404_response_still_writes_a_run_calls_row_and_names_the_failure() -> 
     let (summary, calls) = h
         .stores
         .run()
-        .get(run_id)
+        .get(h.admin_id, run_id)
         .await?
         .expect("the run was persisted");
     assert_eq!(summary.summary.calls_made, 1);
@@ -155,18 +163,19 @@ async fn bad_arguments_fail_before_sending_and_write_no_run_calls_row() -> Resul
     // Never registered as a route: if this test regresses and a request goes out anyway, the
     // fixture answers 404 rather than letting a silently-passing test hide the bug.
 
-    let service_slug = seed_service(&h.stores, "svc-bad-args", &fixture).await?;
+    let service_slug = seed_service(&h.stores, h.admin_id, "svc-bad-args", &fixture).await?;
     let tag = Tag(slug("tag-bad-args"));
     h.stores
         .api_call()
         .create(
-            &call_with_required_id(&service_slug),
+            &call_with_required_id(h.admin_id, &service_slug),
             &BTreeSet::from([tag.clone()]),
         )
         .await?;
     h.stores
         .endpoint()
         .create(&EndpointDef {
+            owner_id: h.admin_id,
             slug: slug("ep-bad-args"),
             tag_expr: TagExpr::Has(tag),
             write_ceiling: Access::Read,
@@ -194,7 +203,7 @@ async fn bad_arguments_fail_before_sending_and_write_no_run_calls_row() -> Resul
     let (summary, calls) = h
         .stores
         .run()
-        .get(run_id)
+        .get(h.admin_id, run_id)
         .await?
         .expect("the run was persisted");
     // `calls_made` reflects the whole-batch reservation (`BudgetMeter::reserve_calls`), taken
@@ -228,12 +237,12 @@ async fn a_scripts_middle_call_failing_still_records_all_three_rows_in_seq_order
     fixture.set("/things/2", Behavior::Status(500));
     fixture.set("/things/3", Behavior::Json(json!({"id": "3"})));
 
-    let service_slug = seed_service(&h.stores, "svc-three-calls", &fixture).await?;
+    let service_slug = seed_service(&h.stores, h.admin_id, "svc-three-calls", &fixture).await?;
     let tag = Tag(slug("tag-three-calls"));
     h.stores
         .api_call()
         .create(
-            &call_with_required_id(&service_slug),
+            &call_with_required_id(h.admin_id, &service_slug),
             &BTreeSet::from([tag.clone()]),
         )
         .await?;
@@ -241,6 +250,7 @@ async fn a_scripts_middle_call_failing_still_records_all_three_rows_in_seq_order
         .script()
         .create(
             &ScriptDef {
+                owner_id: h.admin_id,
                 slug: slug("three-calls"),
                 source: THREE_CALLS_SCRIPT.to_owned(),
                 params: Vec::new(),
@@ -254,6 +264,7 @@ async fn a_scripts_middle_call_failing_still_records_all_three_rows_in_seq_order
     h.stores
         .endpoint()
         .create(&EndpointDef {
+            owner_id: h.admin_id,
             slug: slug("ep-three-calls"),
             tag_expr: TagExpr::Has(tag),
             write_ceiling: Access::Read,

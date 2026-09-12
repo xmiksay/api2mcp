@@ -59,6 +59,22 @@ impl ScratchDb {
         }))
     }
 
+    /// Creates a throwaway user and returns its id — every owned aggregate (`services`,
+    /// `auth_providers`, `api_calls`, `scripts`, `endpoints`, `runs`) needs a real
+    /// `owner_id` FK target, and unit tests in this crate have no session/CLI caller to
+    /// derive one from.
+    pub(crate) async fn create_user(&self) -> Result<Uuid> {
+        let email = format!("{}@example.com", Uuid::new_v4());
+        let user = crate::store::UserStore::new(self.db.clone())
+            .create(crate::store::NewUser {
+                email,
+                password: "correct horse battery staple".to_owned(),
+            })
+            .await
+            .context("creating scratch user")?;
+        Ok(user.id)
+    }
+
     pub(crate) async fn teardown(self) -> Result<()> {
         self.db
             .close()

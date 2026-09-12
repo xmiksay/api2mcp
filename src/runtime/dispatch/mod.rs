@@ -51,7 +51,7 @@ impl AuthProviders {
                 continue;
             }
             if let Some(provider) = auth_providers
-                .get(&planned.service.slug, provider_slug)
+                .get(plan.owner_id, &planned.service.slug, provider_slug)
                 .await?
             {
                 map.insert(provider_slug.clone(), provider);

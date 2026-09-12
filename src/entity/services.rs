@@ -8,6 +8,7 @@ use sea_orm::entity::prelude::*;
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
+    pub owner_id: Uuid,
     pub slug: String,
     pub base_url: String,
     /// `base_url`'s own origin must be a member of this list (checked at publish time,

@@ -39,6 +39,7 @@ impl RunStore {
         let txn = self.db.begin().await.map_err(db_err("run::create"))?;
         runs::ActiveModel {
             id: Set(id),
+            owner_id: Set(run.owner_id),
             endpoint_slug: Set(run.endpoint_slug.as_str().to_owned()),
             tool_name: Set(run.tool_name.clone()),
             target_kind: Set(target_kind_to_str(run.target_kind).to_owned()),
@@ -92,9 +93,16 @@ impl RunStore {
     }
 
     /// `server::api`'s `GET /api/runs/{id}` — the one route allowed to carry `definition_snapshot`
-    /// and every other column [`RunSummary`] leaves off (see [`RunDetail`]'s own doc).
-    pub async fn get(&self, id: Uuid) -> Result<Option<(RunDetail, Vec<RunCall>)>, StoreError> {
+    /// and every other column [`RunSummary`] leaves off (see [`RunDetail`]'s own doc). Scoped to
+    /// `owner_id`: a run belonging to another owner comes back `None`, indistinguishable from a
+    /// nonexistent id.
+    pub async fn get(
+        &self,
+        owner_id: Uuid,
+        id: Uuid,
+    ) -> Result<Option<(RunDetail, Vec<RunCall>)>, StoreError> {
         let Some(row) = runs::Entity::find_by_id(id)
+            .filter(runs::Column::OwnerId.eq(owner_id))
             .one(&self.db)
             .await
             .map_err(db_err("run::get"))?
@@ -116,10 +124,12 @@ impl RunStore {
 
     pub async fn list_for_endpoint(
         &self,
+        owner_id: Uuid,
         endpoint_slug: &Slug,
         limit: u64,
     ) -> Result<Vec<RunSummary>, StoreError> {
         let rows = runs::Entity::find()
+            .filter(runs::Column::OwnerId.eq(owner_id))
             .filter(runs::Column::EndpointSlug.eq(endpoint_slug.as_str()))
             .order_by_desc(runs::Column::CreatedAt)
             .limit(limit)
@@ -132,8 +142,13 @@ impl RunStore {
     /// `server::api`'s `GET /api/runs`: an optional endpoint/status filter plus offset paging —
     /// [`Self::list_for_endpoint`] alone can't express either, and neither is a rule this crate's
     /// admin UI can do without once the run log has more than a page's worth of history.
-    pub async fn list(&self, filter: &RunFilter) -> Result<Vec<RunSummary>, StoreError> {
-        let mut query: Select<runs::Entity> = runs::Entity::find();
+    pub async fn list(
+        &self,
+        owner_id: Uuid,
+        filter: &RunFilter,
+    ) -> Result<Vec<RunSummary>, StoreError> {
+        let mut query: Select<runs::Entity> =
+            runs::Entity::find().filter(runs::Column::OwnerId.eq(owner_id));
         if let Some(slug) = &filter.endpoint_slug {
             query = query.filter(runs::Column::EndpointSlug.eq(slug.as_str()));
         }

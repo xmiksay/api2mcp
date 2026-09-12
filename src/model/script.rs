@@ -5,12 +5,16 @@
 
 use std::collections::BTreeMap;
 
+use uuid::Uuid;
+
 use super::budget::Budgets;
 use super::param::Param;
 use super::slug::Slug;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScriptDef {
+    /// The user who created this script. See `model::Service::owner_id`.
+    pub owner_id: Uuid,
     pub slug: Slug,
     /// Rhai source text; compiling it into an `AST` happens in `script::engine`, not here.
     pub source: String,

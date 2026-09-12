@@ -3,6 +3,8 @@
 //! time into a [`crate::secret::Secret`] and never stored on this type. That's I4's structural
 //! half — no column, and therefore no field here, can hold a credential value.
 
+use uuid::Uuid;
+
 use super::origin::Origin;
 use super::slug::Slug;
 
@@ -22,6 +24,9 @@ pub enum AuthKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthProvider {
+    /// The user who created this provider — always the same owner as `service_slug`'s service
+    /// (enforced at write time, `store::auth_provider::create`). See `model::Service::owner_id`.
+    pub owner_id: Uuid,
     pub slug: Slug,
     pub service_slug: Slug,
     pub kind: AuthKind,

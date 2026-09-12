@@ -93,7 +93,7 @@ impl ServiceTokenStore {
     ) -> Result<MintedServiceToken, StoreError> {
         let plaintext = generate_plaintext();
         let id = Uuid::new_v4();
-        let endpoint_ids = self.resolve_endpoint_ids(&endpoints).await?;
+        let endpoint_ids = self.resolve_endpoint_ids(owner_id, &endpoints).await?;
 
         let txn = self
             .db
@@ -234,17 +234,21 @@ impl ServiceTokenStore {
 
     async fn resolve_endpoint_ids(
         &self,
+        owner_id: Uuid,
         slugs: &BTreeSet<Slug>,
     ) -> Result<BTreeSet<Uuid>, StoreError> {
         let endpoints = EndpointStore::new(self.db.clone());
         let mut ids = BTreeSet::new();
         for slug in slugs {
-            let id = endpoints.id_by_slug(slug).await.map_err(|e| match e {
-                StoreError::NotFound => {
-                    StoreError::Conflict(format!("unknown endpoint {:?}", slug.as_str()))
-                }
-                other => other,
-            })?;
+            let id = endpoints
+                .id_by_slug(owner_id, slug)
+                .await
+                .map_err(|e| match e {
+                    StoreError::NotFound => {
+                        StoreError::Conflict(format!("unknown endpoint {:?}", slug.as_str()))
+                    }
+                    other => other,
+                })?;
             ids.insert(id);
         }
         Ok(ids)

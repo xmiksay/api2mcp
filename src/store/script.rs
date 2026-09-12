@@ -42,8 +42,13 @@ impl ScriptStore {
         Self { db }
     }
 
-    pub async fn get(&self, slug: &Slug) -> Result<Option<TaggedScript>, StoreError> {
+    pub async fn get(
+        &self,
+        owner_id: Uuid,
+        slug: &Slug,
+    ) -> Result<Option<TaggedScript>, StoreError> {
         let Some(row) = scripts::Entity::find()
+            .filter(scripts::Column::OwnerId.eq(owner_id))
             .filter(scripts::Column::Slug.eq(slug.as_str()))
             .one(&self.db)
             .await
@@ -54,8 +59,9 @@ impl ScriptStore {
         self.assemble(row).await.map(Some)
     }
 
-    pub async fn list_all(&self) -> Result<Vec<TaggedScript>, StoreError> {
+    pub async fn list_all(&self, owner_id: Uuid) -> Result<Vec<TaggedScript>, StoreError> {
         let rows = scripts::Entity::find()
+            .filter(scripts::Column::OwnerId.eq(owner_id))
             .order_by_asc(scripts::Column::Slug)
             .all(&self.db)
             .await
@@ -68,7 +74,7 @@ impl ScriptStore {
     }
 
     pub async fn create(&self, script: &ScriptDef, tags: &BTreeSet<Tag>) -> Result<(), StoreError> {
-        if self.get(&script.slug).await?.is_some() {
+        if self.get(script.owner_id, &script.slug).await?.is_some() {
             return Err(StoreError::Conflict(format!(
                 "script {:?} already exists",
                 script.slug.as_str()
@@ -81,7 +87,8 @@ impl ScriptStore {
             .await
             .map_err(db_err("script::create"))?;
         replace_params(&txn, id, &script.params).await?;
-        self.replace_callable(&txn, id, &script.callable).await?;
+        self.replace_callable(&txn, script.owner_id, id, &script.callable)
+            .await?;
         TagStore::new(self.db.clone())
             .set_script_tags(&txn, id, tags)
             .await?;
@@ -90,14 +97,15 @@ impl ScriptStore {
     }
 
     pub async fn update(&self, script: &ScriptDef, tags: &BTreeSet<Tag>) -> Result<(), StoreError> {
-        let id = self.id_by_slug(&script.slug).await?;
+        let id = self.id_by_slug(script.owner_id, &script.slug).await?;
         let txn = self.db.begin().await.map_err(db_err("script::update"))?;
         to_active_model(script, id)
             .update(&txn)
             .await
             .map_err(db_err("script::update"))?;
         replace_params(&txn, id, &script.params).await?;
-        self.replace_callable(&txn, id, &script.callable).await?;
+        self.replace_callable(&txn, script.owner_id, id, &script.callable)
+            .await?;
         TagStore::new(self.db.clone())
             .set_script_tags(&txn, id, tags)
             .await?;
@@ -105,8 +113,8 @@ impl ScriptStore {
         txn.commit().await.map_err(db_err("script::update"))
     }
 
-    pub async fn delete(&self, slug: &Slug) -> Result<(), StoreError> {
-        let id = self.id_by_slug(slug).await?;
+    pub async fn delete(&self, owner_id: Uuid, slug: &Slug) -> Result<(), StoreError> {
+        let id = self.id_by_slug(owner_id, slug).await?;
         let txn = self.db.begin().await.map_err(db_err("script::delete"))?;
         scripts::Entity::delete_by_id(id)
             .exec(&txn)
@@ -116,8 +124,9 @@ impl ScriptStore {
         txn.commit().await.map_err(db_err("script::delete"))
     }
 
-    pub(crate) async fn id_by_slug(&self, slug: &Slug) -> Result<Uuid, StoreError> {
+    pub(crate) async fn id_by_slug(&self, owner_id: Uuid, slug: &Slug) -> Result<Uuid, StoreError> {
         scripts::Entity::find()
+            .filter(scripts::Column::OwnerId.eq(owner_id))
             .filter(scripts::Column::Slug.eq(slug.as_str()))
             .one(&self.db)
             .await
@@ -153,6 +162,7 @@ impl ScriptStore {
     async fn replace_callable<C: ConnectionTrait>(
         &self,
         conn: &C,
+        owner_id: Uuid,
         script_id: Uuid,
         callable: &BTreeMap<String, Slug>,
     ) -> Result<(), StoreError> {
@@ -163,7 +173,12 @@ impl ScriptStore {
             .map_err(db_err("script::replace_callable"))?;
         let api_calls = ApiCallStore::new(self.db.clone());
         for (alias, api_call_slug) in callable {
-            let api_call_id = api_calls.id_by_slug_global(api_call_slug).await?;
+            // Scoped to this script's own owner (I1): a script's `api()` binding must never
+            // resolve to another owner's api_call of the same slug, even though the bare slug
+            // string could coincide.
+            let api_call_id = api_calls
+                .id_by_slug_for_owner(owner_id, api_call_slug)
+                .await?;
             script_api_calls::ActiveModel {
                 id: Set(Uuid::new_v4()),
                 script_id: Set(script_id),
@@ -182,6 +197,7 @@ fn to_active_model(script: &ScriptDef, id: Uuid) -> scripts::ActiveModel {
     let b = &script.budgets;
     scripts::ActiveModel {
         id: Set(id),
+        owner_id: Set(script.owner_id),
         slug: Set(script.slug.as_str().to_owned()),
         description: Set(script.description.clone()),
         source: Set(script.source.clone()),
@@ -202,6 +218,7 @@ fn to_model(
     callable: BTreeMap<String, Slug>,
 ) -> Result<ScriptDef, StoreError> {
     Ok(ScriptDef {
+        owner_id: row.owner_id,
         slug: parse_slug(&row.slug)?,
         source: row.source,
         params,

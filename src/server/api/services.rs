@@ -29,12 +29,12 @@ fn to_view(s: &Service) -> ServiceView {
 
 async fn list(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
 ) -> Result<Json<Vec<ServiceView>>, ApiError> {
     let services = state
         .stores()
         .service()
-        .list()
+        .list(caller.id)
         .await
         .map_err(ApiError::from_store)?;
     Ok(Json(services.iter().map(to_view).collect()))
@@ -42,14 +42,14 @@ async fn list(
 
 async fn get_one(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<Json<ServiceView>, ApiError> {
     let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     let svc = state
         .stores()
         .service()
-        .get_by_slug(&parsed)
+        .get_by_slug(caller.id, &parsed)
         .await
         .map_err(ApiError::from_store)?
         .ok_or_else(|| ApiError::NotFound(format!("service {slug:?} not found")))?;
@@ -58,17 +58,18 @@ async fn get_one(
 
 async fn create(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
     Json(body): Json<ServiceCreate>,
 ) -> Result<(StatusCode, Json<ServiceView>), ApiError> {
     let parsed = parse_slug(&body.slug).map_err(ApiError::BadRequest)?;
     validate_change(
         &state.stores(),
+        caller.id,
         PendingChange::UpsertService(body.slug.clone(), body.def.clone()),
     )
     .await
     .map_err(ApiError::Validation)?;
-    let service = service_from_pack(parsed, &body.def).map_err(ApiError::BadRequest)?;
+    let service = service_from_pack(caller.id, parsed, &body.def).map_err(ApiError::BadRequest)?;
     state
         .stores()
         .service()
@@ -80,18 +81,19 @@ async fn create(
 
 async fn update(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
     Path(slug): Path<String>,
     Json(body): Json<PackService>,
 ) -> Result<Json<ServiceView>, ApiError> {
     let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     validate_change(
         &state.stores(),
+        caller.id,
         PendingChange::UpsertService(slug.clone(), body.clone()),
     )
     .await
     .map_err(ApiError::Validation)?;
-    let service = service_from_pack(parsed, &body).map_err(ApiError::BadRequest)?;
+    let service = service_from_pack(caller.id, parsed, &body).map_err(ApiError::BadRequest)?;
     state
         .stores()
         .service()
@@ -103,17 +105,21 @@ async fn update(
 
 async fn remove(
     State(state): State<AppState>,
-    _caller: Caller,
+    caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
-    validate_change(&state.stores(), PendingChange::RemoveService(slug))
-        .await
-        .map_err(ApiError::Validation)?;
+    validate_change(
+        &state.stores(),
+        caller.id,
+        PendingChange::RemoveService(slug),
+    )
+    .await
+    .map_err(ApiError::Validation)?;
     state
         .stores()
         .service()
-        .delete(&parsed)
+        .delete(caller.id, &parsed)
         .await
         .map_err(ApiError::from_store)?;
     Ok(StatusCode::NO_CONTENT)

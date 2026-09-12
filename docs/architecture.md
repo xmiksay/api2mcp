@@ -70,7 +70,7 @@ fast and the integration suite small, and it is worth defending against convenie
 | `store` | Per-aggregate façades over the database. |
 | `entity`, `migration` | SeaORM entities and in-crate migrations. |
 | `pack` | Portable YAML export/import. |
-| `server` | MCP data plane, OAuth 2.1 AS, read-only JSON API, embedded SPA. |
+| `server` | MCP data plane, OAuth 2.1 AS, read-write admin JSON API, embedded SPA. |
 | `cli` | Local-process entry points, including everything an agent must never be able to do. |
 
 ## Data model
@@ -140,3 +140,13 @@ write path, and pushes the entire audit burden onto the run log.
   literals. `.no_proxy()` is mandatory: with a proxy configured, the proxy does the resolution.
 - **Tokens are stored as sha256 hashes**, not argon2 — a token is 244 bits of randomness, so a fast
   hash is safe and a KDF on every MCP call is not. Passwords are argon2id.
+- **Self-service tokens** (`POST/GET /api/tokens`, `DELETE /api/tokens/{id}`) let a signed-in user
+  mint their own MCP bearer token — the same lifecycle `api2mcp token mint/list/revoke` has always
+  had on the CLI, now reachable from the SPA. A token's `endpoints` grant list (`service_token_
+  endpoints`) works like a GitHub PAT: empty means every endpoint, non-empty means exactly those.
+  The restriction is enforced where an endpoint slug is resolved per MCP request
+  (`server::mcp::resolve_plan`), and a slug outside the grant gets the exact `-32001` response a
+  nonexistent endpoint would — never a distinct "forbidden", which would leak which endpoints
+  exist. `/api/tokens` is session-only like every other route in `server::api`; a service token
+  can never mint, list or revoke a token, since a token that could issue tokens would make
+  revocation meaningless.
