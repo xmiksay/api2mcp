@@ -87,7 +87,7 @@ fn register_packages(engine: &mut Engine) {
     engine.register_global_module(MoreStringPackage::new().as_shared_module());
 }
 
-/// The data-transformation standard library this chunk adds on top of the eight `StandardPackage`
+/// The data-transformation standard library added on top of the eight `StandardPackage`
 /// sub-packages above: dates/spans, JSON/YAML, regex, and the numeric/text gap-fillers. Unlike
 /// `bindings::register` (which needs a bridge channel and so is only ever called from
 /// `run_script`'s `run_blocking`), none of these four need anything beyond the engine itself, so
@@ -121,10 +121,11 @@ fn apply_limits(engine: &mut Engine) {
     engine.disable_symbol("import");
 }
 
-/// Compiles `source` once. `run_script` calls this exactly once per invocation — the plan's "the
-/// AST is compiled once at load time, not per invocation" for this chunk's own scope; a future
-/// resolve-level cache (mirroring `resolve::cache::PlanCache`) is what makes that true *across*
-/// invocations of the same [`crate::model::ScriptDef`], and isn't this chunk's to build.
+/// Compiles `source` once. `run_script` calls this exactly once per invocation, so the AST is
+/// compiled once per call but not cached *across* calls: every invocation of the same
+/// [`crate::model::ScriptDef`] recompiles its source from scratch. A resolve-level cache
+/// (mirroring `resolve::cache::PlanCache`, keyed the same way) would fix that but doesn't exist
+/// yet.
 pub fn compile(engine: &Engine, source: &str) -> Result<AST, ScriptFailure> {
     engine
         .compile(source)
@@ -141,9 +142,9 @@ mod tests {
     /// argument types don't need to be pixel-perfect, only its name and arity. Sorted by probe
     /// text so the golden file's diff is stable regardless of source edits to this list's order.
     ///
-    /// This stands in for `Engine::gen_fn_signatures`, which needs the `metadata` Cargo feature —
-    /// not enabled for this crate (`Cargo.toml` is out of this chunk's file ownership) — so this
-    /// is a behavioral probe, not an introspection dump. It still does the one job that matters:
+    /// This stands in for `Engine::gen_fn_signatures`, which needs the `metadata` Cargo feature,
+    /// not enabled for this crate — so this is a behavioral probe, not an introspection dump.
+    /// It still does the one job that matters:
     /// any accidental package swap changes which names resolve, which changes this golden file.
     const PROBES: &[&str] = &[
         // CorePackage (LanguageCore + Arithmetic + BasicString + BasicIterator + BasicFn)

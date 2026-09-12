@@ -7,7 +7,8 @@
 //! **This is deliberately not an SPA view**, and there is no `LoginView.vue`. Two
 //! independent reasons, either one would be enough on its own:
 //!
-//! 1. `/oauth/authorize` (chunk C12) bounces an unauthenticated user here mid-flow. If
+//! 1. `/oauth/authorize` (`server::oauth`'s authorization endpoint) bounces an
+//!    unauthenticated user here mid-flow. If
 //!    login were an SPA route, the *entire* auth path — including the OAuth AS, which has
 //!    nothing to do with the admin UI — would depend on `web/dist` holding a real build.
 //!    `web/dist` is a `build.rs` placeholder on a fresh clone and in CI (`SKIP_UI_BUILD=1`,
@@ -21,9 +22,9 @@
 //!
 //! Handlers here take plain arguments (`&DatabaseConnection`, `&Config`, request data
 //! already extracted into plain structs) rather than axum's `State`/`Form`/`Query`
-//! extractors bound to a concrete state type: `AppState` is chunk C11's, and doesn't exist
-//! in this chunk. C11 wraps each function below in a one-line real handler that does the
-//! axum-specific extraction and calls straight through.
+//! extractors bound to `AppState` directly, so the functions below stay testable with plain
+//! values and no axum test harness. `server::router` wraps each one in a one-line real handler
+//! that does the axum-specific extraction and calls straight through.
 
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};

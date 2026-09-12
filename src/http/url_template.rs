@@ -118,8 +118,9 @@ impl UrlTemplate {
         Ok(UrlTemplate { segments })
     }
 
-    /// The template's parsed segments — for a future resolve-time cross-check (C6) that every
-    /// placeholder here has a matching `location = Path` param, and vice versa.
+    /// The template's parsed segments — used by `resolve::compile::assert_path_params_correspond`
+    /// for the resolve-time cross-check that every placeholder here has a matching
+    /// `location = Path` param, and vice versa.
     pub fn segments(&self) -> &[Segment] {
         &self.segments
     }

@@ -1,15 +1,15 @@
-//! I4's other structural half: [`crate::secret::Secret`] makes a credential un-formattable; this
-//! module is the one place allowed to turn a header map, a URL, or a free-text message into
+//! [`crate::secret::Secret`] makes a credential un-formattable; this module is the other half of
+//! that: the one place allowed to turn a header map, a URL, or a free-text message into
 //! something safe to persist in a `runs`/`run_calls` row or return in an error body. The audit
-//! recorder (C7) and the error mapper (`server/error`) must go through these — never format
-//! anything upstream-derived themselves.
+//! recorder (`runtime::recorder`) and the error mapper (`server/error`) must go through these —
+//! never format anything upstream-derived themselves.
 
 use std::collections::BTreeMap;
 
 /// Header names whose values are always redacted, regardless of `HeaderValue::is_sensitive` —
 /// defence in depth for anything that reaches here despite `HEADER_PARAM_ALLOWLIST` never
 /// admitting a caller-chosen header by one of these names (e.g. an auth header merged in by
-/// `http::send`'s `apply_auth`, C4).
+/// `http::send`'s `apply_auth`).
 const ALWAYS_REDACT: &[&str] = &[
     "authorization",
     "cookie",

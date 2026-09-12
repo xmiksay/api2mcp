@@ -4,8 +4,8 @@
 //!
 //! `model::EndpointDef::tag_expr` is already the parsed [`crate::model::TagExpr`] AST, not
 //! the raw string the `tag_expr` column holds; parsing/printing that string is
-//! [`crate::resolve::tag_expr`]'s job (promoted there from this module in chunk C6), not
-//! this store's — this module only calls into it at the row <-> model boundary.
+//! [`crate::resolve::tag_expr`]'s job, not this store's — this module only calls into it at the
+//! row <-> model boundary.
 
 use std::collections::{BTreeMap, BTreeSet};
 

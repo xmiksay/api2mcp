@@ -1,10 +1,10 @@
 //! Turns caller-bound arguments into a fully-assembled, containment-checked request — the pure
-//! half of "send a request" (C4 owns actually sending it).
+//! half of "send a request" ([`crate::http::send`] owns actually sending it).
 //!
 //! `args` is expected to already be the output of `schema::bind_args`: type-checked, defaults
 //! applied, `fixed` values injected, unknown keys rejected. `bind` does not re-validate types —
 //! it routes already-validated values to the right part of the request and re-checks the
-//! I3-relevant shape constraints (no arrays in a path/header slot, no CR/LF in a header value)
+//! shape constraints (no arrays in a path/header slot, no CR/LF in a header value)
 //! that `bind_args` has no reason to know about.
 
 use std::collections::BTreeMap;
@@ -18,7 +18,7 @@ use crate::model::{ApiCall, Param, ParamLocation, Service, is_header_param_name_
 use super::BindError;
 use super::url_template::UrlTemplate;
 
-/// An assembled, ready-to-send request. Carries no credential — `http::send` (C4) applies auth
+/// An assembled, ready-to-send request. Carries no credential — [`crate::http::send`] applies auth
 /// separately, after this is built, so this type can be constructed and asserted against in a
 /// unit test with no [`crate::secret::Secret`] in sight.
 #[derive(Debug, Clone, PartialEq)]

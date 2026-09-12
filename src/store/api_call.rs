@@ -1,6 +1,6 @@
 //! `api_calls` façade. [`ApiCallStore::get`] does the composite read in one pass — the
 //! api_call row, its params (ordered by `position`, I7), its service and auth-provider
-//! slugs, and its tags — because MCP, the CLI, the read-only API and pack export all need
+//! slugs, and its tags — because MCP, the CLI, the admin API and pack export all need
 //! exactly this shape; giving it one home here means the join is written once.
 //!
 //! `projection`/`pagination` are JSONB; decoding them into

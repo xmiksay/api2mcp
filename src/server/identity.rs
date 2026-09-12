@@ -19,7 +19,7 @@
 //! call tools. [`SCOPE_MCP`] survives only because `server::oauth` (this crate's own OAuth 2.1
 //! authorization server, a separate concern from anything in this module) still uses it as its
 //! one supported/default OAuth *scope* string — an unrelated meaning of the word "scope" that
-//! has nothing to do with `Caller` and is out of this chunk's file ownership to change.
+//! has nothing to do with `Caller`.
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
@@ -83,9 +83,9 @@ impl Caller {
 }
 
 /// What an axum `State` must expose for [`Caller`] to extract itself from a request's
-/// session cookie. A trait rather than a direct dependency on `server::state::AppState`:
-/// that type is chunk C11's, and does not exist yet when this module is written. C11
-/// implements this for `AppState` in one line and the extractor below works unchanged.
+/// session cookie. A trait rather than a direct dependency on `server::state::AppState` so this
+/// module doesn't need to know that type's full shape — `AppState` implements this in one line
+/// (`server/state.rs`) and the extractor below works unchanged.
 pub trait AuthContext {
     fn auth_db(&self) -> &DatabaseConnection;
 }

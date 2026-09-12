@@ -8,7 +8,7 @@
 //! detail reaches a client" a property of this one conversion point rather than a discipline
 //! every route handler has to remember on its own.
 //!
-//! Wired into every route in `server::api` (chunk C14, the read-write admin JSON API) — this
+//! Wired into every route in `server::api` (the read-write admin JSON API) — this
 //! type's first real caller.
 
 use axum::Json;

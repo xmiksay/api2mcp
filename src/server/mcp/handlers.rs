@@ -39,9 +39,10 @@ pub(super) async fn tools_call(
         .cloned()
         .unwrap_or_else(|| json!({}));
 
-    // `server::auth::authenticate_mcp` resolves only bearer service tokens in this build (OAuth
-    // access tokens are chunk C12's addition to it); the caller id it hands back is that token's
-    // owner, so `RunCallerKind::ServiceToken` is the only value reachable here today.
+    // `server::auth::authenticate_mcp` resolves both an OAuth 2.1 access token and a static
+    // service token; an OAuth-authenticated caller comes back as `CallerKind::Session`
+    // (`Caller::from_user`), the same kind a browser session gets. This still always records
+    // `RunCallerKind::ServiceToken` regardless of which credential resolved the caller.
     let caller_kind = RunCallerKind::ServiceToken;
     let caller_id = caller.id.to_string();
 

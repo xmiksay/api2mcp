@@ -16,7 +16,7 @@
 //! rather than a raw foreign-key violation.
 //!
 //! This module intentionally does not call [`crate::pack::convert`] — that module is private to
-//! `pack::` (see `super::convert`'s own doc) — so building the snapshot uses this chunk's own
+//! `pack::` (see `super::convert`'s own doc) — so building the snapshot uses this module's own
 //! `to_pack` conversions instead.
 
 use std::collections::{BTreeMap, BTreeSet};

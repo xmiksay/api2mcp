@@ -8,9 +8,8 @@
 //! JWT signature. OIDC Core §3.1.3.7 permits skipping that verification when the token came
 //! straight from the token endpoint over TLS — which [`exchange_code`] guarantees, since it's
 //! the only caller that ever obtains one — and doing so avoids pulling in JWKS fetching and a
-//! JWT library for no security gain. `Cargo.toml` is out of this chunk's file ownership in any
-//! case; if a JWT dependency ever turns out to be genuinely required, that's a decision for
-//! whoever owns that file, not this module.
+//! JWT library for no security gain. If a JWT dependency ever turns out to be genuinely
+//! required, that's a `Cargo.toml` decision, not something this module should force.
 //!
 //! [`super::login`] owns the browser-facing half of the flow (the `state`/PKCE cookie, session
 //! creation); this module only ever talks to the provider.

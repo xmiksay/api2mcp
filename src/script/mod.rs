@@ -4,7 +4,7 @@
 //! one function in the crate that can reach `http::send`. See `bindings`/`bridge`'s own module
 //! docs for exactly how I1 is enforced and why it lives there rather than in registration.
 //!
-//! [`run_script`] is this chunk's entry point: bind the script's own declared params into scope,
+//! [`run_script`] is the entry point: bind the script's own declared params into scope,
 //! run the engine under `spawn_blocking`, service its binding calls on this task until it
 //! finishes, then join. A panic in the blocking closure becomes a [`ScriptFailure`] rather than
 //! taking the process down — `spawn_blocking`'s `JoinHandle` already turns a panic into an `Err`,
@@ -19,10 +19,10 @@
 //! per-item result — see `bridge`'s module docs. Both paths converge on the same uncatchable
 //! error.
 //!
-//! **Not this chunk's job** (see `runtime::mod`'s own docs on what it deliberately doesn't do
-//! yet): wiring `run_script` into `Executor::run_tool`, and a resolve-level cache of compiled
-//! `AST`s across repeated runs of the same [`ScriptDef`]. Both are later-chunk concerns; this
-//! module is exercised directly by its own tests in the meantime.
+//! `run_script` is wired into [`crate::runtime::Executor::run_tool`] as the entry point for a
+//! script-target tool. What's still missing is a resolve-level cache of compiled `AST`s across
+//! repeated runs of the same [`ScriptDef`] — see [`engine::compile`]'s own doc for what that
+//! would take.
 
 pub mod bindings;
 pub mod bridge;
@@ -53,8 +53,8 @@ use crate::schema;
 pub use errors::{RunScriptError, ScriptFailure, ScriptFailureKind};
 
 /// Runs `script` against `args`, sharing `plan`/`ctx`/`limits`/`meter` with whatever else the
-/// caller's run does — the same four values `Executor::run_tool` builds once per run, not once
-/// per script call (`runtime::mod`'s own module docs on what this chunk still has to wire up).
+/// caller's run does — [`crate::runtime::Executor::run_tool`] builds these same four values once
+/// per run, not once per script call, and passes them straight through.
 ///
 /// Argument binding happens first, synchronously, against the script's own declared params
 /// ([`ScriptDef::params`]) — a caller-side mismatch is [`RunScriptError::Args`], distinct from

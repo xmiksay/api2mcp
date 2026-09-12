@@ -3,9 +3,9 @@
 //! calling it: that module is private to `pack::` (see its own doc — "the small duplication ...
 //! is the cost of that boundary, not an oversight" — for the identical situation `pack::convert`
 //! itself is in relative to `store::api_call_params`), so `server::api` cannot name it regardless
-//! of any individual function's own visibility, and `src/pack/` is out of scope for this chunk to
-//! change. Every error here is a plain `String` (not a typed enum): these are HTTP input-shape
-//! problems reported as a single [`crate::server::error::ApiError::BadRequest`], not part of the
+//! of any individual function's own visibility. Every error here is a plain `String` (not a typed
+//! enum): these are HTTP input-shape problems reported as a single
+//! [`crate::server::error::ApiError::BadRequest`], not part of the
 //! "report every failure at once" contract — that contract belongs to `pack::validate`, run
 //! separately by `validate_write` once conversion has already produced a well-typed value.
 //!

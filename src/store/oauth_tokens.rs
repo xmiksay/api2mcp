@@ -143,7 +143,7 @@ impl OauthStore {
     /// The `created_at` of the oldest row sharing `family_id` — the family's original
     /// issuance time. [`rotate_refresh_token`](Self::rotate_refresh_token) only ever carries
     /// each row's own TTL *duration* forward, never an absolute deadline, so an absolute
-    /// family lifetime (chunk C12's `server::oauth::refresh`) has nothing else to check
+    /// family lifetime (`server::oauth::refresh`) has nothing else to check
     /// against. `None` only for an unknown `family_id` — never for one that has just rotated,
     /// since the row inserted by that rotation is itself a family member.
     pub async fn family_started_at(

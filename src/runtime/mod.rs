@@ -12,15 +12,15 @@
 //! - [`partial`] — the partial-failure envelope built on top of the above three.
 //! - [`snapshot`]/[`recorder`] — what gets persisted, and how it's redacted first.
 //!
-//! **C9 (Rhai scripting) is deliberately not implemented here.** `dispatch::dispatch` (with
-//! `caller_script: Some(script)`) and `partial::run_batch` are the two integration points a
-//! script's `api()`/`api_many()` bindings call into — both are `pub`, take no Rhai type, and are
-//! exercised directly by this crate's own tests. What C9 still owns: driving a script's *own*
-//! sequence of `api()`/`api_many()` calls against one shared [`budget::BudgetMeter`]/
-//! [`fanout::ConcurrencyLimits`] pair for the run's whole lifetime, and remapping each batch's
-//! locally-0-based [`partial::BatchEntry::index`] into a run-wide, globally unique `run_calls.seq`
-//! before more than one batch's worth of entries reach [`recorder::record`] — a concern that
-//! cannot arise yet, since every path this chunk exercises is exactly one batch.
+//! Rhai scripting ([`crate::script`]) builds on the same two integration points:
+//! `dispatch::dispatch` (with `caller_script: Some(script)`) and `partial::run_batch`, which a
+//! script's `api()`/`api_many()` bindings reach through [`crate::script::bridge`] — both are
+//! `pub` and take no Rhai type. A script's whole run shares one [`budget::BudgetMeter`]/
+//! [`fanout::ConcurrencyLimits`] pair across every `api()`/`api_many()` call it makes
+//! ([`crate::script::run_script`] builds them once and threads them through), and
+//! [`crate::script::bridge`] re-indexes each batch's locally-0-based [`partial::BatchEntry::index`]
+//! onto one run-wide, monotonic `run_calls.seq` before the entries reach [`recorder::record`],
+//! since a script run can make more than one batch's worth of calls.
 
 pub mod budget;
 pub mod dispatch;

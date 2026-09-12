@@ -194,7 +194,7 @@ fn build_endpoint_not_found(id: &Option<Value>, slug: &Slug) -> JsonRpcResponse 
 }
 
 /// Builds the `401` response carrying the `WWW-Authenticate` bearer challenge that points an
-/// MCP client at `/.well-known/oauth-protected-resource` (chunk C12).
+/// MCP client at `/.well-known/oauth-protected-resource` (served by `server::oauth`).
 fn unauthorized(challenge: BearerChallenge) -> Response {
     let body = Json(JsonRpcResponse::error(None, -32000, "Unauthorized"));
     let mut response: Response = (StatusCode::UNAUTHORIZED, body).into_response();

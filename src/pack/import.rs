@@ -16,8 +16,8 @@
 //! `self.db.begin()`), with no way to hand it an already-open one, and each one bumps the
 //! generation counter itself (`MetaStore::bump_generation_in`, inside that same per-row
 //! transaction). Neither limitation is fixable from `pack/` alone — it would need a
-//! transaction-accepting variant of every `*Store::create`/`update`, which is a `store/` change
-//! outside this chunk's file list. Concretely, what that means for a caller:
+//! transaction-accepting variant of every `*Store::create`/`update`, which is a `store/` change.
+//! Concretely, what that means for a caller:
 //! - `meta.definitions_generation` bumps once per row written, not once per import. Harmless —
 //!   every bump still invalidates `PlanCache` correctly, it's just more invalidation than the
 //!   minimum — but it is not "exactly once", and this doc says so rather than a comment claiming

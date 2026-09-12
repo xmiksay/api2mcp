@@ -13,8 +13,7 @@
 //!    own service, so a cross-service reference can't exist on a stored row) — and a
 //!    non-empty one restricts to exactly the listed providers.
 //!
-//! Either failure fails the whole plan: this chunk's brief is explicit that "a half-valid
-//! endpoint must never serve."
+//! Either failure fails the whole plan: a half-valid endpoint must never serve.
 
 use std::collections::{BTreeMap, BTreeSet};
 

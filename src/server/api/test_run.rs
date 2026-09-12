@@ -1,6 +1,6 @@
 //! Shared plumbing for `POST /api/api_calls/{slug}/test` and `POST /api/scripts/{slug}/test` —
-//! the part of this chunk that makes a definition *editable*: run it for real, against the real
-//! upstream, and show what came back next to what the model would actually see.
+//! the part of the admin API that makes a definition *editable*: run it for real, against the
+//! real upstream, and show what came back next to what the model would actually see.
 //!
 //! The api_call path calls [`crate::runtime::Executor::run_tool`] directly, unmodified — budgets,
 //! the SSRF guard, redaction and the audit record all apply exactly as they do for a real MCP
@@ -12,8 +12,10 @@
 //! column and source snippet ([`ScriptFailure`], `script::errors`) are exactly what
 //! `Executor::run_tool` discards — its `Err(e)` arm folds a script failure down to `e.to_string()`
 //! (`RunScriptError`'s `Display`, which never repeats structural detail already carried in typed
-//! fields) before handing back a `RunResult`, and `runtime/mod.rs` is out of scope for this chunk
-//! to change. [`run_script_test`] instead calls the same `pub` building blocks
+//! fields) before handing back a `RunResult`, whose `error` field is a plain `Option<String>`
+//! shared by every caller of `run_tool` — widening it to carry a structured [`ScriptFailure`]
+//! would change that shape for all of them, not just this route. [`run_script_test`] instead
+//! calls the same `pub` building blocks
 //! `Executor::run_tool` itself is built from — `budget::BudgetMeter`, `dispatch::AuthProviders`,
 //! `fanout::ConcurrencyLimits`, `recorder::record` — so it is the identical pipeline (same
 //! budgets, same auth loading, same audit write), just assembled here instead of inside
@@ -46,7 +48,8 @@ use super::{ApiError, Caller};
 
 /// See this module's doc: a test run is attributed to the admin session that triggered it, but
 /// `runs.caller_kind` is a DB `CHECK` restricted to `oauth`/`service_token`
-/// (`migration::m0006_runs`) and widening it is a migration, out of scope for this chunk.
+/// (`migration::m0006_runs`), so recording a session-triggered test run under either value needs
+/// a new append-only migration to widen that constraint, which hasn't happened.
 /// `ServiceToken` is the closer fit of the two, and the `admin-test:` prefix on `caller_id` keeps
 /// a test run visually distinct from a real one in the audit trail.
 fn test_caller_kind() -> RunCallerKind {

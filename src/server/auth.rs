@@ -5,9 +5,9 @@
 //! OAuth 2.1 access token first ([`crate::server::oauth`]'s token endpoint is what mints
 //! these) and falls back to the service-token store (which already rejects a revoked or
 //! expired row — see [`crate::store::ServiceTokenStore::resolve`]); either failing, it
-//! returns a [`BearerChallenge`]: the caller (chunk C11's router) turns that into a `401`
-//! carrying `WWW-Authenticate: Bearer resource_metadata="…"`, the RFC 9728 discovery hook an
-//! OAuth-aware MCP client follows to find the authorization server.
+//! returns a [`BearerChallenge`]: the caller (`server::mcp::unauthorized`) turns that
+//! into a `401` carrying `WWW-Authenticate: Bearer resource_metadata="…"`, the RFC 9728 discovery
+//! hook an OAuth-aware MCP client follows to find the authorization server.
 //!
 //! **Endpoint grants.** Alongside the resolved [`Caller`], [`authenticate_mcp`] returns the
 //! set of endpoint slugs that credential is restricted to (`ServiceTokenRecord::endpoints`,
@@ -59,7 +59,7 @@ pub const SESSION_COOKIE_NAME: &str = "a2m_session";
 
 /// A `401` bearer challenge: the `WWW-Authenticate` value pointing an MCP client at the
 /// protected-resource metadata so it can discover OAuth. Plain data — building the actual
-/// HTTP response is chunk C11's job (it owns `server/error.rs` and the router).
+/// HTTP response is `server::mcp::unauthorized`'s job.
 pub struct BearerChallenge {
     pub www_authenticate: String,
 }

@@ -4,7 +4,7 @@
 //! (`http::bind::assemble_url` never lets a param move the scheme/host/port — that's I3), so
 //! `PlannedApiCall::origin` (computed once, in `super::build_plan`) is already exactly what
 //! this module needs to check. The origin *allowlist* is a broader set: it also bounds where
-//! a same-origin-checked redirect (C4's `http::send`) may land at *runtime*. What this module
+//! a same-origin-checked redirect ([`crate::http::send`]) may land at *runtime*. What this module
 //! checks is the narrower, static half: that a plan never selects an api_call whose own
 //! service doesn't even allow its own `base_url`'s origin — the case design correction #7
 //! expects publish-time validation to prevent, and this is the defence-in-depth backstop if
@@ -18,8 +18,8 @@ use super::ResolveError;
 use super::plan::PlannedApiCall;
 
 /// Computes the reachable-origin set for a plan's selected api_calls, failing the whole plan
-/// (per this chunk's brief: "a half-valid endpoint must never serve") if any of them resolves
-/// to an origin outside its own service's allowlist.
+/// (a half-valid endpoint must never serve) if any of them resolves to an origin outside its
+/// own service's allowlist.
 ///
 /// Takes the already-loaded `calls` map rather than a half-built [`super::EndpointPlan`]
 /// (the plan doesn't exist yet at the point `build_plan` needs this) — every api_call

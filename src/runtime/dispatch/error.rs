@@ -87,10 +87,23 @@ pub enum DispatchError {
 }
 
 impl DispatchError {
-    /// Whether this error is actually a run-level budget trip wearing a per-item error's clothes
-    /// — see the module docs on `runtime::budget` for why a wall-clock timeout and a page-cap hit
-    /// must both collapse onto [`BudgetAxis`] rather than surface as an ordinary per-item failure
-    /// a script's `try`/`catch` (once C9 exists) could otherwise swallow.
+    /// Whether this error is a budget trip wearing a per-item error's clothes — see the module
+    /// docs on `runtime::budget` for why a wall-clock timeout and a page-cap hit collapse onto
+    /// [`BudgetAxis`] rather than surfacing as an ordinary per-item failure a script's
+    /// `try`/`catch` could swallow.
+    ///
+    /// **One subtlety this deliberately flattens.** `BudgetAxis::WallClock` here is *this call's
+    /// own* `timeout_ms` elapsing, which is not the same event as the run's total wall-clock
+    /// budget being exhausted — they share a variant only because the question being asked is
+    /// "are this batch's failures uniformly time-related", and for that they are equivalent.
+    ///
+    /// The consequence is worth knowing before changing anything here, because it is what a
+    /// script author actually observes: a single call timing out stays an ordinary catchable
+    /// `send` error, and it is only when *every* item in the same `api_many` batch trips the same
+    /// axis that `runtime::partial` escalates the whole call to an uncatchable termination. So
+    /// one slow upstream among ten is a per-item failure a script can handle, while ten slow
+    /// upstreams end the run. Tracing that took three files to confirm; it is written down here
+    /// so the next person does not have to.
     pub fn budget_trip(&self) -> Option<BudgetAxis> {
         match self {
             DispatchError::Send(PaginateError::PageCapExceeded { .. }) => Some(BudgetAxis::Pages),

@@ -1,4 +1,4 @@
-//! The read-write admin JSON API (chunk C14): CRUD over every definition aggregate, plus the
+//! The read-write admin JSON API: CRUD over every definition aggregate, plus the
 //! read-only surfaces (health, `me`, runs, a resolved endpoint's plan) and the two test-run
 //! routes that execute a definition for real and show its raw and projected output side by side.
 //!

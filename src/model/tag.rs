@@ -1,6 +1,6 @@
 //! Tags select which api_calls/scripts an endpoint exposes. The boolean AST here is the
 //! compiled form of an endpoint's `tag_expr` column; parsing the human-written expression string
-//! into this AST is chunk C6's job ([`crate::resolve`]) — this module only defines the shape and
+//! into this AST is [`crate::resolve`]'s job — this module only defines the shape and
 //! how to evaluate it.
 
 use std::collections::BTreeSet;

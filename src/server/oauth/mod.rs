@@ -1,4 +1,4 @@
-//! OAuth 2.1 authorization server (chunk C12), public-client / PKCE-only: RFC 9728/8414
+//! OAuth 2.1 authorization server, public-client / PKCE-only: RFC 9728/8414
 //! discovery, RFC 7591 dynamic client registration (so Claude Code self-onboards with no
 //! pre-provisioned client), the authorization-code grant with mandatory PKCE S256, a
 //! server-rendered consent screen, and the refresh-token grant (rotation, family reuse

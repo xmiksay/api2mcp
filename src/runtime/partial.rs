@@ -2,9 +2,10 @@
 //!
 //! [`run_batch`] is the shared engine behind both a direct tool invocation (a batch of exactly
 //! one item, `caller_script = None`) and a script's `api_many()` (a batch of N, `caller_script =
-//! Some(script)`, C9's job to call this) — the "fan-out entry point" this chunk's brief asks for.
-//! It always returns exactly `items.len()` [`BatchEntry`] values, one per input index, whether
-//! that item ended up `Ok`, an ordinary per-item failure, or a casualty of a budget trip.
+//! Some(script)`, called by [`crate::script::bridge`]) — the fan-out entry point for a batch of
+//! upstream calls. It always returns exactly `items.len()` [`BatchEntry`] values, one per input
+//! index, whether that item ended up `Ok`, an ordinary per-item failure, or a casualty of a
+//! budget trip.
 //!
 //! A budget trip is a **run-level stop**: once the whole-batch call reservation fails, or the
 //! post-hoc byte/page commit trips at some index, every item from that point is marked as not
@@ -71,9 +72,9 @@ pub struct BatchEntry {
 }
 
 /// The run-level verdict [`run_batch`] hands back, for `Executor::run_tool` to turn into a
-/// `store::run::RunStatus`. See the chunk report for how each variant maps — the plan pins down
-/// the budget *mechanics* but not this status taxonomy, so this is a documented judgment call,
-/// not something re-derived from ambiguous text.
+/// `store::run::RunStatus`. The plan pins down the budget *mechanics* but not this status
+/// taxonomy, so this is a documented judgment call, not something re-derived from ambiguous
+/// text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BatchStatus {
     /// Every item succeeded, no budget trip.

@@ -1,6 +1,6 @@
-//! I1's runtime enforcement: [`dispatch`] is **the only path in the crate that can reach
+//! [`dispatch`] is **the only path in the crate that can reach
 //! `http::send`** (via `http::paginate`, which calls it). Every other way of getting from a name
-//! to an HTTP request — a script's `api()`/`api_many()` (C9), a directly-invoked tool, the CLI —
+//! to an HTTP request — a script's `api()`/`api_many()`, a directly-invoked tool, the CLI —
 //! must funnel through this function.
 //!
 //! Name resolution has two shapes:
@@ -10,8 +10,8 @@
 //!   it (I1's data structure is `EndpointPlan::callable_by` itself; this module only reads it).
 //! - `caller_script = None`: the caller is a directly-invoked tool, so `name` is resolved against
 //!   the plan's own tool set (`EndpointPlan::tool`), which additionally applies endpoint aliasing.
-//!   A `Script`-target tool can't be dispatched directly — running a script is `script::engine`'s
-//!   job (C9), not this function's.
+//!   A `Script`-target tool can't be dispatched directly — running a script is
+//!   [`crate::script::run_script`]'s job, not this function's.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -252,10 +252,11 @@ pub async fn dispatch(
 /// `model::Projection`) on every call rather than reusing `planned.projection`
 /// (`resolve::plan::CompiledProjection`, already parsed once at plan-build time): that type's
 /// fields are `pub`, but `crate::project::CompiledProjection` — the type `crate::project::apply`
-/// actually takes — only exposes a private-field, `compile`-only constructor. Reusing the
-/// already-parsed form would need a small `pub(crate)` seam on one of those two chunks' types;
-/// this chunk owns neither `resolve/` nor `project/`, so it re-parses instead. See the chunk
-/// report for the follow-up.
+/// actually takes — only exposes a private-field, `compile`-only constructor. This is a real
+/// inefficiency (every dispatch re-parses every JSONPath expression in the projection instead of
+/// reusing the copy already parsed at plan-build time); fixing it would need a `pub(crate)`
+/// constructor (or field access) on `project::CompiledProjection` so this function could adapt
+/// the already-parsed `resolve::plan::CompiledProjection` directly.
 /// Builds the failure for a non-2xx page, carrying a bounded excerpt of the upstream's body.
 /// Truncated because an upstream error page can be a megabyte of HTML, and redacted because it
 /// is about to cross into a model's context and an audit row (I4).
