@@ -82,18 +82,21 @@ admin/non-admin distinction among any of them** — `users.is_admin`, `assert_ad
 | Kind | Resolved from | Can reach |
 |---|---|---|
 | `Session` | the `a2m_session` cookie (`server::login`, `server::login_oidc`), via `Caller`'s `FromRequestParts` impl | every route under `/api/*`, scoped to definitions it **owns** — full read/write, no narrower role |
-| `Session` (again) | an OAuth 2.1 access token (`server::auth::authenticate_mcp`'s OAuth branch), *not* through the extractor above | `/mcp/*` only — `Caller::from_user` is built by hand inside the MCP handler, never surfaced to `/api/*` |
+| `Oauth` | an OAuth 2.1 access token (`server::auth::authenticate_mcp`'s OAuth branch), *not* through the extractor above | `/mcp/*` only — built by hand inside the MCP handler, never surfaced to `/api/*` |
 | `ServiceToken` | a bearer token minted by `api2mcp token mint` or `POST /api/tokens` | `/mcp/*` only, restricted to its granted endpoints (or every endpoint, if unrestricted) — never `/api/*` |
 | `Cli` | running the `api2mcp` binary directly | everything; a process that can run it already has full DB and credential access |
 
-An OAuth-authenticated caller carries the same `CallerKind::Session` tag as a cookie-authenticated
-one (deliberately — it stands in for its granting user's full access, not a narrower delegation),
-but the two are never interchangeable in practice: `Caller`'s `FromRequestParts` impl (what every
-`/api/*` handler actually uses) resolves *exclusively* from the session cookie and never inspects
-`Authorization` at all, so an OAuth bearer token cannot construct an `/api/*`-usable `Caller` any
-more than a service token can. That is what makes "neither an OAuth token nor a service token ever
-reaches `/api/*`" a structural property of the router rather than a
-per-route checklist item.
+An OAuth-authenticated caller has its own `CallerKind::Oauth` tag rather than borrowing
+`Session`. It briefly did share it, and that turned out to matter: every run recorded through
+`/mcp` is stamped with a `RunCallerKind` derived from the caller, and with OAuth indistinguishable
+from a cookie session at that point, the audit trail could not say which credential was actually
+used. "Who invoked this" is one of the few questions a run log exists to answer.
+
+The two are in any case never interchangeable: `Caller`'s `FromRequestParts` impl (what every
+`/api/*` handler uses) resolves *exclusively* from the session cookie and never inspects
+`Authorization`, so neither an OAuth bearer token nor a service token can construct an
+`/api/*`-usable `Caller`. That is a structural property of the extractor rather than a check any
+handler performs — and so not something a route added later can forget.
 
 **Human login** is a server-rendered password form (`GET`/`POST /login`), an external OIDC provider
 (`GET /login/oidc/start` / `.../callback`), or both — configured entirely through
@@ -160,7 +163,12 @@ buys nothing here. Switching later needs a migration — the two are wire-incomp
 `runs` stores a full `definition_snapshot` of what actually executed plus a `definition_digest`.
 Because definitions are mutable (see below), that snapshot is the *only* answer to "what did this
 tool look like when it ran", so it carries the api_call/script, its params, its projection, the
-service minus credentials, and the folded budgets. `run_calls.seq` is the **input** index of a
+service minus credentials, and the folded budgets. Each entry in a run's `errors` array carries a stable `kind` (`http_status`, `budget_exceeded`,
+and the rest) beside its human-readable message — the same tag a script sees on a failed
+`api_many` item, built by one shared function so the two cannot describe the same failure
+differently. Without it the log could only be filtered by matching prose.
+
+`run_calls.seq` is the **input** index of a
 fan-out, never the completion index — invariant I7 made durable.
 
 ## Invariants
