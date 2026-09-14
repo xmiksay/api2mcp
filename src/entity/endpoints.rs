@@ -1,5 +1,6 @@
-//! `endpoints` — a tag-expression selection of tools exposed at `POST /mcp/{slug}` (or the
-//! bare `POST /mcp`, for `cfg.default_endpoint`). `write_ceiling` bounds the `access` level
+//! `endpoints` — a tag-expression selection of tools exposed at `POST /mcp/{slug}` (bare
+//! `POST /mcp` is the control plane, `server::mcp::control`, and is never resolved as one of
+//! these). `write_ceiling` bounds the `access` level
 //! of any api_call the tag expression selects; `budgets` is folded element-wise (`min`)
 //! against every selected api_call's own budget before an [`crate::runtime::budget`]
 //! meter is built.

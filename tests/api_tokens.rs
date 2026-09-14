@@ -141,6 +141,7 @@ async fn a_user_cannot_see_or_revoke_another_users_token() -> Result<()> {
             "someone elses token".to_owned(),
             None,
             Default::default(),
+            false,
         )
         .await?;
 

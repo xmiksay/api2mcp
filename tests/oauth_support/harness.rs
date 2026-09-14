@@ -70,7 +70,6 @@ pub async fn setup() -> Result<Option<Harness>> {
     let cfg = Config::from_lookup(|k| match k {
         "DATABASE_URL" => Some("postgres://unused/unused".to_owned()),
         "A2M_BASE_URL" => Some("http://test.local".to_owned()),
-        "A2M_DEFAULT_ENDPOINT" => Some("demo".to_owned()),
         "A2M_ALLOW_LOOPBACK_UPSTREAM" => Some("1".to_owned()),
         _ => None,
     })?;

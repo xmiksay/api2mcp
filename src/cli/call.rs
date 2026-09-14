@@ -62,10 +62,17 @@ pub struct CallOutcome {
     pub error: Option<String>,
 }
 
-/// Connects, resolves `endpoint` (or `cfg.default_endpoint`) to a validated plan, and builds the
-/// upstream pool the dispatch shares. Shared with `cli::script::run`. Reads `Config::from_env`,
-/// so — like `cli::serve`/`cli::pack`/`cli::token` — this half is exercised by hand, not by
-/// `tests/cli.rs`; see [`execute`]'s own doc for what *is* covered there.
+/// The endpoint slug `cli::call`/`cli::script run` fall back to when `--endpoint` is omitted.
+/// Used to live as `Config::default_endpoint` (the env var `A2M_DEFAULT_ENDPOINT`), back when
+/// bare `POST /mcp` resolved to it too; now that bare `/mcp` is the control plane instead (see
+/// `server::mcp`'s module doc), there is no server-side notion of a "default endpoint" left to
+/// share — this is purely a CLI convenience for a single-endpoint deployment.
+const DEFAULT_ENDPOINT_SLUG: &str = "default";
+
+/// Connects, resolves `endpoint` (or [`DEFAULT_ENDPOINT_SLUG`]) to a validated plan, and builds
+/// the upstream pool the dispatch shares. Shared with `cli::script::run`. Reads
+/// `Config::from_env`, so — like `cli::serve`/`cli::pack`/`cli::token` — this half is exercised
+/// by hand, not by `tests/cli.rs`; see [`execute`]'s own doc for what *is* covered there.
 pub(crate) async fn setup(
     endpoint: Option<&str>,
     user: Option<&str>,
@@ -79,7 +86,7 @@ pub(crate) async fn setup(
     // question every other transport gets for free from `Caller`.
     let owner = crate::cli::resolve_user(&stores, user).await?;
 
-    let slug_str = endpoint.unwrap_or(&cfg.default_endpoint);
+    let slug_str = endpoint.unwrap_or(DEFAULT_ENDPOINT_SLUG);
     let endpoint_slug: Slug = slug_str
         .parse()
         .with_context(|| format!("{slug_str:?} is not a valid endpoint slug"))?;

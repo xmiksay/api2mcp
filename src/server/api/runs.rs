@@ -22,8 +22,8 @@ pub fn router() -> Router<AppState> {
         .route("/runs/{id}", get(get_one))
 }
 
-const DEFAULT_LIMIT: u64 = 50;
-const MAX_LIMIT: u64 = 500;
+pub(crate) const DEFAULT_LIMIT: u64 = 50;
+pub(crate) const MAX_LIMIT: u64 = 500;
 
 #[derive(Debug, Deserialize)]
 struct RunsQuery {
@@ -33,7 +33,7 @@ struct RunsQuery {
     offset: Option<u64>,
 }
 
-fn parse_status(s: &str) -> Result<RunStatus, ApiError> {
+pub(crate) fn parse_status(s: &str) -> Result<RunStatus, ApiError> {
     match s {
         "ok" => Ok(RunStatus::Ok),
         "partial" => Ok(RunStatus::Partial),
@@ -47,7 +47,7 @@ fn parse_status(s: &str) -> Result<RunStatus, ApiError> {
     }
 }
 
-fn status_str(s: RunStatus) -> &'static str {
+pub(crate) fn status_str(s: RunStatus) -> &'static str {
     match s {
         RunStatus::Ok => "ok",
         RunStatus::Partial => "partial",
@@ -58,14 +58,14 @@ fn status_str(s: RunStatus) -> &'static str {
     }
 }
 
-fn target_kind_str(k: crate::store::RunTargetKind) -> &'static str {
+pub(crate) fn target_kind_str(k: crate::store::RunTargetKind) -> &'static str {
     match k {
         crate::store::RunTargetKind::ApiCall => "api_call",
         crate::store::RunTargetKind::Script => "script",
     }
 }
 
-fn caller_kind_str(k: RunCallerKind) -> &'static str {
+pub(crate) fn caller_kind_str(k: RunCallerKind) -> &'static str {
     match k {
         RunCallerKind::Session => "session",
         RunCallerKind::Oauth => "oauth",
@@ -75,7 +75,7 @@ fn caller_kind_str(k: RunCallerKind) -> &'static str {
 }
 
 #[derive(Debug, Serialize)]
-struct RunSummaryView {
+pub(crate) struct RunSummaryView {
     id: Uuid,
     endpoint_slug: String,
     tool_name: String,
@@ -88,7 +88,7 @@ struct RunSummaryView {
     created_at: String,
 }
 
-fn summary_view(s: &RunSummary) -> RunSummaryView {
+pub(crate) fn summary_view(s: &RunSummary) -> RunSummaryView {
     RunSummaryView {
         id: s.id,
         endpoint_slug: s.endpoint_slug.as_str().to_owned(),
@@ -101,6 +101,24 @@ fn summary_view(s: &RunSummary) -> RunSummaryView {
         pages_fetched: s.pages_fetched,
         created_at: s.created_at.to_rfc3339(),
     }
+}
+
+/// The real logic behind `list`, reused by `server::mcp::control::runs`'s `run.list` tool — see
+/// `services.rs`'s own comment. Takes an already-built [`RunFilter`] rather than the wire query
+/// shape: the control plane's own tool arguments aren't URL query params, so parsing them into a
+/// `RunFilter` is that caller's job, not this function's.
+pub(crate) async fn list_for_owner(
+    state: &AppState,
+    owner_id: Uuid,
+    filter: &RunFilter,
+) -> Result<Vec<RunSummaryView>, ApiError> {
+    let runs = state
+        .stores()
+        .run()
+        .list(owner_id, filter)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(runs.iter().map(summary_view).collect())
 }
 
 async fn list(
@@ -121,17 +139,11 @@ async fn list(
         limit: q.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT),
         offset: q.offset.unwrap_or(0),
     };
-    let runs = state
-        .stores()
-        .run()
-        .list(caller.id, &filter)
-        .await
-        .map_err(ApiError::from_store)?;
-    Ok(Json(runs.iter().map(summary_view).collect()))
+    Ok(Json(list_for_owner(&state, caller.id, &filter).await?))
 }
 
 #[derive(Debug, Serialize)]
-struct RunCallView {
+pub(crate) struct RunCallView {
     seq: i32,
     api_call_slug: String,
     service_slug: String,
@@ -150,7 +162,7 @@ struct RunCallView {
     raw: Option<Value>,
 }
 
-fn call_view(c: &RunCall) -> RunCallView {
+pub(crate) fn call_view(c: &RunCall) -> RunCallView {
     RunCallView {
         seq: c.seq,
         api_call_slug: c.api_call_slug.as_str().to_owned(),
@@ -177,7 +189,7 @@ fn call_view(c: &RunCall) -> RunCallView {
 /// a run listing has no use for it. Keep it that way — this asymmetry (everything else flat and
 /// shared with the summary, this one field detail-only) is deliberate, not a gap to close later.
 #[derive(Debug, Serialize)]
-struct RunDetailView {
+pub(crate) struct RunDetailView {
     #[serde(flatten)]
     summary: RunSummaryView,
     caller_kind: &'static str,
@@ -196,19 +208,21 @@ struct RunDetailView {
     calls: Vec<RunCallView>,
 }
 
-async fn get_one(
-    State(state): State<AppState>,
-    caller: Caller,
-    Path(id): Path<Uuid>,
-) -> Result<Json<RunDetailView>, ApiError> {
+/// The real logic behind `get_one`, reused by `server::mcp::control::runs`'s `run.get` tool —
+/// see `services.rs`'s own comment.
+pub(crate) async fn get_for_owner(
+    state: &AppState,
+    owner_id: Uuid,
+    id: Uuid,
+) -> Result<RunDetailView, ApiError> {
     let (detail, calls) = state
         .stores()
         .run()
-        .get(caller.id, id)
+        .get(owner_id, id)
         .await
         .map_err(ApiError::from_store)?
         .ok_or_else(|| ApiError::NotFound(format!("run {id} not found")))?;
-    Ok(Json(RunDetailView {
+    Ok(RunDetailView {
         summary: summary_view(&detail.summary),
         caller_kind: caller_kind_str(detail.caller_kind),
         caller_id: detail.caller_id,
@@ -222,5 +236,13 @@ async fn get_one(
         budget_snapshot: detail.budget_snapshot,
         timings: detail.timings,
         calls: calls.iter().map(call_view).collect(),
-    }))
+    })
+}
+
+async fn get_one(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<Uuid>,
+) -> Result<Json<RunDetailView>, ApiError> {
+    Ok(Json(get_for_owner(&state, caller.id, id).await?))
 }

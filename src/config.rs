@@ -44,8 +44,6 @@ pub struct Config {
     /// `.well-known` metadata documents, so a wrong value breaks discovery rather than
     /// degrading it gracefully.
     pub base_url: String,
-    /// Endpoint slug that bare `POST /mcp` resolves to.
-    pub default_endpoint: String,
     /// Seeds the very first user account on a fresh deployment (`migration::m0007_seed_first_user`,
     /// idempotent — a no-op once any user exists). There is no notion of "admin" left to seed:
     /// every signed-in session can read and write every definition.
@@ -81,7 +79,6 @@ impl Config {
             base_url,
             host,
             port,
-            default_endpoint: get("A2M_DEFAULT_ENDPOINT").unwrap_or_else(|| "default".into()),
             seed_email: get("A2M_SEED_EMAIL"),
             seed_password: get("A2M_SEED_PASSWORD"),
             run_retention_days: parse_or(
@@ -129,7 +126,6 @@ impl Config {
             database_url = %redact_db_url(&self.database_url),
             bind = %self.bind_addr(),
             base_url = %self.base_url,
-            default_endpoint = %self.default_endpoint,
             first_user_seed = self.seed_email.is_some(),
             oidc_configured = self.oidc.is_some(),
             run_retention_days = self.run_retention_days,
@@ -259,7 +255,6 @@ mod tests {
         let c = Config::from_lookup(lookup(&[("DATABASE_URL", "postgres://x/y")])).unwrap();
         assert_eq!(c.port, 8080);
         assert_eq!(c.base_url, "http://127.0.0.1:8080");
-        assert_eq!(c.default_endpoint, "default");
         assert_eq!(c.run_retention_days, 30);
         assert!(!c.allow_loopback_upstream);
     }

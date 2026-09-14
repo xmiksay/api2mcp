@@ -81,7 +81,13 @@ async fn setup() -> Result<Option<Grants>> {
 
     let unrestricted = stores
         .service_token()
-        .mint(user.id, "unrestricted".to_owned(), None, BTreeSet::new())
+        .mint(
+            user.id,
+            "unrestricted".to_owned(),
+            None,
+            BTreeSet::new(),
+            false,
+        )
         .await?;
     let scoped = stores
         .service_token()
@@ -90,6 +96,7 @@ async fn setup() -> Result<Option<Grants>> {
             "scoped-to-a".to_owned(),
             None,
             BTreeSet::from([ep_a.slug.clone()]),
+            false,
         )
         .await?;
 

@@ -36,14 +36,21 @@ pub fn router() -> Router<AppState> {
         )
 }
 
-fn to_view(p: &AuthProvider) -> AuthProviderView {
+pub(crate) fn to_view(p: &AuthProvider) -> AuthProviderView {
     AuthProviderView {
         slug: p.slug.as_str().to_owned(),
         def: auth_provider_to_pack(p),
     }
 }
 
-async fn find(state: &AppState, owner_id: Uuid, slug: &str) -> Result<AuthProvider, ApiError> {
+/// `pub(crate)`, not private: `server::mcp::control::auth_providers` (the MCP control-plane's
+/// read-only auth-provider tools — I5 forbids write access, never read) calls this and
+/// [`list_for_owner`] directly rather than duplicating the lookup.
+pub(crate) async fn find(
+    state: &AppState,
+    owner_id: Uuid,
+    slug: &str,
+) -> Result<AuthProvider, ApiError> {
     let all = state
         .stores()
         .auth_provider()
@@ -55,17 +62,24 @@ async fn find(state: &AppState, owner_id: Uuid, slug: &str) -> Result<AuthProvid
         .ok_or_else(|| ApiError::NotFound(format!("auth provider {slug:?} not found")))
 }
 
+pub(crate) async fn list_for_owner(
+    state: &AppState,
+    owner_id: Uuid,
+) -> Result<Vec<AuthProviderView>, ApiError> {
+    let all = state
+        .stores()
+        .auth_provider()
+        .list_all(owner_id)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(all.iter().map(to_view).collect())
+}
+
 async fn list(
     State(state): State<AppState>,
     caller: Caller,
 ) -> Result<Json<Vec<AuthProviderView>>, ApiError> {
-    let all = state
-        .stores()
-        .auth_provider()
-        .list_all(caller.id)
-        .await
-        .map_err(ApiError::from_store)?;
-    Ok(Json(all.iter().map(to_view).collect()))
+    Ok(Json(list_for_owner(&state, caller.id).await?))
 }
 
 async fn get_one(

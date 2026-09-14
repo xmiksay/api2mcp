@@ -165,6 +165,7 @@ mod tests {
             revoked_at: None,
             created_at: chrono::Utc::now(),
             endpoints: Default::default(),
+            control_plane: false,
         }
     }
 

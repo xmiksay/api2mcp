@@ -240,7 +240,6 @@ mod tests {
             host: "127.0.0.1".into(),
             port: 8080,
             base_url: "http://test.local:8080".into(),
-            default_endpoint: "default".into(),
             seed_email: None,
             seed_password: None,
             run_retention_days: 30,

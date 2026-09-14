@@ -68,6 +68,11 @@ pub struct ServiceTokenRecord {
     pub restricted: bool,
     /// Endpoint slugs this token may reach, meaningful only when [`Self::restricted`].
     pub endpoints: BTreeSet<Slug>,
+    /// Whether this token may reach bare `POST /mcp` (`server::mcp::control`, the definition-
+    /// authoring factory) — an explicit, separately-granted capability, `false` by default and
+    /// for every token minted before it existed. Unrelated to [`Self::restricted`]/
+    /// [`Self::endpoints`], which gate `/mcp/{slug}` instead. See [`ServiceTokenStore::mint`].
+    pub control_plane: bool,
 }
 
 #[derive(Clone)]
@@ -80,16 +85,18 @@ impl ServiceTokenStore {
         Self { db }
     }
 
-    /// Mints a token restricted to `endpoints` (empty = every endpoint). An unknown slug in
-    /// `endpoints` is [`StoreError::Conflict`] — a definer/caller error the DB schema can't
-    /// itself catch (there is nothing to insert an FK-valid row against) — rather than a raw
-    /// foreign-key violation or a silently-dropped grant.
+    /// Mints a token restricted to `endpoints` (empty = every endpoint) and, separately,
+    /// `control_plane`-capable or not (see [`ServiceTokenRecord::control_plane`]). An unknown
+    /// slug in `endpoints` is [`StoreError::Conflict`] — a definer/caller error the DB schema
+    /// can't itself catch (there is nothing to insert an FK-valid row against) — rather than a
+    /// raw foreign-key violation or a silently-dropped grant.
     pub async fn mint(
         &self,
         owner_id: Uuid,
         label: String,
         expires_at: Option<DateTime<Utc>>,
         endpoints: BTreeSet<Slug>,
+        control_plane: bool,
     ) -> Result<MintedServiceToken, StoreError> {
         let plaintext = generate_plaintext();
         let id = Uuid::new_v4();
@@ -109,6 +116,7 @@ impl ServiceTokenStore {
             // Recorded at mint time from what the caller asked for, so it survives the grant rows
             // being cascaded away by an endpoint deletion.
             restricted: Set(!endpoints.is_empty()),
+            control_plane: Set(control_plane),
             last_used_at: Set(None),
             expires_at: Set(expires_at.map(Into::into)),
             revoked_at: Set(None),
@@ -280,6 +288,7 @@ fn to_model(row: service_tokens::Model, endpoints: BTreeSet<Slug>) -> ServiceTok
         created_at: row.created_at.with_timezone(&Utc),
         restricted: row.restricted,
         endpoints,
+        control_plane: row.control_plane,
     }
 }
 

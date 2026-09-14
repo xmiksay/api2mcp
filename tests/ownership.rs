@@ -295,7 +295,7 @@ async fn a_token_is_refused_on_another_owners_endpoint_identically_to_nonexisten
 
     let alice_token = stores
         .service_token()
-        .mint(alice.id, "alice-token".into(), None, BTreeSet::new())
+        .mint(alice.id, "alice-token".into(), None, BTreeSet::new(), false)
         .await?;
 
     let on_bobs = mcp_rpc(
@@ -399,6 +399,7 @@ async fn ownership_and_endpoint_grants_compose() -> Result<()> {
             "scoped-to-a".into(),
             None,
             BTreeSet::from([slug("a")]),
+            false,
         )
         .await?;
 

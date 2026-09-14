@@ -9,6 +9,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
+use uuid::Uuid;
 
 use crate::model::{Budgets, EndpointDef};
 use crate::pack::PackEndpoint;
@@ -36,17 +37,113 @@ fn to_view(e: &EndpointDef) -> EndpointView {
     }
 }
 
+// See `services.rs`'s own comment: the `_for_owner` functions below are the real logic, reused
+// as-is by `server::mcp::control::endpoints`; the axum handlers are thin shims.
+
+pub(crate) async fn list_for_owner(
+    state: &AppState,
+    owner_id: Uuid,
+) -> Result<Vec<EndpointView>, ApiError> {
+    let all = state
+        .stores()
+        .endpoint()
+        .list_all(owner_id)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(all.iter().map(to_view).collect())
+}
+
+pub(crate) async fn get_by_owner(
+    state: &AppState,
+    owner_id: Uuid,
+    slug: &str,
+) -> Result<EndpointView, ApiError> {
+    let parsed = parse_slug(slug).map_err(ApiError::BadRequest)?;
+    let endpoint = state
+        .stores()
+        .endpoint()
+        .get(owner_id, &parsed)
+        .await
+        .map_err(ApiError::from_store)?
+        .ok_or_else(|| ApiError::NotFound(format!("endpoint {slug:?} not found")))?;
+    Ok(to_view(&endpoint))
+}
+
+pub(crate) async fn create_for_owner(
+    state: &AppState,
+    owner_id: Uuid,
+    slug: String,
+    def: PackEndpoint,
+) -> Result<EndpointView, ApiError> {
+    let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
+    validate_change(
+        &state.stores(),
+        owner_id,
+        PendingChange::UpsertEndpoint(slug, def.clone()),
+    )
+    .await
+    .map_err(ApiError::Validation)?;
+    let endpoint = endpoint_from_pack(owner_id, parsed, &def).map_err(ApiError::BadRequest)?;
+    state
+        .stores()
+        .endpoint()
+        .create(&endpoint)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(to_view(&endpoint))
+}
+
+pub(crate) async fn update_for_owner(
+    state: &AppState,
+    owner_id: Uuid,
+    slug: String,
+    def: PackEndpoint,
+) -> Result<EndpointView, ApiError> {
+    let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
+    validate_change(
+        &state.stores(),
+        owner_id,
+        PendingChange::UpsertEndpoint(slug, def.clone()),
+    )
+    .await
+    .map_err(ApiError::Validation)?;
+    let endpoint = endpoint_from_pack(owner_id, parsed, &def).map_err(ApiError::BadRequest)?;
+    state
+        .stores()
+        .endpoint()
+        .update(&endpoint)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(to_view(&endpoint))
+}
+
+pub(crate) async fn delete_for_owner(
+    state: &AppState,
+    owner_id: Uuid,
+    slug: String,
+) -> Result<(), ApiError> {
+    let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
+    validate_change(
+        &state.stores(),
+        owner_id,
+        PendingChange::RemoveEndpoint(slug),
+    )
+    .await
+    .map_err(ApiError::Validation)?;
+    state
+        .stores()
+        .endpoint()
+        .delete(owner_id, &parsed)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(())
+}
+
 async fn list(
     State(state): State<AppState>,
     caller: Caller,
 ) -> Result<Json<Vec<EndpointView>>, ApiError> {
-    let all = state
-        .stores()
-        .endpoint()
-        .list_all(caller.id)
-        .await
-        .map_err(ApiError::from_store)?;
-    Ok(Json(all.iter().map(to_view).collect()))
+    Ok(Json(list_for_owner(&state, caller.id).await?))
 }
 
 async fn get_one(
@@ -54,15 +151,7 @@ async fn get_one(
     caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<Json<EndpointView>, ApiError> {
-    let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
-    let endpoint = state
-        .stores()
-        .endpoint()
-        .get(caller.id, &parsed)
-        .await
-        .map_err(ApiError::from_store)?
-        .ok_or_else(|| ApiError::NotFound(format!("endpoint {slug:?} not found")))?;
-    Ok(Json(to_view(&endpoint)))
+    Ok(Json(get_by_owner(&state, caller.id, &slug).await?))
 }
 
 async fn create(
@@ -70,22 +159,8 @@ async fn create(
     caller: Caller,
     Json(body): Json<EndpointCreate>,
 ) -> Result<(StatusCode, Json<EndpointView>), ApiError> {
-    let slug = parse_slug(&body.slug).map_err(ApiError::BadRequest)?;
-    validate_change(
-        &state.stores(),
-        caller.id,
-        PendingChange::UpsertEndpoint(body.slug.clone(), body.def.clone()),
-    )
-    .await
-    .map_err(ApiError::Validation)?;
-    let endpoint = endpoint_from_pack(caller.id, slug, &body.def).map_err(ApiError::BadRequest)?;
-    state
-        .stores()
-        .endpoint()
-        .create(&endpoint)
-        .await
-        .map_err(ApiError::from_store)?;
-    Ok((StatusCode::CREATED, Json(to_view(&endpoint))))
+    let view = create_for_owner(&state, caller.id, body.slug, body.def).await?;
+    Ok((StatusCode::CREATED, Json(view)))
 }
 
 async fn update(
@@ -94,22 +169,7 @@ async fn update(
     Path(slug): Path<String>,
     Json(body): Json<PackEndpoint>,
 ) -> Result<Json<EndpointView>, ApiError> {
-    let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
-    validate_change(
-        &state.stores(),
-        caller.id,
-        PendingChange::UpsertEndpoint(slug.clone(), body.clone()),
-    )
-    .await
-    .map_err(ApiError::Validation)?;
-    let endpoint = endpoint_from_pack(caller.id, parsed, &body).map_err(ApiError::BadRequest)?;
-    state
-        .stores()
-        .endpoint()
-        .update(&endpoint)
-        .await
-        .map_err(ApiError::from_store)?;
-    Ok(Json(to_view(&endpoint)))
+    Ok(Json(update_for_owner(&state, caller.id, slug, body).await?))
 }
 
 async fn remove(
@@ -117,20 +177,7 @@ async fn remove(
     caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let parsed = parse_slug(&slug).map_err(ApiError::BadRequest)?;
-    validate_change(
-        &state.stores(),
-        caller.id,
-        PendingChange::RemoveEndpoint(slug),
-    )
-    .await
-    .map_err(ApiError::Validation)?;
-    state
-        .stores()
-        .endpoint()
-        .delete(caller.id, &parsed)
-        .await
-        .map_err(ApiError::from_store)?;
+    delete_for_owner(&state, caller.id, slug).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -154,7 +201,7 @@ fn budgets_view(b: &Budgets) -> BudgetsView {
 }
 
 #[derive(Debug, Serialize)]
-struct ToolView {
+pub(crate) struct ToolView {
     name: String,
     input_schema: Value,
     target_kind: &'static str,
@@ -163,7 +210,7 @@ struct ToolView {
 }
 
 #[derive(Debug, Serialize)]
-struct PlanView {
+pub(crate) struct PlanView {
     slug: String,
     write_ceiling: &'static str,
     instructions: Option<String>,
@@ -175,13 +222,15 @@ struct PlanView {
     tools: Vec<ToolView>,
 }
 
-async fn plan(
-    State(state): State<AppState>,
-    caller: Caller,
-    Path(slug): Path<String>,
-) -> Result<Json<PlanView>, ApiError> {
-    let endpoint_slug = parse_slug(&slug).map_err(ApiError::BadRequest)?;
-    let plan = resolve_plan(&state, caller.id, &endpoint_slug).await?;
+/// The real logic behind `plan`, reused by `server::mcp::control::endpoints`'s `endpoint.plan`
+/// tool — see `services.rs`'s own comment.
+pub(crate) async fn plan_for_owner(
+    state: &AppState,
+    owner_id: Uuid,
+    slug: &str,
+) -> Result<PlanView, ApiError> {
+    let endpoint_slug = parse_slug(slug).map_err(ApiError::BadRequest)?;
+    let plan = resolve_plan(state, owner_id, &endpoint_slug).await?;
 
     let tools = plan
         .tools
@@ -201,7 +250,7 @@ async fn plan(
         })
         .collect();
 
-    Ok(Json(PlanView {
+    Ok(PlanView {
         slug: plan.slug.as_str().to_owned(),
         write_ceiling: access_to_str(plan.write_ceiling),
         instructions: plan.instructions.clone(),
@@ -209,5 +258,13 @@ async fn plan(
         budgets: budgets_view(&plan.budgets),
         origins: plan.origins.iter().map(|o| o.to_string()).collect(),
         tools,
-    }))
+    })
+}
+
+async fn plan(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(slug): Path<String>,
+) -> Result<Json<PlanView>, ApiError> {
+    Ok(Json(plan_for_owner(&state, caller.id, &slug).await?))
 }

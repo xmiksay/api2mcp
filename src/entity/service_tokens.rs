@@ -23,6 +23,12 @@ pub struct Model {
     /// "has no grant rows": deleting the last granted endpoint cascades those rows away, and a
     /// restricted token must not widen into an unrestricted one as a result.
     pub restricted: bool,
+    /// Whether this token may reach bare `POST /mcp` (the definition-authoring control plane,
+    /// `server::mcp::control`) — separate from `restricted`/`service_token_endpoints`, which
+    /// gate `/mcp/{slug}` (the data plane) and mean nothing here. `NOT NULL DEFAULT false`
+    /// (`migration::m0008_control_plane_tokens`): a token must be minted *with* this, never gain
+    /// it for free.
+    pub control_plane: bool,
     pub last_used_at: Option<DateTimeWithTimeZone>,
     pub expires_at: Option<DateTimeWithTimeZone>,
     pub revoked_at: Option<DateTimeWithTimeZone>,

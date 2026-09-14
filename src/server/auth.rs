@@ -87,37 +87,69 @@ impl EndpointGrants {
     }
 }
 
+/// The result of resolving a bearer credential against `/mcp`: who is calling, which endpoints
+/// (`/mcp/{slug}`) they may reach, and whether they may reach the control plane (bare `/mcp`,
+/// `server::mcp::control`) at all. Bundled into one struct — rather than a growing tuple — now
+/// that there are two independent capabilities to carry alongside [`Caller`].
+#[derive(Debug)]
+pub struct ResolvedCredential {
+    pub caller: Caller,
+    pub endpoint_grants: EndpointGrants,
+    /// Whether this credential may reach `server::mcp::control`.
+    ///
+    /// An OAuth caller always may; a static token may only when minted with
+    /// `ServiceTokenRecord::control_plane`. That asymmetry is the point rather than an
+    /// inconsistency: OAuth is a browser sign-in by a specific person, short-lived and revocable
+    /// at the provider, so it already carries everything that user can do. A service token is a
+    /// long-lived secret sitting in a config file somewhere, and *that* is the thing worth
+    /// narrowing — which is what the flag, defaulting to false, does.
+    ///
+    /// Turning it round would mean the browser-authenticated human is refused while a pasted
+    /// token file is allowed, which is backwards.
+    pub control_plane: bool,
+}
+
 /// Resolve the caller behind an MCP request: an OAuth 2.1 access token first, then a static
 /// service token. No credential, or a credential that fails to resolve against either store, all
 /// come back as the same [`BearerChallenge`] — a caller must not be able to tell "missing" from
 /// "invalid" from the response shape alone.
 ///
-/// Returns the resolved [`Caller`] alongside its [`EndpointGrants`] — see this module's own doc
-/// for why that travels separately rather than on `Caller` itself.
+/// Returns a [`ResolvedCredential`] — see its own doc for why [`EndpointGrants`] and
+/// `control_plane` travel separately from [`Caller`] itself.
 pub async fn authenticate_mcp(
     db: &DatabaseConnection,
     cfg: &Config,
     headers: &HeaderMap,
-) -> std::result::Result<(Caller, EndpointGrants), BearerChallenge> {
+) -> std::result::Result<ResolvedCredential, BearerChallenge> {
     let Some(token) = bearer_token(headers) else {
         return Err(challenge(cfg));
     };
 
     if let Some(caller) = oauth_caller(db, token).await {
-        // An OAuth caller is a person acting as themselves, not a narrowed credential.
-        return Ok((caller, EndpointGrants::All));
+        // A person acting as themselves, not a narrowed credential: every endpoint they own, and
+        // the control plane. See `ResolvedCredential::control_plane` for why a signed-in human
+        // needs no opt-in where a static token does.
+        return Ok(ResolvedCredential {
+            caller,
+            endpoint_grants: EndpointGrants::All,
+            control_plane: true,
+        });
     }
 
     let store = ServiceTokenStore::new(db.clone());
     match store.resolve(token).await {
         Ok(Some(record)) => {
             let caller = Caller::from_service_token(&record);
-            let grants = if record.restricted {
-                EndpointGrants::Only(record.endpoints)
+            let endpoint_grants = if record.restricted {
+                EndpointGrants::Only(record.endpoints.clone())
             } else {
                 EndpointGrants::All
             };
-            Ok((caller, grants))
+            Ok(ResolvedCredential {
+                caller,
+                endpoint_grants,
+                control_plane: record.control_plane,
+            })
         }
         Ok(None) => Err(challenge(cfg)),
         Err(e) => {
@@ -253,7 +285,6 @@ mod tests {
             host: "127.0.0.1".into(),
             port: 8080,
             base_url: "http://h:8080".into(),
-            default_endpoint: "default".into(),
             seed_email: None,
             seed_password: None,
             run_retention_days: 30,

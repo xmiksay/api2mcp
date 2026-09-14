@@ -20,21 +20,25 @@
 //! `pack::validate` gate), [`test_run`] (shared plumbing for the two test-run routes), then one
 //! file per resource.
 
-mod api_calls;
-mod auth_providers;
-mod convert;
-mod convert_items;
-mod dto;
-mod endpoints;
+// Several of these are `pub(crate)`, not private: `server::mcp::control` (the MCP control-plane
+// tool surface — bare `POST /mcp`) reuses their `_for_owner`/`find` functions, DTOs and
+// validation directly rather than re-implementing the definition CRUD/test-run pipeline a
+// second time. See each module's own doc for the specific functions it exposes for that reuse.
+pub(crate) mod api_calls;
+pub(crate) mod auth_providers;
+pub(crate) mod convert;
+pub(crate) mod convert_items;
+pub(crate) mod dto;
+pub(crate) mod endpoints;
 mod health;
 mod me;
-mod runs;
-mod scripts;
-mod services;
+pub(crate) mod runs;
+pub(crate) mod scripts;
+pub(crate) mod services;
 mod tags;
-mod test_run;
+pub(crate) mod test_run;
 mod tokens;
-mod validate_write;
+pub(crate) mod validate_write;
 
 use axum::Router;
 use axum::routing::get;

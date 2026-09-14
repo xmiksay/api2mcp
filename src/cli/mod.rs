@@ -41,7 +41,7 @@ pub enum Command {
         /// Also print the unprojected upstream response.
         #[arg(long)]
         raw: bool,
-        /// Endpoint to resolve the tool against. Defaults to `cfg.default_endpoint`.
+        /// Endpoint to resolve the tool against. Defaults to `"default"`.
         #[arg(long)]
         endpoint: Option<String>,
         /// Email of the user whose definitions to resolve against. Defaults to the sole user
@@ -95,7 +95,7 @@ pub enum ScriptAction {
         /// Repeatable `key=value` argument.
         #[arg(long = "arg", value_name = "KEY=VALUE")]
         args: Vec<String>,
-        /// Endpoint to resolve the tool against. Defaults to `cfg.default_endpoint`.
+        /// Endpoint to resolve the tool against. Defaults to `"default"`.
         #[arg(long)]
         endpoint: Option<String>,
         /// Email of the user whose definitions to resolve against. Defaults to the sole user
@@ -130,6 +130,11 @@ pub enum TokenAction {
         /// Expire the token after this many days. Omit for a token that never expires.
         #[arg(long)]
         expires_in_days: Option<i64>,
+        /// Grant this token access to the control plane (bare `POST /mcp`, the definition-
+        /// authoring factory) — an explicit opt-in, off by default, unrelated to `--endpoint`
+        /// (which gates `/mcp/{slug}` instead).
+        #[arg(long)]
+        control_plane: bool,
     },
     List {
         #[arg(long)]

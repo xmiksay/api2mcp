@@ -225,7 +225,13 @@ async fn service_token_mint_resolve_revoke_and_expiry() -> Result<()> {
 
     let tokens = ServiceTokenStore::new(db.conn.clone());
     let minted = tokens
-        .mint(user.id, "ci token".to_owned(), None, Default::default())
+        .mint(
+            user.id,
+            "ci token".to_owned(),
+            None,
+            Default::default(),
+            false,
+        )
         .await?;
 
     // The plaintext must not appear anywhere in the persisted row.
@@ -249,6 +255,7 @@ async fn service_token_mint_resolve_revoke_and_expiry() -> Result<()> {
             "already expired".to_owned(),
             Some(Utc::now() - ChronoDuration::seconds(1)),
             Default::default(),
+            false,
         )
         .await?;
     assert!(tokens.resolve(&expired.plaintext).await?.is_none());

@@ -37,7 +37,18 @@ pub async fn run(action: TokenAction) -> Result<()> {
             owner,
             endpoints,
             expires_in_days,
-        } => mint(&stores, label, owner, endpoints, expires_in_days).await,
+            control_plane,
+        } => {
+            mint(
+                &stores,
+                label,
+                owner,
+                endpoints,
+                expires_in_days,
+                control_plane,
+            )
+            .await
+        }
         TokenAction::List { owner } => list(&stores, owner).await,
         TokenAction::Revoke { id } => revoke(&stores, &id).await,
     }
@@ -49,6 +60,7 @@ async fn mint(
     owner: Option<String>,
     endpoints: Vec<String>,
     expires_in_days: Option<i64>,
+    control_plane: bool,
 ) -> Result<()> {
     let owner = resolve_owner(stores, owner.as_deref()).await?;
     let endpoints: BTreeSet<Slug> = endpoints
@@ -67,7 +79,7 @@ async fn mint(
         .transpose()?;
     let minted = stores
         .service_token()
-        .mint(owner.id, label, expires_at, endpoints)
+        .mint(owner.id, label, expires_at, endpoints, control_plane)
         .await
         .context("minting service token")?;
 
@@ -75,10 +87,14 @@ async fn mint(
     println!();
     println!("  {}", minted.plaintext);
     println!();
-    println!("id:        {}", minted.record.id);
-    println!("owner:     {}", owner.email);
-    println!("label:     {}", minted.record.label);
-    println!("endpoints: {}", format_endpoints(&minted.record.endpoints));
+    println!("id:            {}", minted.record.id);
+    println!("owner:         {}", owner.email);
+    println!("label:         {}", minted.record.label);
+    println!(
+        "endpoints:     {}",
+        format_endpoints(&minted.record.endpoints)
+    );
+    println!("control_plane: {}", minted.record.control_plane);
     Ok(())
 }
 
@@ -96,8 +112,8 @@ async fn list(stores: &Stores, owner: Option<String>) -> Result<()> {
     }
 
     println!(
-        "{:<36}  {:<8}  {:<20}  {:<8}  {:<20}  created_at",
-        "id", "prefix", "label", "status", "endpoints"
+        "{:<36}  {:<8}  {:<20}  {:<8}  {:<20}  {:<7}  created_at",
+        "id", "prefix", "label", "status", "endpoints", "control"
     );
     for t in tokens {
         let status = if t.revoked_at.is_some() {
@@ -108,12 +124,13 @@ async fn list(stores: &Stores, owner: Option<String>) -> Result<()> {
             "active"
         };
         println!(
-            "{:<36}  {:<8}  {:<20}  {:<8}  {:<20}  {}",
+            "{:<36}  {:<8}  {:<20}  {:<8}  {:<20}  {:<7}  {}",
             t.id,
             t.token_prefix,
             t.label,
             status,
             format_endpoints(&t.endpoints),
+            t.control_plane,
             t.created_at.to_rfc3339(),
         );
     }

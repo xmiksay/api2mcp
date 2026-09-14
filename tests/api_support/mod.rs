@@ -71,6 +71,7 @@ pub async fn setup() -> Result<Option<Harness>> {
             "api test mcp token".to_owned(),
             None,
             Default::default(),
+            false,
         )
         .await?;
 

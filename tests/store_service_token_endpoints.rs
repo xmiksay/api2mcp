@@ -54,7 +54,13 @@ async fn a_token_minted_with_no_endpoints_is_unrestricted() -> Result<()> {
 
     let minted = stores
         .service_token()
-        .mint(user.id, "everything".to_owned(), None, BTreeSet::new())
+        .mint(
+            user.id,
+            "everything".to_owned(),
+            None,
+            BTreeSet::new(),
+            false,
+        )
         .await?;
     assert!(minted.record.endpoints.is_empty());
 
@@ -94,6 +100,7 @@ async fn a_token_minted_with_an_endpoint_carries_it_in_its_grant_set() -> Result
             "scoped".to_owned(),
             None,
             BTreeSet::from([endpoint.slug.clone()]),
+            false,
         )
         .await?;
     assert_eq!(
@@ -133,6 +140,7 @@ async fn minting_with_an_unknown_endpoint_slug_is_a_conflict_not_a_raw_fk_error(
             "typo".to_owned(),
             None,
             BTreeSet::from([slug("no-such-endpoint")]),
+            false,
         )
         .await
         .expect_err("an unknown endpoint slug must not silently mint");
@@ -166,6 +174,7 @@ async fn deleting_a_granted_endpoint_leaves_no_dangling_grant_row() -> Result<()
             "will-lose-its-endpoint".to_owned(),
             None,
             BTreeSet::from([endpoint.slug.clone()]),
+            false,
         )
         .await?;
 

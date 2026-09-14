@@ -43,9 +43,16 @@ pub async fn run() -> Result<()> {
     // Printed rather than logged: it is the next thing someone needs, not a diagnostic. Without
     // a header the client authenticates through OAuth — the 401 advertises the authorization
     // server — which is why no token appears here; `api2mcp token mint` prints the header form.
+    // Two lines, not one: `/mcp` (the control plane) and `/mcp/{slug}` (a curated endpoint) are
+    // separate surfaces for separate agents now (see `server::mcp`'s module doc) — an operator
+    // setting up Claude Code needs to know both exist and pick the one they mean.
     println!(
-        "claude mcp add --transport http api2mcp {}/mcp/{}",
-        cfg.base_url, cfg.default_endpoint
+        "claude mcp add --transport http api2mcp-factory {}/mcp   # define services/api_calls/scripts/endpoints",
+        cfg.base_url
+    );
+    println!(
+        "claude mcp add --transport http api2mcp {}/mcp/<slug>   # use a curated endpoint's tools",
+        cfg.base_url
     );
 
     axum::serve(listener, router)

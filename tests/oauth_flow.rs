@@ -185,7 +185,9 @@ async fn code_cannot_be_replayed_after_a_successful_exchange() -> Result<()> {
 }
 
 /// Closes the loop `authenticate_mcp`'s OAuth branch was added for: a token produced by this
-/// module's own token endpoint actually authenticates a `tools/call` on `/mcp`.
+/// module's own token endpoint actually authenticates a `tools/call` on `/mcp/{slug}` (the data
+/// plane — bare `/mcp` is the control plane now, and an OAuth token never has that capability;
+/// see `server::auth::ResolvedCredential`'s own doc).
 #[tokio::test]
 async fn an_issued_access_token_authenticates_on_mcp() -> Result<()> {
     let Some(h) = setup().await? else {
@@ -248,7 +250,7 @@ async fn an_issued_access_token_authenticates_on_mcp() -> Result<()> {
     });
     let request = Request::builder()
         .method("POST")
-        .uri("/mcp")
+        .uri("/mcp/demo")
         .header(header::CONTENT_TYPE, "application/json")
         .header(
             header::AUTHORIZATION,
@@ -266,6 +268,40 @@ async fn an_issued_access_token_authenticates_on_mcp() -> Result<()> {
     assert!(
         !doc["result"]["isError"].as_bool().unwrap_or(false),
         "tool call reported isError: {doc:?}"
+    );
+
+    // An OAuth caller also reaches the control plane with no separate opt-in, where a static
+    // token needs `control_plane: true`. That asymmetry is deliberate: OAuth is a browser
+    // sign-in by a specific person, so `claude mcp add --transport http <base>/mcp` works
+    // through the browser flow with nothing to paste, while a long-lived token file stays
+    // narrowed by default.
+    let rpc = json!({"jsonrpc": "2.0", "id": 9, "method": "tools/list"});
+    let request = Request::builder()
+        .method("POST")
+        .uri("/mcp")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {access_token}"))?,
+        )
+        .body(Body::from(serde_json::to_vec(&rpc)?))
+        .expect("valid request");
+    let (status, _headers, body) = send(&h.router, request).await;
+    assert_eq!(status, StatusCode::OK);
+    let doc: Value = serde_json::from_slice(&body)?;
+    assert!(
+        doc.get("error").is_none(),
+        "an OAuth caller must reach the control plane: {doc:?}"
+    );
+    let names: Vec<&str> = doc["result"]["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    assert!(
+        names.contains(&"service.create"),
+        "control-plane tools expected, got {names:?}"
     );
 
     // The point of this whole round trip (`server::auth::authenticate_mcp`'s OAuth branch): the

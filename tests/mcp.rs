@@ -48,11 +48,10 @@ async fn tools_list_returns_exactly_the_tag_selected_tools_with_fixed_params_abs
         return Ok(());
     };
 
-    // Bare `/mcp` resolves to `cfg.default_endpoint` ("demo") — checked against the same
-    // response the named path gives.
-    let via_default = rpc(&h.router, &h.token, "/mcp", req(1, "tools/list", None)).await;
+    // Bare `/mcp` is the control plane now (`server::mcp::control`), not an alias for any one
+    // curated endpoint — see `tests/mcp_control_plane.rs` for its own coverage. Only the named
+    // path resolves an endpoint's tools.
     let via_named = rpc(&h.router, &h.token, "/mcp/demo", req(2, "tools/list", None)).await;
-    assert_eq!(via_default["result"], via_named["result"]);
 
     let tools = via_named["result"]["tools"]
         .as_array()

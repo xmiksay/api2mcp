@@ -42,7 +42,14 @@ fn to_view(c: &ApiCall, tags: &BTreeSet<Tag>) -> ApiCallView {
     }
 }
 
-async fn find(state: &AppState, owner_id: Uuid, slug: &str) -> Result<TaggedApiCall, ApiError> {
+// See `services.rs`'s own comment: the `_for_owner`/`find` functions below are the real logic,
+// reused as-is by `server::mcp::control::api_calls`; the axum handlers are thin shims.
+
+pub(crate) async fn find(
+    state: &AppState,
+    owner_id: Uuid,
+    slug: &str,
+) -> Result<TaggedApiCall, ApiError> {
     let all = state
         .stores()
         .api_call()
@@ -54,19 +61,144 @@ async fn find(state: &AppState, owner_id: Uuid, slug: &str) -> Result<TaggedApiC
         .ok_or_else(|| ApiError::NotFound(format!("api_call {slug:?} not found")))
 }
 
+pub(crate) async fn list_for_owner(
+    state: &AppState,
+    owner_id: Uuid,
+) -> Result<Vec<ApiCallView>, ApiError> {
+    let all = state
+        .stores()
+        .api_call()
+        .list_all(owner_id)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(all.iter().map(|t| to_view(&t.api_call, &t.tags)).collect())
+}
+
+pub(crate) async fn get_by_owner(
+    state: &AppState,
+    owner_id: Uuid,
+    slug: &str,
+) -> Result<ApiCallView, ApiError> {
+    let t = find(state, owner_id, slug).await?;
+    Ok(to_view(&t.api_call, &t.tags))
+}
+
+pub(crate) async fn create_for_owner(
+    state: &AppState,
+    owner_id: Uuid,
+    slug: String,
+    def: PackApiCall,
+) -> Result<ApiCallView, ApiError> {
+    let parsed_slug = parse_slug(&slug).map_err(ApiError::BadRequest)?;
+    let service_slug = parse_slug(&def.service).map_err(ApiError::BadRequest)?;
+    let auth_provider_slug = def
+        .auth_provider
+        .as_deref()
+        .map(parse_slug)
+        .transpose()
+        .map_err(ApiError::BadRequest)?;
+    let tags = tags_from_pack(&def.tags).map_err(ApiError::BadRequest)?;
+    validate_change(
+        &state.stores(),
+        owner_id,
+        PendingChange::UpsertApiCall(slug, def.clone()),
+    )
+    .await
+    .map_err(ApiError::Validation)?;
+    let call = api_call_from_pack(
+        owner_id,
+        parsed_slug,
+        service_slug,
+        auth_provider_slug,
+        &def,
+    )
+    .map_err(ApiError::BadRequest)?;
+    state
+        .stores()
+        .api_call()
+        .create(&call, &tags)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(to_view(&call, &tags))
+}
+
+pub(crate) async fn update_for_owner(
+    state: &AppState,
+    owner_id: Uuid,
+    slug: String,
+    def: PackApiCall,
+) -> Result<ApiCallView, ApiError> {
+    let existing = find(state, owner_id, &slug).await?;
+    if existing.api_call.service_slug.as_str() != def.service {
+        return Err(ApiError::BadRequest(
+            "cannot move an api_call to a different service via update; delete and recreate it \
+             instead"
+                .to_owned(),
+        ));
+    }
+    let auth_provider_slug = def
+        .auth_provider
+        .as_deref()
+        .map(parse_slug)
+        .transpose()
+        .map_err(ApiError::BadRequest)?;
+    let tags = tags_from_pack(&def.tags).map_err(ApiError::BadRequest)?;
+    validate_change(
+        &state.stores(),
+        owner_id,
+        PendingChange::UpsertApiCall(slug.clone(), def.clone()),
+    )
+    .await
+    .map_err(ApiError::Validation)?;
+    let parsed_slug = parse_slug(&slug).map_err(ApiError::BadRequest)?;
+    let call = api_call_from_pack(
+        owner_id,
+        parsed_slug,
+        existing.api_call.service_slug,
+        auth_provider_slug,
+        &def,
+    )
+    .map_err(ApiError::BadRequest)?;
+    state
+        .stores()
+        .api_call()
+        .update(&call, &tags)
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(to_view(&call, &tags))
+}
+
+pub(crate) async fn delete_for_owner(
+    state: &AppState,
+    owner_id: Uuid,
+    slug: String,
+) -> Result<(), ApiError> {
+    let existing = find(state, owner_id, &slug).await?;
+    validate_change(
+        &state.stores(),
+        owner_id,
+        PendingChange::RemoveApiCall(slug),
+    )
+    .await
+    .map_err(ApiError::Validation)?;
+    state
+        .stores()
+        .api_call()
+        .delete(
+            owner_id,
+            &existing.api_call.service_slug,
+            &existing.api_call.slug,
+        )
+        .await
+        .map_err(ApiError::from_store)?;
+    Ok(())
+}
+
 async fn list(
     State(state): State<AppState>,
     caller: Caller,
 ) -> Result<Json<Vec<ApiCallView>>, ApiError> {
-    let all = state
-        .stores()
-        .api_call()
-        .list_all(caller.id)
-        .await
-        .map_err(ApiError::from_store)?;
-    Ok(Json(
-        all.iter().map(|t| to_view(&t.api_call, &t.tags)).collect(),
-    ))
+    Ok(Json(list_for_owner(&state, caller.id).await?))
 }
 
 async fn get_one(
@@ -83,32 +215,8 @@ async fn create(
     caller: Caller,
     Json(body): Json<ApiCallCreate>,
 ) -> Result<(StatusCode, Json<ApiCallView>), ApiError> {
-    let slug = parse_slug(&body.slug).map_err(ApiError::BadRequest)?;
-    let service_slug = parse_slug(&body.def.service).map_err(ApiError::BadRequest)?;
-    let auth_provider_slug = body
-        .def
-        .auth_provider
-        .as_deref()
-        .map(parse_slug)
-        .transpose()
-        .map_err(ApiError::BadRequest)?;
-    let tags = tags_from_pack(&body.def.tags).map_err(ApiError::BadRequest)?;
-    validate_change(
-        &state.stores(),
-        caller.id,
-        PendingChange::UpsertApiCall(body.slug.clone(), body.def.clone()),
-    )
-    .await
-    .map_err(ApiError::Validation)?;
-    let call = api_call_from_pack(caller.id, slug, service_slug, auth_provider_slug, &body.def)
-        .map_err(ApiError::BadRequest)?;
-    state
-        .stores()
-        .api_call()
-        .create(&call, &tags)
-        .await
-        .map_err(ApiError::from_store)?;
-    Ok((StatusCode::CREATED, Json(to_view(&call, &tags))))
+    let view = create_for_owner(&state, caller.id, body.slug, body.def).await?;
+    Ok((StatusCode::CREATED, Json(view)))
 }
 
 async fn update(
@@ -117,43 +225,7 @@ async fn update(
     Path(slug): Path<String>,
     Json(body): Json<PackApiCall>,
 ) -> Result<Json<ApiCallView>, ApiError> {
-    let existing = find(&state, caller.id, &slug).await?;
-    if existing.api_call.service_slug.as_str() != body.service {
-        return Err(ApiError::BadRequest(
-            "cannot move an api_call to a different service via PUT; delete and recreate it instead"
-                .to_owned(),
-        ));
-    }
-    let auth_provider_slug = body
-        .auth_provider
-        .as_deref()
-        .map(parse_slug)
-        .transpose()
-        .map_err(ApiError::BadRequest)?;
-    let tags = tags_from_pack(&body.tags).map_err(ApiError::BadRequest)?;
-    validate_change(
-        &state.stores(),
-        caller.id,
-        PendingChange::UpsertApiCall(slug.clone(), body.clone()),
-    )
-    .await
-    .map_err(ApiError::Validation)?;
-    let parsed_slug = parse_slug(&slug).map_err(ApiError::BadRequest)?;
-    let call = api_call_from_pack(
-        caller.id,
-        parsed_slug,
-        existing.api_call.service_slug,
-        auth_provider_slug,
-        &body,
-    )
-    .map_err(ApiError::BadRequest)?;
-    state
-        .stores()
-        .api_call()
-        .update(&call, &tags)
-        .await
-        .map_err(ApiError::from_store)?;
-    Ok(Json(to_view(&call, &tags)))
+    Ok(Json(update_for_owner(&state, caller.id, slug, body).await?))
 }
 
 async fn remove(
@@ -161,24 +233,7 @@ async fn remove(
     caller: Caller,
     Path(slug): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let existing = find(&state, caller.id, &slug).await?;
-    validate_change(
-        &state.stores(),
-        caller.id,
-        PendingChange::RemoveApiCall(slug),
-    )
-    .await
-    .map_err(ApiError::Validation)?;
-    state
-        .stores()
-        .api_call()
-        .delete(
-            caller.id,
-            &existing.api_call.service_slug,
-            &existing.api_call.slug,
-        )
-        .await
-        .map_err(ApiError::from_store)?;
+    delete_for_owner(&state, caller.id, slug).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

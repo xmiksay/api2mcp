@@ -44,6 +44,10 @@ struct TokenCreate {
     expires_in_days: Option<i64>,
     #[serde(default)]
     endpoints: Vec<String>,
+    /// Opts this token into `server::mcp::control` (bare `POST /mcp`) — `false` unless the
+    /// caller explicitly asks, mirroring `service_tokens.control_plane`'s own default.
+    #[serde(default)]
+    control_plane: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -54,6 +58,7 @@ struct TokenMinted {
     label: String,
     expires_at: Option<String>,
     endpoints: Vec<String>,
+    control_plane: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -66,6 +71,7 @@ struct TokenView {
     expires_at: Option<String>,
     revoked_at: Option<String>,
     endpoints: Vec<String>,
+    control_plane: bool,
 }
 
 fn rfc3339(t: DateTime<Utc>) -> String {
@@ -86,6 +92,7 @@ fn to_view(record: ServiceTokenRecord) -> TokenView {
         expires_at: record.expires_at.map(rfc3339),
         revoked_at: record.revoked_at.map(rfc3339),
         endpoints: endpoint_slugs(&record.endpoints),
+        control_plane: record.control_plane,
     }
 }
 
@@ -122,7 +129,13 @@ async fn create(
     let minted = state
         .stores()
         .service_token()
-        .mint(caller.id, body.label, expires_at, endpoints)
+        .mint(
+            caller.id,
+            body.label,
+            expires_at,
+            endpoints,
+            body.control_plane,
+        )
         .await
         .map_err(ApiError::from_store)?;
 
@@ -135,6 +148,7 @@ async fn create(
             label: minted.record.label,
             expires_at: minted.record.expires_at.map(rfc3339),
             endpoints: endpoint_slugs(&minted.record.endpoints),
+            control_plane: minted.record.control_plane,
         }),
     ))
 }
