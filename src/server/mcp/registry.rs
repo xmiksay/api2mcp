@@ -122,6 +122,7 @@ mod tests {
     fn planned_api_call() -> PlannedApiCall {
         PlannedApiCall {
             api_call: crate::model::ApiCall {
+                owner_id: uuid::Uuid::nil(),
                 slug: "get-item".parse().unwrap(),
                 service_slug: "demo".parse().unwrap(),
                 auth_provider_slug: None,
@@ -139,6 +140,7 @@ mod tests {
                 description: None,
             },
             service: crate::model::Service {
+                owner_id: uuid::Uuid::nil(),
                 slug: "demo".parse().unwrap(),
                 base_url: "https://demo.example.com".parse().unwrap(),
                 origin_allowlist: Default::default(),
@@ -156,6 +158,7 @@ mod tests {
 
     fn empty_plan() -> EndpointPlan {
         EndpointPlan {
+            owner_id: uuid::Uuid::nil(),
             slug: "ep".parse().unwrap(),
             write_ceiling: Access::Read,
             instructions: None,
@@ -227,6 +230,7 @@ mod tests {
     fn a_script_tool_falls_back_to_a_generic_description_when_undocumented() {
         let mut plan = empty_plan();
         let script = crate::model::ScriptDef {
+            owner_id: uuid::Uuid::nil(),
             slug: "compose".parse().unwrap(),
             source: "()".to_owned(),
             params: vec![],

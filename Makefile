@@ -9,7 +9,14 @@
 # Node version is pinned in .nvmrc.
 
 export CARGO_BUILD_JOBS ?= 4
-NVM := . "$$NVM_DIR/nvm.sh" >/dev/null 2>&1 && nvm use >/dev/null 2>&1 || true;
+# Select the .nvmrc node when nvm is installed, and do nothing when it is not.
+#
+# The file-existence test is load-bearing, not defensive noise: POSIX says `.` on a file it cannot
+# find terminates a non-interactive shell, so `. missing.sh || true` does not survive it — the
+# shell is already gone. Arch symlinks /bin/sh to bash, which is forgiving, while Ubuntu uses
+# dash, which is not, so sourcing unguarded works locally and dies in CI. CI also sets
+# NVM_DIR=/nonexistent on purpose, to fall through to the runner's own node.
+NVM := if [ -s "$$NVM_DIR/nvm.sh" ]; then . "$$NVM_DIR/nvm.sh" >/dev/null 2>&1 || true; nvm use >/dev/null 2>&1 || true; fi;
 NOUI := SKIP_UI_BUILD=1
 
 .DEFAULT_GOAL := help

@@ -8,10 +8,12 @@ use std::collections::BTreeSet;
 use serde_json_path::JsonPath;
 
 use crate::http::UrlTemplate;
+use crate::model::is_header_param_name_allowed;
 
 use super::ValidationError;
 use crate::pack::{
-    Pack, PackApiCall, PackEndpoint, PackEndpointTarget, PackPagination, PackScript,
+    Pack, PackApiCall, PackEndpoint, PackEndpointTarget, PackPagination, PackParamLocation,
+    PackScript,
 };
 
 pub(super) fn validate_api_call(
@@ -103,6 +105,21 @@ pub(super) fn validate_api_call(
             push(
                 errors,
                 format!("param {:?} is both fixed and required", p.name),
+            );
+        }
+        // Publish-time half of `model::HEADER_PARAM_ALLOWLIST` (I3): everything else in this
+        // system validates at publish time precisely so a definition cannot be saved broken —
+        // `http::bind`'s own check at dispatch time stays as defence in depth, not the only gate.
+        if p.location == PackParamLocation::Header && !is_header_param_name_allowed(&p.name) {
+            push(
+                errors,
+                format!(
+                    "param {:?} uses location: header with a name not in the allowlist ({:?}); \
+                     allowed names are {:?}",
+                    p.name,
+                    p.name,
+                    crate::model::HEADER_PARAM_ALLOWLIST
+                ),
             );
         }
     }
@@ -214,108 +231,5 @@ pub(super) fn validate_endpoint(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::BTreeMap;
-
-    use super::super::tests::{empty_pack, service};
-    use super::*;
-    use crate::pack::{PackParam, PackParamLocation};
-
-    #[test]
-    fn reports_every_failure_at_once() {
-        let mut pack = empty_pack();
-        pack.services.insert("svc".to_owned(), service());
-        // Two independent problems: an unknown service reference, and a script naming a
-        // nonexistent api_call.
-        pack.api_calls.insert(
-            "call-a".to_owned(),
-            PackApiCall {
-                service: "does-not-exist".to_owned(),
-                auth_provider: None,
-                method: "GET".to_owned(),
-                path_template: "/things".to_owned(),
-                query_fixed: BTreeMap::new(),
-                body_template: None,
-                access: "read".to_owned(),
-                idempotent: true,
-                projection: None,
-                pagination: PackPagination::None,
-                timeout_ms: None,
-                max_response_bytes: None,
-                params: Vec::new(),
-                tags: BTreeSet::new(),
-                description: None,
-            },
-        );
-        pack.scripts.insert(
-            "script-a".to_owned(),
-            PackScript {
-                source: "()".to_owned(),
-                params: Vec::new(),
-                callable: BTreeMap::from([("a".to_owned(), "no-such-call".to_owned())]),
-                budgets: Default::default(),
-                description: None,
-                tags: BTreeSet::new(),
-            },
-        );
-
-        let errors = crate::pack::validate(&pack).unwrap_err();
-        assert!(
-            errors.len() >= 2,
-            "expected at least two failures, got {errors:?}"
-        );
-        assert!(
-            errors
-                .iter()
-                .any(|e| matches!(e, ValidationError::ApiCall { .. }))
-        );
-        assert!(
-            errors
-                .iter()
-                .any(|e| matches!(e, ValidationError::Script { .. }))
-        );
-    }
-
-    #[test]
-    fn fixed_param_shape_matches_url_template() {
-        let mut pack = empty_pack();
-        pack.services.insert("svc".to_owned(), service());
-        pack.api_calls.insert(
-            "call-a".to_owned(),
-            PackApiCall {
-                service: "svc".to_owned(),
-                auth_provider: None,
-                method: "GET".to_owned(),
-                path_template: "/items/{id}".to_owned(),
-                query_fixed: BTreeMap::new(),
-                body_template: None,
-                access: "read".to_owned(),
-                idempotent: true,
-                projection: None,
-                pagination: PackPagination::None,
-                timeout_ms: None,
-                max_response_bytes: None,
-                // Missing the `id` path param entirely.
-                params: vec![PackParam {
-                    name: "format".to_owned(),
-                    location: PackParamLocation::Query,
-                    ty: "string".to_owned(),
-                    required: false,
-                    default: None,
-                    fixed: Some(serde_json::json!("json")),
-                    enum_values: None,
-                    description: None,
-                    position: 0,
-                }],
-                tags: BTreeSet::new(),
-                description: None,
-            },
-        );
-        let errors = crate::pack::validate(&pack).unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|e| matches!(e, ValidationError::ApiCall { message, .. } if message.contains("placeholders")))
-        );
-    }
-}
+#[path = "items_tests.rs"]
+mod tests;

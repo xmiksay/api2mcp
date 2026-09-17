@@ -25,6 +25,7 @@ use std::collections::BTreeSet;
 
 use serde::Serialize;
 use thiserror::Error;
+use uuid::Uuid;
 
 use crate::http::TemplateError;
 use crate::model::{ScriptDef, Slug, eval_tag_expr};
@@ -111,10 +112,19 @@ pub enum ResolveError {
 /// Loads endpoint `slug`'s definitions, validates every static invariant, and returns the
 /// resulting immutable plan — or the first violation found, naming what failed. See the
 /// module doc for the pipeline this runs.
-pub async fn build_plan(stores: &Stores, slug: &Slug) -> Result<EndpointPlan, ResolveError> {
+///
+/// Every store read below is scoped to `owner_id`: a user owns everything they create and can
+/// use only their own, so a bare slug reference — the endpoint itself, its selected api_calls
+/// and scripts, an alias target, an auth-provider scope entry — always resolves *within this one
+/// owner*, never across into someone else's definitions of the same slug.
+pub async fn build_plan(
+    stores: &Stores,
+    owner_id: Uuid,
+    slug: &Slug,
+) -> Result<EndpointPlan, ResolveError> {
     let endpoint = stores
         .endpoint()
-        .get(slug)
+        .get(owner_id, slug)
         .await
         .map_err(|e| ResolveError::Store(e.to_string()))?
         .ok_or_else(|| ResolveError::EndpointNotFound {
@@ -123,12 +133,12 @@ pub async fn build_plan(stores: &Stores, slug: &Slug) -> Result<EndpointPlan, Re
 
     let all_api_calls = stores
         .api_call()
-        .list_all()
+        .list_all(owner_id)
         .await
         .map_err(|e| ResolveError::Store(e.to_string()))?;
     let all_scripts = stores
         .script()
-        .list_all()
+        .list_all(owner_id)
         .await
         .map_err(|e| ResolveError::Store(e.to_string()))?;
 
@@ -137,7 +147,7 @@ pub async fn build_plan(stores: &Stores, slug: &Slug) -> Result<EndpointPlan, Re
         if !eval_tag_expr(&endpoint.tag_expr, &tagged.tags) {
             continue;
         }
-        let planned = compile::compile_api_call(stores, &tagged.api_call).await?;
+        let planned = compile::compile_api_call(stores, owner_id, &tagged.api_call).await?;
         calls.insert(tagged.api_call.slug.clone(), planned);
     }
 
@@ -162,7 +172,13 @@ pub async fn build_plan(stores: &Stores, slug: &Slug) -> Result<EndpointPlan, Re
     }
 
     let origins = origins::reachable_origins(&calls)?;
-    auth_bind::assert_bound(&stores.auth_provider(), &calls, &endpoint.auth_providers).await?;
+    auth_bind::assert_bound(
+        &stores.auth_provider(),
+        owner_id,
+        &calls,
+        &endpoint.auth_providers,
+    )
+    .await?;
     budgets::assert_write_ceiling(&calls, endpoint.write_ceiling)?;
 
     let tools = tools::build_tools(&endpoint.aliases, &endpoint.budgets, &calls, &scripts)?;
@@ -177,6 +193,7 @@ pub async fn build_plan(stores: &Stores, slug: &Slug) -> Result<EndpointPlan, Re
     );
 
     Ok(EndpointPlan {
+        owner_id,
         slug: endpoint.slug,
         write_ceiling: endpoint.write_ceiling,
         instructions: endpoint.instructions,
@@ -218,9 +235,11 @@ mod tests {
             return;
         };
         let stores = Stores::new(db.db.clone());
+        let owner_id = db.create_user().await.unwrap();
 
         let base_url: url::Url = "https://svc-i5-e2e.example.com/".parse().unwrap();
         let service = Service {
+            owner_id,
             slug: "svc-i5-e2e".parse().unwrap(),
             base_url: base_url.clone(),
             origin_allowlist: BTreeSet::from([Origin::of(&base_url).unwrap()]),
@@ -233,6 +252,7 @@ mod tests {
         stores.service().create(&service).await.unwrap();
 
         let provider = AuthProvider {
+            owner_id,
             slug: "prov-e2e".parse().unwrap(),
             service_slug: service.slug.clone(),
             kind: AuthKind::StaticHeader,
@@ -250,6 +270,7 @@ mod tests {
             .unwrap();
 
         let call = crate::model::ApiCall {
+            owner_id,
             slug: "call-i5-e2e".parse().unwrap(),
             service_slug: service.slug.clone(),
             auth_provider_slug: Some(provider.slug.clone()),
@@ -273,6 +294,7 @@ mod tests {
             .unwrap();
 
         let ep = EndpointDef {
+            owner_id,
             slug: "ep-i5-e2e".parse().unwrap(),
             tag_expr: crate::model::TagExpr::Has(Tag("expose".parse().unwrap())),
             write_ceiling: crate::model::Access::Read,
@@ -284,7 +306,7 @@ mod tests {
         };
         stores.endpoint().create(&ep).await.unwrap();
 
-        let err = build_plan(&stores, &ep.slug).await.unwrap_err();
+        let err = build_plan(&stores, owner_id, &ep.slug).await.unwrap_err();
         assert!(matches!(err, ResolveError::AuthOriginMismatch { .. }));
 
         db.teardown().await.unwrap();

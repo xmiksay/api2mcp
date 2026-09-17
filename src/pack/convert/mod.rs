@@ -22,6 +22,8 @@ pub(crate) use items::{
 
 use std::collections::BTreeSet;
 
+use uuid::Uuid;
+
 use crate::model::{
     Access, AuthKind, AuthProvider, Budgets, Cardinality, Origin, Pagination, Param, ParamLocation,
     ParamType, Projection, ProjectionField, Service, Slug, SlugError, Tag,
@@ -251,7 +253,11 @@ pub(crate) fn service_to_pack(s: &Service) -> PackService {
     }
 }
 
-pub(crate) fn service_from_pack(slug: Slug, s: &PackService) -> Result<Service, ConvertError> {
+pub(crate) fn service_from_pack(
+    owner_id: Uuid,
+    slug: Slug,
+    s: &PackService,
+) -> Result<Service, ConvertError> {
     let base_url = parse_url(&s.base_url)?;
     let origin_allowlist = s
         .origin_allowlist
@@ -259,6 +265,7 @@ pub(crate) fn service_from_pack(slug: Slug, s: &PackService) -> Result<Service, 
         .map(|o| parse_origin(o))
         .collect::<Result<BTreeSet<_>, _>>()?;
     Ok(Service {
+        owner_id,
         slug,
         base_url,
         origin_allowlist,
@@ -298,11 +305,13 @@ pub(crate) fn auth_provider_to_pack(p: &AuthProvider) -> PackAuthProvider {
 }
 
 pub(crate) fn auth_provider_from_pack(
+    owner_id: Uuid,
     slug: Slug,
     service_slug: Slug,
     p: &PackAuthProvider,
 ) -> Result<AuthProvider, ConvertError> {
     Ok(AuthProvider {
+        owner_id,
         slug,
         service_slug,
         kind: auth_kind_from_pack(p.kind),

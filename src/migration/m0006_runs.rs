@@ -4,10 +4,26 @@
 //! upstream request a run made, keyed by `seq` — the **input index of the fan-out, not
 //! its completion index** (I7 made durable: completion order is never observable, so it
 //! must never be recorded either).
+//!
+//! `runs.owner_id` — a user sees only runs against their own definitions. `endpoint_slug`
+//! alone can no longer answer "whose run is this": slugs are unique per owner
+//! (`m0003_definitions`'s own doc), so two different people's endpoints can share a slug.
+//! Set from the resolved `EndpointPlan::owner_id` (the endpoint definition's own owner) at
+//! record time, not from `caller_id` — that column is a free-form string (`"cli"`,
+//! `"admin-test:<uuid>"`, a token owner's uuid, ...) with no single parseable shape, where
+//! `owner_id` is a plain, always-present foreign key. Amended into this migration (not a new
+//! one) — same unmerged-branch reasoning as `m0003`.
 
 use sea_orm_migration::prelude::*;
 
 use super::helpers::{timestamptz_now, uuid_col, uuid_pk};
+
+/// Redeclared from `m0001_init`'s own table — see `migration`'s module doc.
+#[derive(DeriveIden)]
+enum Users {
+    Table,
+    Id,
+}
 
 pub struct Migration;
 
@@ -21,6 +37,7 @@ impl MigrationName for Migration {
 enum Runs {
     Table,
     Id,
+    OwnerId,
     EndpointSlug,
     ToolName,
     TargetKind,
@@ -28,6 +45,7 @@ enum Runs {
     CallerKind,
     CallerId,
     RequestId,
+    ExecutionStart,
     DefinitionSnapshot,
     DefinitionDigest,
     InputRedacted,
@@ -71,6 +89,7 @@ impl MigrationTrait for Migration {
                     .table(Runs::Table)
                     .if_not_exists()
                     .col(uuid_pk(Runs::Id))
+                    .col(uuid_col(Runs::OwnerId))
                     .col(ColumnDef::new(Runs::EndpointSlug).text().not_null())
                     .col(ColumnDef::new(Runs::ToolName).text().not_null())
                     .col(ColumnDef::new(Runs::TargetKind).text().not_null())
@@ -78,6 +97,15 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Runs::CallerKind).text().not_null())
                     .col(ColumnDef::new(Runs::CallerId).text().not_null())
                     .col(ColumnDef::new(Runs::RequestId).text().not_null())
+                    // The single wall-clock instant `BudgetMeter::new` froze for this run, and
+                    // the source of truth `script::dates::execution_start()` reads from — without
+                    // it, a run record can't actually be replayed deterministically (I7's own
+                    // wording), only claimed to be.
+                    .col(
+                        ColumnDef::new(Runs::ExecutionStart)
+                            .timestamp_with_time_zone()
+                            .not_null(),
+                    )
                     .col(
                         ColumnDef::new(Runs::DefinitionSnapshot)
                             .json_binary()
@@ -110,7 +138,12 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Runs::Timings).json_binary().null())
                     .col(timestamptz_now(Runs::CreatedAt))
                     .check(Expr::col(Runs::TargetKind).is_in(["api_call", "script"]))
-                    .check(Expr::col(Runs::CallerKind).is_in(["oauth", "service_token"]))
+                    .check(Expr::col(Runs::CallerKind).is_in([
+                        "session",
+                        "oauth",
+                        "service_token",
+                        "cli",
+                    ]))
                     .check(Expr::col(Runs::Status).is_in([
                         "ok",
                         "partial",
@@ -119,14 +152,32 @@ impl MigrationTrait for Migration {
                         "budget_exceeded",
                         "timeout",
                     ]))
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_runs_owner")
+                            .from(Runs::Table, Runs::OwnerId)
+                            .to(Users::Table, Users::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
                     .to_owned(),
             )
             .await?;
         manager
             .create_index(
                 Index::create()
-                    .name("ix_runs_endpoint_slug_created_at")
+                    .name("ix_runs_owner_created_at")
                     .table(Runs::Table)
+                    .col(Runs::OwnerId)
+                    .col(Runs::CreatedAt)
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .create_index(
+                Index::create()
+                    .name("ix_runs_owner_endpoint_slug_created_at")
+                    .table(Runs::Table)
+                    .col(Runs::OwnerId)
                     .col(Runs::EndpointSlug)
                     .col(Runs::CreatedAt)
                     .to_owned(),

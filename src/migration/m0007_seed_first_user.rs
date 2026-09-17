@@ -1,12 +1,16 @@
-//! m0007 — seed the first admin user from `A2M_ADMIN_EMAIL`/`A2M_ADMIN_PASSWORD`, so a
-//! fresh deployment has a way into the server-rendered login without a manual `INSERT`.
-//! Idempotent: a no-op when either variable is unset, or when a `users` row already
-//! exists (an operator who already created an account should never be silently handed a
-//! second one, or have their own password overwritten by a stale env var).
+//! m0007 — seed the very first user from `A2M_SEED_EMAIL`/`A2M_SEED_PASSWORD`, so a fresh
+//! deployment has a way into the server-rendered login without a manual `INSERT`. There is no
+//! "admin" left to seed (see `entity::users`'s own doc): every user can read and write every
+//! definition, so this just creates *a* user, not a privileged one.
 //!
-//! Raw SQL rather than an [`crate::entity::users`] `ActiveModel`: a migration must keep
-//! working unchanged even after the entity's shape moves on, since migrations are
-//! append-only and never edited again.
+//! Idempotent: a no-op when either variable is unset, or when a `users` row already exists (an
+//! operator who already created an account should never be silently handed a second one, or
+//! have their own password overwritten by a stale env var).
+//!
+//! Raw SQL rather than an [`crate::entity::users`] `ActiveModel`: a migration must keep working
+//! unchanged even after the entity's shape moves on, since migrations are append-only and never
+//! edited again. Renamed from `m0007_seed_admin` in place (not appended as a corrective
+//! migration) — the branch is unmerged and nothing is deployed yet.
 
 use anyhow::Context;
 use argon2::{Argon2, PasswordHasher};
@@ -17,7 +21,7 @@ pub struct Migration;
 
 impl MigrationName for Migration {
     fn name(&self) -> &str {
-        "m0007_seed_admin"
+        "m0007_seed_first_user"
     }
 }
 
@@ -25,8 +29,8 @@ impl MigrationName for Migration {
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let (Some(email), Some(password)) = (
-            non_empty_env("A2M_ADMIN_EMAIL"),
-            non_empty_env("A2M_ADMIN_PASSWORD"),
+            non_empty_env("A2M_SEED_EMAIL"),
+            non_empty_env("A2M_SEED_PASSWORD"),
         ) else {
             return Ok(());
         };
@@ -37,11 +41,11 @@ impl MigrationTrait for Migration {
         }
 
         let hash = hash_password(&password)
-            .map_err(|e| DbErr::Custom(format!("hashing seed admin password: {e:#}")))?;
+            .map_err(|e| DbErr::Custom(format!("hashing seed user password: {e:#}")))?;
 
         conn.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "INSERT INTO users (email, password_hash, is_admin) VALUES ($1, $2, true)",
+            "INSERT INTO users (email, password_hash) VALUES ($1, $2)",
             [email.into(), hash.into()],
         ))
         .await?;
@@ -54,7 +58,7 @@ impl MigrationTrait for Migration {
         // still deletes whatever row now has this email. Acceptable for a best-effort
         // dev/first-boot seed — the migration round-trip test never sets these env vars,
         // so both directions are no-ops there.
-        let Some(email) = non_empty_env("A2M_ADMIN_EMAIL") else {
+        let Some(email) = non_empty_env("A2M_SEED_EMAIL") else {
             return Ok(());
         };
         manager

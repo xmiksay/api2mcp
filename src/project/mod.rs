@@ -2,9 +2,9 @@
 //!
 //! [`Projection`] is a DB-row-shaped description; [`CompiledProjection::compile`] parses every
 //! field's path exactly once, and [`apply`] runs the already-compiled projection against a
-//! response body — never re-parsing a JSONPath expression per call. (The chunk brief describes
-//! `apply`'s signature as taking `&Projection` directly; that's in tension with "compiled once,
-//! not per call", so this module resolves it in favour of the invariant — see the chunk report.)
+//! response body — never re-parsing a JSONPath expression per call. `apply` therefore takes a
+//! [`CompiledProjection`], not a `&Projection` directly, to keep "compiled once, not per call" an
+//! invariant of the type rather than a convention callers have to remember.
 //!
 //! Cardinality semantics are the whole point of this module:
 //! - [`Cardinality::One`] matching **2+ nodes is a hard error**, never `first()` — a silent `[0]`
@@ -157,11 +157,11 @@ fn project_many(field: &CompiledField, nodes: Vec<&Value>) -> Result<Value, Proj
         })
 }
 
-/// Narrow, definer-opted-in coercion — mirrors `schema::coerce::coerce`'s semantics exactly, but
-/// can't call it directly: that function lives in `schema`'s private `coerce` submodule (`mod
-/// coerce;`, not `pub mod`), which this chunk doesn't own and can't re-export from. See the chunk
-/// report for the follow-up (`pub(crate)` + re-export) that would let this delegate instead of
-/// duplicate.
+/// Narrow, definer-opted-in coercion — duplicates `schema::coerce::coerce`'s semantics field by
+/// field instead of calling it, even though `schema::coerce` is `pub(crate)` and `coerce`'s
+/// signature (`fn(ParamType, &Value) -> Result<Value, &'static str>`) already matches this
+/// function exactly. Collapsing this into a direct call to `crate::schema::coerce::coerce` would
+/// remove the duplication.
 fn coerce_value(ty: ParamType, value: &Value) -> Result<Value, &'static str> {
     match ty {
         ParamType::String => match value {

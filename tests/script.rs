@@ -10,7 +10,13 @@
 //! under the workspace's 400-line cap (mirroring `tests/fixture/harness.rs`'s own reason for
 //! existing next to `tests/fixture/mod.rs`).
 
+#[path = "script/dates_tests.rs"]
+mod dates_tests;
 mod fixture;
+#[path = "script/json_yaml_tests.rs"]
+mod json_yaml_tests;
+#[path = "script/regex_tests.rs"]
+mod regex_tests;
 #[path = "script/support.rs"]
 mod support;
 

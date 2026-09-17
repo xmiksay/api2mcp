@@ -14,7 +14,8 @@ mod m0003_definitions;
 mod m0004_scripts_tags;
 mod m0005_endpoints;
 mod m0006_runs;
-mod m0007_seed_admin;
+mod m0007_seed_first_user;
+mod m0008_control_plane_tokens;
 
 pub use sea_orm_migration::MigratorTrait;
 
@@ -30,7 +31,8 @@ impl MigratorTrait for Migrator {
             Box::new(m0004_scripts_tags::Migration),
             Box::new(m0005_endpoints::Migration),
             Box::new(m0006_runs::Migration),
-            Box::new(m0007_seed_admin::Migration),
+            Box::new(m0007_seed_first_user::Migration),
+            Box::new(m0008_control_plane_tokens::Migration),
         ]
     }
 }

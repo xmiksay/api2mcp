@@ -1,5 +1,5 @@
 //! `meta` façade — a generic key/value table whose one load-bearing row is
-//! `definitions_generation`, the counter [`crate::resolve`]'s plan cache (chunk C6) is keyed
+//! `definitions_generation`, the counter [`crate::resolve`]'s plan cache is keyed
 //! on. Every write path in this module that changes a definition (a service, auth
 //! provider, api_call, script, endpoint, or tag membership) bumps this counter in the same
 //! transaction as its own write, so a cached `EndpointPlan` invalidates the moment anything

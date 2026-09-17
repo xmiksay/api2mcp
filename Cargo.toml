@@ -56,6 +56,10 @@ rand = "0.9"
 base64 = "0.22"
 zeroize = { version = "1", features = ["derive"] }
 
+# Script-facing text matching. The regex crate is linear-time by construction (no backtracking),
+# so a pattern cannot be crafted to hang a script the way a PCRE-style engine can.
+regex = "1"
+
 # Errors / logging / CLI / misc
 anyhow = "1"
 thiserror = "2"

@@ -1,7 +1,11 @@
-//! `auth_providers` façade. I5 lives here structurally: every write method is
-//! `pub(crate)`, so only `pack::import` and `cli` (this crate's two humans-in-the-loop) can
-//! bind a credential to an origin — no MCP tool or read-only API route can reach them
-//! because they can't even import this module's write surface.
+//! `auth_providers` façade. I5's structural half lives one layer up from here: every write
+//! method below is `pub(crate)` (visible anywhere in this crate, `server::api` included), so
+//! the actual gate is *who can even reach the route that calls one* — `server/api/auth_providers.rs`
+//! is wired behind the [`crate::server::identity::Caller`] extractor, which only ever resolves
+//! from a session cookie (never an `Authorization` bearer token, see that extractor's own doc),
+//! so a service token cannot construct a `Caller` at all and therefore cannot reach this
+//! module's write surface regardless of its scopes. `pack::import` and `cli` are this crate's
+//! other two humans-in-the-loop; no MCP tool reaches these methods under any caller.
 //!
 //! The DB's `kind` CHECK allows three values (`header`, `bearer`,
 //! `oauth2_client_credentials`) but [`crate::model::AuthKind`] has two variants: `header`
@@ -39,15 +43,17 @@ impl AuthProviderStore {
 
     pub async fn get(
         &self,
+        owner_id: Uuid,
         service_slug: &Slug,
         slug: &Slug,
     ) -> Result<Option<AuthProvider>, StoreError> {
-        let service_id = match self.services().id_by_slug(service_slug).await {
+        let service_id = match self.services().id_by_slug(owner_id, service_slug).await {
             Ok(id) => id,
             Err(StoreError::NotFound) => return Ok(None),
             Err(e) => return Err(e),
         };
         let row = auth_providers::Entity::find()
+            .filter(auth_providers::Column::OwnerId.eq(owner_id))
             .filter(auth_providers::Column::ServiceId.eq(service_id))
             .filter(auth_providers::Column::Slug.eq(slug.as_str()))
             .one(&self.db)
@@ -58,10 +64,12 @@ impl AuthProviderStore {
 
     pub async fn list_for_service(
         &self,
+        owner_id: Uuid,
         service_slug: &Slug,
     ) -> Result<Vec<AuthProvider>, StoreError> {
-        let service_id = self.services().id_by_slug(service_slug).await?;
+        let service_id = self.services().id_by_slug(owner_id, service_slug).await?;
         let rows = auth_providers::Entity::find()
+            .filter(auth_providers::Column::OwnerId.eq(owner_id))
             .filter(auth_providers::Column::ServiceId.eq(service_id))
             .order_by_asc(auth_providers::Column::Slug)
             .all(&self.db)
@@ -72,15 +80,31 @@ impl AuthProviderStore {
             .collect()
     }
 
-    /// I5: a human (via `pack::import` or `cli`) is the only caller that may bind a
-    /// credential to an origin. Those callers don't exist yet (later chunks); until then this
-    /// is only reachable from this module's own unit tests, hence the `cfg_attr` below —
-    /// scoped to non-test builds only, so it can never mask a real regression.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Every auth provider across every service `owner_id` owns — a read, so (unlike
+    /// `create`/`update`/`delete`) not gated by I5; `server::api`'s `GET /api/auth_providers` is
+    /// this method's caller. Not paginated, matching `ApiCallStore::list_all`'s own reasoning:
+    /// the definition set is operator-curated, not user-generated data.
+    pub async fn list_all(&self, owner_id: Uuid) -> Result<Vec<AuthProvider>, StoreError> {
+        let mut out = Vec::new();
+        for svc in self.services().list(owner_id).await? {
+            out.extend(self.list_for_service(owner_id, &svc.slug).await?);
+        }
+        Ok(out)
+    }
+
+    /// I5: a human (via `pack::import`, `cli`, or an admin-session request handled by
+    /// `server::api::auth_providers`) is the only caller that may bind a credential to an
+    /// origin — see this module's own doc for why that's true structurally, not just by
+    /// convention. `provider.owner_id` must already equal the owner of `provider.service_slug`'s
+    /// service — resolving the service scoped to that same owner is what enforces "cannot attach
+    /// a credential to someone else's service" rather than merely documenting it.
     pub(crate) async fn create(&self, provider: &AuthProvider) -> Result<(), StoreError> {
-        let service_id = self.services().id_by_slug(&provider.service_slug).await?;
+        let service_id = self
+            .services()
+            .id_by_slug(provider.owner_id, &provider.service_slug)
+            .await?;
         if self
-            .get(&provider.service_slug, &provider.slug)
+            .get(provider.owner_id, &provider.service_slug, &provider.slug)
             .await?
             .is_some()
         {
@@ -103,11 +127,13 @@ impl AuthProviderStore {
         txn.commit().await.map_err(db_err("auth_provider::create"))
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) async fn update(&self, provider: &AuthProvider) -> Result<(), StoreError> {
-        let service_id = self.services().id_by_slug(&provider.service_slug).await?;
+        let service_id = self
+            .services()
+            .id_by_slug(provider.owner_id, &provider.service_slug)
+            .await?;
         let id = self
-            .id_by_slug(&provider.service_slug, &provider.slug)
+            .id_by_slug(provider.owner_id, &provider.service_slug, &provider.slug)
             .await?;
         let txn = self
             .db
@@ -124,9 +150,13 @@ impl AuthProviderStore {
         txn.commit().await.map_err(db_err("auth_provider::update"))
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) async fn delete(&self, service_slug: &Slug, slug: &Slug) -> Result<(), StoreError> {
-        let id = self.id_by_slug(service_slug, slug).await?;
+    pub(crate) async fn delete(
+        &self,
+        owner_id: Uuid,
+        service_slug: &Slug,
+        slug: &Slug,
+    ) -> Result<(), StoreError> {
+        let id = self.id_by_slug(owner_id, service_slug, slug).await?;
         let txn = self
             .db
             .begin()
@@ -142,11 +172,13 @@ impl AuthProviderStore {
 
     pub(crate) async fn id_by_slug(
         &self,
+        owner_id: Uuid,
         service_slug: &Slug,
         slug: &Slug,
     ) -> Result<Uuid, StoreError> {
-        let service_id = self.services().id_by_slug(service_slug).await?;
+        let service_id = self.services().id_by_slug(owner_id, service_slug).await?;
         auth_providers::Entity::find()
+            .filter(auth_providers::Column::OwnerId.eq(owner_id))
             .filter(auth_providers::Column::ServiceId.eq(service_id))
             .filter(auth_providers::Column::Slug.eq(slug.as_str()))
             .one(&self.db)
@@ -156,17 +188,22 @@ impl AuthProviderStore {
             .ok_or(StoreError::NotFound)
     }
 
-    /// Resolves a bare auth-provider slug to its primary key, with no service to scope by —
-    /// needed by `store::endpoint`, since `EndpointDef::auth_providers` (a fixed part of the
-    /// model) is a `BTreeSet<Slug>`, not a set of `(service, slug)` pairs. Safe because
-    /// `auth_providers.slug` is `UNIQUE` globally (`ux_auth_providers_slug`), so at most one
-    /// row can ever match.
-    pub(crate) async fn id_by_slug_global(&self, slug: &Slug) -> Result<Uuid, StoreError> {
+    /// Resolves a bare auth-provider slug to its primary key, scoped to `owner_id` but with no
+    /// service to scope by beyond that — needed by `store::endpoint`, since
+    /// `EndpointDef::auth_providers` (a fixed part of the model) is a `BTreeSet<Slug>`, not a set
+    /// of `(service, slug)` pairs. Safe because `auth_providers.slug` is `UNIQUE` per owner
+    /// (`ux_auth_providers_owner_slug`), so at most one row can ever match for a given owner.
+    pub(crate) async fn id_by_slug_for_owner(
+        &self,
+        owner_id: Uuid,
+        slug: &Slug,
+    ) -> Result<Uuid, StoreError> {
         auth_providers::Entity::find()
+            .filter(auth_providers::Column::OwnerId.eq(owner_id))
             .filter(auth_providers::Column::Slug.eq(slug.as_str()))
             .one(&self.db)
             .await
-            .map_err(db_err("auth_provider::id_by_slug_global"))?
+            .map_err(db_err("auth_provider::id_by_slug_for_owner"))?
             .map(|r| r.id)
             .ok_or(StoreError::NotFound)
     }
@@ -200,6 +237,7 @@ fn to_active_model(
     };
     auth_providers::ActiveModel {
         id: Set(id),
+        owner_id: Set(provider.owner_id),
         service_id: Set(service_id),
         slug: Set(provider.slug.as_str().to_owned()),
         kind: Set(kind.to_owned()),
@@ -236,6 +274,7 @@ fn to_model(row: auth_providers::Model, service_slug: Slug) -> Result<AuthProvid
     let token_url = row.token_url.as_deref().map(super::parse_url).transpose()?;
 
     Ok(AuthProvider {
+        owner_id: row.owner_id,
         slug: parse_slug(&row.slug)?,
         service_slug,
         kind,
@@ -259,9 +298,10 @@ mod tests {
     use crate::store::test_support::ScratchDb;
     use std::collections::{BTreeMap, BTreeSet};
 
-    fn sample_service(slug: &str) -> Service {
+    fn sample_service(owner_id: Uuid, slug: &str) -> Service {
         let base_url: url::Url = format!("https://{slug}.example.com/").parse().unwrap();
         Service {
+            owner_id,
             slug: slug.parse().unwrap(),
             base_url: base_url.clone(),
             origin_allowlist: BTreeSet::from([Origin::of(&base_url).unwrap()]),
@@ -273,8 +313,9 @@ mod tests {
         }
     }
 
-    fn sample_provider(service_slug: &Slug, slug: &str) -> AuthProvider {
+    fn sample_provider(owner_id: Uuid, service_slug: &Slug, slug: &str) -> AuthProvider {
         AuthProvider {
+            owner_id,
             slug: slug.parse().unwrap(),
             service_slug: service_slug.clone(),
             kind: AuthKind::StaticHeader,
@@ -293,17 +334,18 @@ mod tests {
             eprintln!("skipping: TEST_DATABASE_URL not set");
             return;
         };
+        let owner_id = scratch.create_user().await.expect("create user");
 
         let services = crate::store::ServiceStore::new(scratch.db.clone());
-        let service = sample_service("auth-provider-test-svc");
+        let service = sample_service(owner_id, "auth-provider-test-svc");
         services.create(&service).await.expect("create service");
 
         let store = AuthProviderStore::new(scratch.db.clone());
-        let provider = sample_provider(&service.slug, "primary");
+        let provider = sample_provider(owner_id, &service.slug, "primary");
         store.create(&provider).await.expect("create provider");
 
         let fetched = store
-            .get(&service.slug, &provider.slug)
+            .get(owner_id, &service.slug, &provider.slug)
             .await
             .expect("get provider")
             .expect("provider exists");
@@ -314,19 +356,19 @@ mod tests {
         updated.value_template = "{token}".into();
         store.update(&updated).await.expect("update provider");
         let refetched = store
-            .get(&service.slug, &provider.slug)
+            .get(owner_id, &service.slug, &provider.slug)
             .await
             .expect("get provider")
             .expect("provider still exists");
         assert_eq!(refetched, updated);
 
         store
-            .delete(&service.slug, &provider.slug)
+            .delete(owner_id, &service.slug, &provider.slug)
             .await
             .expect("delete provider");
         assert!(
             store
-                .get(&service.slug, &provider.slug)
+                .get(owner_id, &service.slug, &provider.slug)
                 .await
                 .expect("get after delete")
                 .is_none()

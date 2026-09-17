@@ -107,6 +107,7 @@ mod tests {
     fn service(slug: &str, max_concurrency: u32) -> Service {
         let base_url: url::Url = format!("https://{slug}.example.com/").parse().unwrap();
         Service {
+            owner_id: uuid::Uuid::nil(),
             slug: slug.parse().unwrap(),
             base_url: base_url.clone(),
             origin_allowlist: BTreeSet::from([Origin::of(&base_url).unwrap()]),
@@ -121,6 +122,7 @@ mod tests {
     fn plan_with_one_service(max_concurrency: u32) -> EndpointPlan {
         let svc = service("svc", max_concurrency);
         let call = ApiCall {
+            owner_id: uuid::Uuid::nil(),
             slug: "call-a".parse().unwrap(),
             service_slug: svc.slug.clone(),
             auth_provider_slug: None,
@@ -147,6 +149,7 @@ mod tests {
         let mut calls = BTreeMap::new();
         calls.insert(call.slug.clone(), planned);
         EndpointPlan {
+            owner_id: uuid::Uuid::nil(),
             slug: "ep".parse().unwrap(),
             write_ceiling: Access::Read,
             instructions: None,

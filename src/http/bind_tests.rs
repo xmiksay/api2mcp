@@ -8,6 +8,7 @@ use std::str::FromStr;
 
 fn test_service() -> Service {
     Service {
+        owner_id: uuid::Uuid::nil(),
         slug: Slug::from_str("demo").expect("valid slug"),
         base_url: url::Url::parse("https://api.example.com").expect("valid url"),
         origin_allowlist: Default::default(),
@@ -35,6 +36,7 @@ fn plain_param(name: &str, position: i32) -> Param {
 
 fn test_call(path_template: &str, params: Vec<Param>) -> ApiCall {
     ApiCall {
+        owner_id: uuid::Uuid::nil(),
         slug: Slug::from_str("get-item").expect("valid slug"),
         service_slug: Slug::from_str("demo").expect("valid slug"),
         auth_provider_slug: None,

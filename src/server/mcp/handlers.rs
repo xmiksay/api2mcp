@@ -39,10 +39,11 @@ pub(super) async fn tools_call(
         .cloned()
         .unwrap_or_else(|| json!({}));
 
-    // `server::auth::authenticate_mcp` resolves only bearer service tokens in this build (OAuth
-    // access tokens are chunk C12's addition to it); the caller id it hands back is that token's
-    // owner, so `RunCallerKind::ServiceToken` is the only value reachable here today.
-    let caller_kind = RunCallerKind::ServiceToken;
+    // `server::auth::authenticate_mcp` resolves either an OAuth 2.1 access token or a static
+    // service token, and `caller.kind` (`CallerKind::Oauth`/`CallerKind::ServiceToken`) already
+    // says which — `From<CallerKind> for RunCallerKind` (`server::identity`) is the one place
+    // that mapping is written down.
+    let caller_kind = RunCallerKind::from(caller.kind);
     let caller_id = caller.id.to_string();
 
     match invoke::dispatch(executor, plan, name, arguments, caller_kind, caller_id).await {

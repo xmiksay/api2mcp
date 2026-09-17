@@ -14,6 +14,7 @@ use api2mcp::model::{
 };
 use api2mcp::pack;
 use api2mcp::store::Stores;
+use uuid::Uuid;
 
 fn slug(s: &str) -> Slug {
     s.parse().expect("valid slug")
@@ -23,9 +24,10 @@ fn tag(s: &str) -> Tag {
     Tag(slug(s))
 }
 
-fn service(name: &str) -> Service {
+fn service(owner_id: Uuid, name: &str) -> Service {
     let base_url: url::Url = format!("https://{name}.example.com/").parse().unwrap();
     Service {
+        owner_id,
         slug: slug(name),
         base_url: base_url.clone(),
         origin_allowlist: BTreeSet::from([Origin::of(&base_url).unwrap()]),
@@ -38,10 +40,11 @@ fn service(name: &str) -> Service {
 }
 
 /// One service, one tagged (and documented) api_call, one endpoint selecting it.
-async fn seed(stores: &Stores) -> Result<Slug> {
-    let svc = service("svc-desc");
+async fn seed(stores: &Stores, owner_id: Uuid) -> Result<Slug> {
+    let svc = service(owner_id, "svc-desc");
     stores.service().create(&svc).await?;
     let call = ApiCall {
+        owner_id,
         slug: slug("call-desc"),
         service_slug: svc.slug.clone(),
         auth_provider_slug: None,
@@ -63,6 +66,7 @@ async fn seed(stores: &Stores) -> Result<Slug> {
         .create(&call, &BTreeSet::from([tag("expose")]))
         .await?;
     let ep = EndpointDef {
+        owner_id,
         slug: slug("ep-desc"),
         tag_expr: TagExpr::Has(tag("expose")),
         write_ceiling: Access::Read,
@@ -87,9 +91,10 @@ async fn api_call_description_survives_export_and_import() -> Result<()> {
     };
     source.migrate_up().await?;
     let source_stores = Stores::new(source.conn.clone());
-    let ep_slug = seed(&source_stores).await?;
+    let source_owner = source.create_user().await?;
+    let ep_slug = seed(&source_stores, source_owner).await?;
 
-    let exported = pack::export_endpoint(&source_stores, &ep_slug).await?;
+    let exported = pack::export_endpoint(&source_stores, source_owner, &ep_slug).await?;
     let packed_call = exported
         .api_calls
         .get("call-desc")
@@ -105,11 +110,12 @@ async fn api_call_description_survives_export_and_import() -> Result<()> {
     };
     target.migrate_up().await?;
     let target_stores = Stores::new(target.conn.clone());
-    pack::import(&target_stores, &exported, false).await?;
+    let target_owner = target.create_user().await?;
+    pack::import(&target_stores, &exported, false, target_owner).await?;
 
     let fetched = target_stores
         .api_call()
-        .get(&slug("svc-desc"), &slug("call-desc"))
+        .get(target_owner, &slug("svc-desc"), &slug("call-desc"))
         .await?
         .expect("api_call imported");
     assert_eq!(

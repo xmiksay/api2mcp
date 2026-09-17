@@ -8,9 +8,8 @@
 //! detail reaches a client" a property of this one conversion point rather than a discipline
 //! every route handler has to remember on its own.
 //!
-//! Not yet wired into a route: the read-only JSON API (chunk C14) is this type's first real
-//! caller. Built and tested now, the same call `secret::Secret::into_header_value` makes about
-//! shipping a type ahead of its caller, rather than sketching it under time pressure later.
+//! Wired into every route in `server::api` (the read-write admin JSON API) — this
+//! type's first real caller.
 
 use axum::Json;
 use axum::http::StatusCode;
@@ -21,11 +20,15 @@ use crate::http::redact_message;
 use crate::store::StoreError;
 
 #[derive(Debug)]
-#[allow(dead_code)] // first real caller is chunk C14's read-only JSON API.
 pub enum ApiError {
     NotFound(String),
     BadRequest(String),
     Forbidden(String),
+    /// Every failure `pack::validate` found against the definitions as they would look *after*
+    /// a pending write — plural because the whole point of validating before persisting is
+    /// reporting every problem in one pass, not stopping at the first one found (see
+    /// `server::api::validate_write`).
+    Validation(Vec<String>),
     /// A store/database failure, or anything else that must never describe itself to a client —
     /// the message is always the fixed string below, never `err.to_string()`.
     Internal,
@@ -49,17 +52,22 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let (status, message) = match self {
-            ApiError::NotFound(m) => (StatusCode::NOT_FOUND, m),
-            ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
-            ApiError::Forbidden(m) => (StatusCode::FORBIDDEN, m),
-            ApiError::Internal => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal error".to_owned(),
-            ),
+        let errors = match self {
+            ApiError::Validation(errors) => errors,
+            ApiError::NotFound(m) => return single(StatusCode::NOT_FOUND, &m),
+            ApiError::BadRequest(m) => return single(StatusCode::BAD_REQUEST, &m),
+            ApiError::Forbidden(m) => return single(StatusCode::FORBIDDEN, &m),
+            ApiError::Internal => {
+                return single(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
+            }
         };
-        (status, Json(json!({ "error": redact_message(&message) }))).into_response()
+        let redacted: Vec<String> = errors.iter().map(|e| redact_message(e)).collect();
+        (StatusCode::BAD_REQUEST, Json(json!({ "errors": redacted }))).into_response()
     }
+}
+
+fn single(status: StatusCode, message: &str) -> Response {
+    (status, Json(json!({ "error": redact_message(message) }))).into_response()
 }
 
 #[cfg(test)]
@@ -92,6 +100,21 @@ mod tests {
     fn store_db_error_never_reaches_the_client_as_a_message() {
         let response = ApiError::from_store(StoreError::Db).into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn validation_reports_every_error_at_once_under_the_errors_key() {
+        let response = ApiError::Validation(vec!["first problem".into(), "second problem".into()])
+            .into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("reading the response body");
+        let value: serde_json::Value = serde_json::from_slice(&body).expect("json body");
+        let errors = value["errors"].as_array().expect("errors array");
+        assert_eq!(errors.len(), 2);
+        assert_eq!(errors[0], "first problem");
+        assert_eq!(errors[1], "second problem");
     }
 
     #[tokio::test]

@@ -6,6 +6,7 @@
 use std::collections::BTreeSet;
 
 use serde_json_path::JsonPath;
+use uuid::Uuid;
 
 use crate::http::{Segment, UrlTemplate};
 use crate::model::{ApiCall, ParamLocation, Projection, Slug};
@@ -16,11 +17,12 @@ use super::plan::{CompiledProjection, CompiledProjectionField, PlannedApiCall};
 
 pub(super) async fn compile_api_call(
     stores: &Stores,
+    owner_id: Uuid,
     api_call: &ApiCall,
 ) -> Result<PlannedApiCall, ResolveError> {
     let service = stores
         .service()
-        .get_by_slug(&api_call.service_slug)
+        .get_by_slug(owner_id, &api_call.service_slug)
         .await
         .map_err(|e| ResolveError::Store(e.to_string()))?
         .ok_or_else(|| {
@@ -134,6 +136,7 @@ mod tests {
 
     fn sample_api_call() -> ApiCall {
         ApiCall {
+            owner_id: uuid::Uuid::nil(),
             slug: "call-a".parse().unwrap(),
             service_slug: "svc".parse().unwrap(),
             auth_provider_slug: None,

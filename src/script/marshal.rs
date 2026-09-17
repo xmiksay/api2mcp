@@ -14,6 +14,8 @@ use rhai::{Array, Dynamic, Map};
 use serde_json::{Map as JsonMap, Number, Value};
 use thiserror::Error;
 
+use super::dates::Timestamp;
+
 /// Recursion bound in both directions. An attacker-shaped upstream response (or a script return
 /// value built to match) with unbounded nesting is a stack overflow, which is not an error either
 /// direction can report — refusing past a fixed depth is.
@@ -127,6 +129,15 @@ fn to_json_depth(value: &Dynamic, depth: usize) -> Result<Value, MarshalError> {
         }
         return Ok(Value::Object(out));
     }
+    // One-directional: a `Timestamp` returned from a script becomes an RFC 3339 JSON string, but
+    // `to_dynamic` never does the reverse (a JSON string that merely *looks* date-shaped is never
+    // auto-promoted to a `Timestamp`) — implicit type inference on an arbitrary incoming string
+    // would be surprising, and could misfire on a string field that only coincidentally looks
+    // like a date. Checked last, after every native rhai type above, since those checks are exact
+    // and this one is a custom-type downcast.
+    if let Some(ts) = value.clone().try_cast::<Timestamp>() {
+        return Ok(Value::String(ts.to_rfc3339()));
+    }
     Err(MarshalError::UnsupportedType(value.type_name()))
 }
 
@@ -196,6 +207,25 @@ mod tests {
         let d = Dynamic::from(blob);
         let err = to_json(&d).unwrap_err();
         assert!(matches!(err, MarshalError::UnsupportedType(_)));
+    }
+
+    #[test]
+    fn timestamp_marshals_out_as_an_rfc3339_string_but_never_back_in() {
+        let ts = Timestamp::from(
+            chrono::DateTime::parse_from_rfc3339("2024-03-05T12:30:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+        );
+        let json = to_json(&Dynamic::from(ts)).expect("Timestamp marshals to a JSON string");
+        assert_eq!(json, Value::String("2024-03-05T12:30:00+00:00".to_owned()));
+
+        // The reverse direction never promotes a date-shaped string back into a `Timestamp` — see
+        // the comment at the `to_json_depth` call site.
+        let back = to_dynamic(&json).expect("string marshals back in");
+        assert!(
+            back.is_string(),
+            "must stay a plain string, not a Timestamp"
+        );
     }
 
     #[test]

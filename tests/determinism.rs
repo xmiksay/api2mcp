@@ -28,6 +28,7 @@ fn plan_with_n_calls(fixture: &Fixture) -> EndpointPlan {
     for i in 0..N {
         let name = format!("call-{i}");
         let call = ApiCall {
+            owner_id: uuid::Uuid::nil(),
             slug: slug(&name),
             service_slug: service.slug.clone(),
             auth_provider_slug: None,
@@ -60,6 +61,7 @@ fn plan_with_n_calls(fixture: &Fixture) -> EndpointPlan {
         calls.insert(call.slug.clone(), planned);
     }
     EndpointPlan {
+        owner_id: uuid::Uuid::nil(),
         slug: slug("ep-determinism"),
         write_ceiling: Access::Read,
         instructions: None,

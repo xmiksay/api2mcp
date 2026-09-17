@@ -34,11 +34,15 @@ impl ServiceStore {
         Self { db }
     }
 
-    /// Inserts a new service row. [`StoreError::Conflict`] if `service.slug` is already
-    /// taken — surfacing the unique-index violation as a typed error instead of a bare
-    /// [`StoreError::Db`].
+    /// Inserts a new service row. [`StoreError::Conflict`] if `service.owner_id`/`service.slug`
+    /// already has a row — surfacing the unique-index violation as a typed error instead of a
+    /// bare [`StoreError::Db`].
     pub async fn create(&self, service: &Service) -> Result<(), StoreError> {
-        if self.get_by_slug(&service.slug).await?.is_some() {
+        if self
+            .get_by_slug(service.owner_id, &service.slug)
+            .await?
+            .is_some()
+        {
             return Err(StoreError::Conflict(format!(
                 "service {:?} already exists",
                 service.slug.as_str()
@@ -53,9 +57,9 @@ impl ServiceStore {
         txn.commit().await.map_err(db_err("service::create"))
     }
 
-    /// Replaces every field of the service identified by `service.slug`.
+    /// Replaces every field of the service identified by `(service.owner_id, service.slug)`.
     pub async fn update(&self, service: &Service) -> Result<(), StoreError> {
-        let id = self.id_by_slug(&service.slug).await?;
+        let id = self.id_by_slug(service.owner_id, &service.slug).await?;
         let txn = self.db.begin().await.map_err(db_err("service::update"))?;
         let mut active = to_active_model(service, id);
         active.updated_at = Set(Utc::now().into());
@@ -67,8 +71,13 @@ impl ServiceStore {
         txn.commit().await.map_err(db_err("service::update"))
     }
 
-    pub async fn get_by_slug(&self, slug: &Slug) -> Result<Option<Service>, StoreError> {
+    pub async fn get_by_slug(
+        &self,
+        owner_id: Uuid,
+        slug: &Slug,
+    ) -> Result<Option<Service>, StoreError> {
         let row = services::Entity::find()
+            .filter(services::Column::OwnerId.eq(owner_id))
             .filter(services::Column::Slug.eq(slug.as_str()))
             .one(&self.db)
             .await
@@ -76,8 +85,9 @@ impl ServiceStore {
         row.map(to_model).transpose()
     }
 
-    pub async fn list(&self) -> Result<Vec<Service>, StoreError> {
+    pub async fn list(&self, owner_id: Uuid) -> Result<Vec<Service>, StoreError> {
         let rows = services::Entity::find()
+            .filter(services::Column::OwnerId.eq(owner_id))
             .order_by_asc(services::Column::Slug)
             .all(&self.db)
             .await
@@ -85,8 +95,8 @@ impl ServiceStore {
         rows.into_iter().map(to_model).collect()
     }
 
-    pub async fn delete(&self, slug: &Slug) -> Result<(), StoreError> {
-        let id = self.id_by_slug(slug).await?;
+    pub async fn delete(&self, owner_id: Uuid, slug: &Slug) -> Result<(), StoreError> {
+        let id = self.id_by_slug(owner_id, slug).await?;
         let txn = self.db.begin().await.map_err(db_err("service::delete"))?;
         services::Entity::delete_by_id(id)
             .exec(&txn)
@@ -96,11 +106,12 @@ impl ServiceStore {
         txn.commit().await.map_err(db_err("service::delete"))
     }
 
-    /// Resolves a service's primary key from its slug — an internal join helper for
+    /// Resolves a service's primary key from `(owner_id, slug)` — an internal join helper for
     /// sibling stores (`api_call`, `auth_provider`); a `Uuid` is a plain scalar, never an
     /// `entity::Model`.
-    pub(crate) async fn id_by_slug(&self, slug: &Slug) -> Result<Uuid, StoreError> {
+    pub(crate) async fn id_by_slug(&self, owner_id: Uuid, slug: &Slug) -> Result<Uuid, StoreError> {
         services::Entity::find()
+            .filter(services::Column::OwnerId.eq(owner_id))
             .filter(services::Column::Slug.eq(slug.as_str()))
             .one(&self.db)
             .await
@@ -125,6 +136,7 @@ impl ServiceStore {
 fn to_active_model(service: &Service, id: Uuid) -> services::ActiveModel {
     services::ActiveModel {
         id: Set(id),
+        owner_id: Set(service.owner_id),
         slug: Set(service.slug.as_str().to_owned()),
         base_url: Set(service.base_url.to_string()),
         origin_allowlist: Set(origins_to_json(&service.origin_allowlist)),
@@ -139,6 +151,7 @@ fn to_active_model(service: &Service, id: Uuid) -> services::ActiveModel {
 
 fn to_model(row: services::Model) -> Result<Service, StoreError> {
     Ok(Service {
+        owner_id: row.owner_id,
         slug: parse_slug(&row.slug)?,
         base_url: parse_url(&row.base_url)?,
         origin_allowlist: json_origin_set(&row.origin_allowlist, "services.origin_allowlist")?,

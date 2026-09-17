@@ -3,8 +3,8 @@
 //! Why literal-IP checking has to happen here rather than only inside a custom resolver:
 //! `hyper-util`'s `HttpConnector` calls `dns::SocketAddrs::try_parse(host, port)` *before* ever
 //! consulting a custom `reqwest::dns::Resolve`, so `http://169.254.169.254/` never reaches a
-//! resolver-based guard at all. [`check_url`] catches exactly that case, and — per the plan —
-//! C4's manual redirect loop must re-run it on every hop, not just the first request.
+//! resolver-based guard at all. [`check_url`] catches exactly that case, and
+//! [`crate::http::send`]'s redirect loop must re-run it on every hop, not just the first request.
 
 use std::collections::BTreeSet;
 use std::net::IpAddr;
@@ -30,8 +30,9 @@ pub struct SsrfPolicy {
 }
 
 /// Scheme, origin-allowlist, and literal-IP checks on `url`. Does **not** resolve a hostname —
-/// that's the DNS backend's job (C4); this only catches a hostname that is *already* an IP
-/// literal, the exact case hyper's connector special-cases and a resolver never sees.
+/// that's [`crate::http::resolver::GuardedResolver`]'s job; this only catches a hostname that is
+/// *already* an IP literal, the exact case hyper's connector special-cases and a resolver never
+/// sees.
 pub fn check_url(
     url: &url::Url,
     allowlist: &BTreeSet<Origin>,
@@ -128,8 +129,8 @@ mod tests {
     #[test]
     fn hostname_is_not_ip_checked() {
         // A DNS name isn't a literal IP, so check_url passes it through untouched — resolving
-        // and re-checking the resolved address is the DNS backend's job (C4), not this
-        // pre-flight check's.
+        // and re-checking the resolved address is GuardedResolver's job, not this pre-flight
+        // check's.
         let url = url::Url::parse("https://api.example.com/").expect("valid url");
         let list = allowlist(&["https://api.example.com"]);
         assert!(check_url(&url, &list, &SsrfPolicy::default()).is_ok());

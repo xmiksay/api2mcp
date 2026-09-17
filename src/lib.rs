@@ -27,7 +27,15 @@
 //! | I4 | A credential has no path to a `String` that reaches a model-visible surface. | [`secret::Secret`] (no `Display`/`Serialize`), [`http::redact`] |
 //! | I5 | The auth-provider-to-origin binding is set by a human. An agent can neither propose nor change it. | [`resolve::auth_bind`], `pub(crate)` writes in [`store`] |
 //! | I6 | Budgets (calls, bytes, wall clock, pages) are enforced by the runtime, never by the script. | [`runtime::budget`] |
-//! | I7 | Execution is deterministic *given the same upstream responses*: no clock, no randomness, stable iteration order, fan-out results in input order. | [`runtime::fanout`], [`script::engine`] |
+//! | I7 | Ordering and budget attribution are always deterministic: stable iteration order, fan-out results in input order, budgets committed in index order. A script's *output* is reproducible given the same upstream responses and the same recorded `execution_start` — unless it calls `now()`. | [`runtime::fanout`], [`runtime::budget`], [`script::dates`] |
+//!
+//! I7 was once absolute — no clock at all, and `BasicTimePackage` is still excluded for that
+//! reason. Scripts now need real date logic to be useful for transformation, so time enters
+//! through two deliberately separate doors: [`script::dates`]'s `execution_start()`, frozen for
+//! the run, and `now()`, the live wall clock. A script built only on the former is reproducible
+//! and replayable from its run record; one that reaches for the latter is not, and that choice
+//! is visible in the script's own source rather than hidden in the engine. The mechanical half
+//! of I7 — ordering and budget attribution — is unconditional and unaffected.
 //!
 //! `plan.md`'s I8 (versioned, immutable definitions) is deliberately **not** implemented.
 //! Definitions are mutable and last-write-wins; the history lives in the run log, where each

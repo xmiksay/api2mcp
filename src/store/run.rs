@@ -3,103 +3,26 @@
 //! of the tool-definition aggregates `model` describes), so this store defines its own
 //! plain, scalar-only request/response types, same reasoning as `store::user`.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, DatabaseConnection,
+    EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select, Set, Statement, TransactionTrait,
 };
-use serde_json::Value;
 use uuid::Uuid;
 
 use crate::entity::{run_calls, runs};
 use crate::model::Slug;
 
+use super::run_types::{
+    caller_kind_to_str, status_to_str, str_to_caller_kind, str_to_status, str_to_target_kind,
+    target_kind_to_str,
+};
 use super::{StoreError, db_err, parse_slug};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RunTargetKind {
-    ApiCall,
-    Script,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RunCallerKind {
-    Oauth,
-    ServiceToken,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RunStatus {
-    Ok,
-    Partial,
-    Error,
-    Denied,
-    BudgetExceeded,
-    Timeout,
-}
-
-#[derive(Debug, Clone)]
-pub struct NewRun {
-    pub endpoint_slug: Slug,
-    pub tool_name: String,
-    pub target_kind: RunTargetKind,
-    pub target_slug: Slug,
-    pub caller_kind: RunCallerKind,
-    pub caller_id: String,
-    pub request_id: String,
-    pub definition_snapshot: Value,
-    pub definition_digest: String,
-    pub input_redacted: Value,
-    pub output_redacted: Option<Value>,
-    pub status: RunStatus,
-    pub errors: Option<Value>,
-    pub calls_made: u32,
-    pub bytes_in: u64,
-    pub pages_fetched: u32,
-    pub budget_snapshot: Option<Value>,
-    pub timings: Option<Value>,
-}
-
-#[derive(Debug, Clone)]
-pub struct NewRunCall {
-    pub seq: i32,
-    pub api_call_slug: Slug,
-    pub service_slug: Slug,
-    pub method: http::Method,
-    pub url_redacted: String,
-    pub headers_redacted: Option<Value>,
-    pub body_redacted: Option<Value>,
-    pub status_code: Option<u16>,
-    pub response_bytes: Option<u64>,
-    pub response_truncated: bool,
-    pub error: Option<String>,
-    pub timings: Option<Value>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RunSummary {
-    pub id: Uuid,
-    pub endpoint_slug: Slug,
-    pub tool_name: String,
-    pub target_kind: RunTargetKind,
-    pub target_slug: Slug,
-    pub status: RunStatus,
-    pub calls_made: u32,
-    pub bytes_in: u64,
-    pub pages_fetched: u32,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RunCall {
-    pub seq: i32,
-    pub api_call_slug: Slug,
-    pub service_slug: Slug,
-    pub status_code: Option<u16>,
-    pub response_bytes: Option<u64>,
-    pub response_truncated: bool,
-    pub error: Option<String>,
-}
+pub use super::run_types::{
+    NewRun, NewRunCall, RunCall, RunCallerKind, RunDetail, RunFilter, RunStatus, RunSummary,
+    RunTargetKind,
+};
 
 #[derive(Clone)]
 pub struct RunStore {
@@ -116,6 +39,7 @@ impl RunStore {
         let txn = self.db.begin().await.map_err(db_err("run::create"))?;
         runs::ActiveModel {
             id: Set(id),
+            owner_id: Set(run.owner_id),
             endpoint_slug: Set(run.endpoint_slug.as_str().to_owned()),
             tool_name: Set(run.tool_name.clone()),
             target_kind: Set(target_kind_to_str(run.target_kind).to_owned()),
@@ -123,6 +47,7 @@ impl RunStore {
             caller_kind: Set(caller_kind_to_str(run.caller_kind).to_owned()),
             caller_id: Set(run.caller_id.clone()),
             request_id: Set(run.request_id.clone()),
+            execution_start: Set(run.execution_start.into()),
             definition_snapshot: Set(run.definition_snapshot.clone()),
             definition_digest: Set(run.definition_digest.clone()),
             input_redacted: Set(run.input_redacted.clone()),
@@ -167,8 +92,17 @@ impl RunStore {
         Ok(id)
     }
 
-    pub async fn get(&self, id: Uuid) -> Result<Option<(RunSummary, Vec<RunCall>)>, StoreError> {
+    /// `server::api`'s `GET /api/runs/{id}` — the one route allowed to carry `definition_snapshot`
+    /// and every other column [`RunSummary`] leaves off (see [`RunDetail`]'s own doc). Scoped to
+    /// `owner_id`: a run belonging to another owner comes back `None`, indistinguishable from a
+    /// nonexistent id.
+    pub async fn get(
+        &self,
+        owner_id: Uuid,
+        id: Uuid,
+    ) -> Result<Option<(RunDetail, Vec<RunCall>)>, StoreError> {
         let Some(row) = runs::Entity::find_by_id(id)
+            .filter(runs::Column::OwnerId.eq(owner_id))
             .one(&self.db)
             .await
             .map_err(db_err("run::get"))?
@@ -185,15 +119,17 @@ impl RunStore {
             .into_iter()
             .map(call_to_model)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Some((summary_to_model(row)?, calls)))
+        Ok(Some((detail_to_model(row)?, calls)))
     }
 
     pub async fn list_for_endpoint(
         &self,
+        owner_id: Uuid,
         endpoint_slug: &Slug,
         limit: u64,
     ) -> Result<Vec<RunSummary>, StoreError> {
         let rows = runs::Entity::find()
+            .filter(runs::Column::OwnerId.eq(owner_id))
             .filter(runs::Column::EndpointSlug.eq(endpoint_slug.as_str()))
             .order_by_desc(runs::Column::CreatedAt)
             .limit(limit)
@@ -202,54 +138,84 @@ impl RunStore {
             .map_err(db_err("run::list_for_endpoint"))?;
         rows.into_iter().map(summary_to_model).collect()
     }
-}
 
-fn target_kind_to_str(kind: RunTargetKind) -> &'static str {
-    match kind {
-        RunTargetKind::ApiCall => "api_call",
-        RunTargetKind::Script => "script",
+    /// `server::api`'s `GET /api/runs`: an optional endpoint/status filter plus offset paging —
+    /// [`Self::list_for_endpoint`] alone can't express either, and neither is a rule this crate's
+    /// admin UI can do without once the run log has more than a page's worth of history.
+    pub async fn list(
+        &self,
+        owner_id: Uuid,
+        filter: &RunFilter,
+    ) -> Result<Vec<RunSummary>, StoreError> {
+        let mut query: Select<runs::Entity> =
+            runs::Entity::find().filter(runs::Column::OwnerId.eq(owner_id));
+        if let Some(slug) = &filter.endpoint_slug {
+            query = query.filter(runs::Column::EndpointSlug.eq(slug.as_str()));
+        }
+        if let Some(status) = filter.status {
+            query = query.filter(runs::Column::Status.eq(status_to_str(status)));
+        }
+        let rows = query
+            .order_by_desc(runs::Column::CreatedAt)
+            .limit(filter.limit)
+            .offset(filter.offset)
+            .all(&self.db)
+            .await
+            .map_err(db_err("run::list"))?;
+        rows.into_iter().map(summary_to_model).collect()
+    }
+
+    /// Deletes `runs` older than `retention_days`, in batches of at most `batch_size` rows,
+    /// looping until a pass deletes fewer than `batch_size` — so a first sweep on a long-lived
+    /// instance (potentially millions of eligible rows) never holds one long-running
+    /// transaction open and stalls live traffic. `run_calls` needs no separate delete: its FK
+    /// (`migration::m0006_runs`'s `fk_run_calls_run`) is `ON DELETE CASCADE`.
+    ///
+    /// Raw SQL, not `delete_many()`: `sea_orm`'s query builder has no `LIMIT` on `DELETE`, so a
+    /// bounded batch has to be expressed as a subquery — same reasoning as `db::
+    /// run_migrations_locked`'s advisory lock being raw SQL too.
+    pub async fn purge_expired(
+        &self,
+        retention_days: u32,
+        batch_size: u64,
+    ) -> Result<u64, StoreError> {
+        // `batch_size == 0` can't make progress (every pass would delete 0 rows, which is also
+        // the loop's "done" signal) — bail rather than spin forever. Only reachable if a future
+        // caller passes a bad constant; production always calls this with a fixed, non-zero one.
+        let (Some(cutoff), false) = (cutoff_for(retention_days), batch_size == 0) else {
+            return Ok(0);
+        };
+        let mut total = 0u64;
+        loop {
+            let res = self
+                .db
+                .execute(Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    "DELETE FROM runs WHERE id IN \
+                     (SELECT id FROM runs WHERE created_at < $1 LIMIT $2)",
+                    [cutoff.into(), (batch_size as i64).into()],
+                ))
+                .await
+                .map_err(db_err("run::purge_expired"))?;
+            let deleted = res.rows_affected();
+            total += deleted;
+            if deleted < batch_size {
+                break;
+            }
+        }
+        Ok(total)
     }
 }
 
-fn caller_kind_to_str(kind: RunCallerKind) -> &'static str {
-    match kind {
-        RunCallerKind::Oauth => "oauth",
-        RunCallerKind::ServiceToken => "service_token",
-    }
-}
-
-fn status_to_str(status: RunStatus) -> &'static str {
-    match status {
-        RunStatus::Ok => "ok",
-        RunStatus::Partial => "partial",
-        RunStatus::Error => "error",
-        RunStatus::Denied => "denied",
-        RunStatus::BudgetExceeded => "budget_exceeded",
-        RunStatus::Timeout => "timeout",
-    }
-}
-
-fn str_to_target_kind(s: &str) -> Result<RunTargetKind, StoreError> {
-    match s {
-        "api_call" => Ok(RunTargetKind::ApiCall),
-        "script" => Ok(RunTargetKind::Script),
-        other => Err(StoreError::Malformed(format!(
-            "runs.target_kind: unrecognised value {other:?}"
-        ))),
-    }
-}
-
-fn str_to_status(s: &str) -> Result<RunStatus, StoreError> {
-    match s {
-        "ok" => Ok(RunStatus::Ok),
-        "partial" => Ok(RunStatus::Partial),
-        "error" => Ok(RunStatus::Error),
-        "denied" => Ok(RunStatus::Denied),
-        "budget_exceeded" => Ok(RunStatus::BudgetExceeded),
-        "timeout" => Ok(RunStatus::Timeout),
-        other => Err(StoreError::Malformed(format!(
-            "runs.status: unrecognised value {other:?}"
-        ))),
+/// `retention_days == 0` means "keep forever", not "delete everything" — a config typo (or an
+/// env var that fails to parse and silently lands on a zero default some other way) must never
+/// be read as "purge every run immediately". `None` here is what makes [`RunStore::purge_expired`]
+/// short-circuit before issuing a single `DELETE`.
+fn cutoff_for(retention_days: u32) -> Option<DateTime<Utc>> {
+    if retention_days == 0 {
+        None
+    } else {
+        Some(Utc::now() - Duration::days(retention_days.into()))
     }
 }
 
@@ -268,14 +234,60 @@ fn summary_to_model(row: runs::Model) -> Result<RunSummary, StoreError> {
     })
 }
 
+/// Builds the detail-route model. Clones `row` into [`summary_to_model`] rather than splitting
+/// its fields by hand — `runs::Model` is a plain data row (`Clone`-derived, no I/O), so the clone
+/// costs nothing worth avoiding, and this keeps the summary's own field mapping defined in
+/// exactly one place.
+fn detail_to_model(row: runs::Model) -> Result<RunDetail, StoreError> {
+    let caller_kind = str_to_caller_kind(&row.caller_kind)?;
+    let caller_id = row.caller_id.clone();
+    let request_id = row.request_id.clone();
+    let execution_start = row.execution_start.with_timezone(&Utc);
+    let definition_snapshot = row.definition_snapshot.clone();
+    let definition_digest = row.definition_digest.clone();
+    let input_redacted = row.input_redacted.clone();
+    let output_redacted = row.output_redacted.clone();
+    let errors = row.errors.clone();
+    let budget_snapshot = row.budget_snapshot.clone();
+    let timings = row.timings.clone();
+    Ok(RunDetail {
+        summary: summary_to_model(row)?,
+        caller_kind,
+        caller_id,
+        request_id,
+        execution_start,
+        definition_snapshot,
+        definition_digest,
+        input_redacted,
+        output_redacted,
+        errors,
+        budget_snapshot,
+        timings,
+    })
+}
+
 fn call_to_model(row: run_calls::Model) -> Result<RunCall, StoreError> {
+    let method = row.method.parse().map_err(|_| {
+        StoreError::Malformed(format!(
+            "run_calls.method: {:?} is not a valid HTTP method",
+            row.method
+        ))
+    })?;
     Ok(RunCall {
         seq: row.seq,
         api_call_slug: parse_slug(&row.api_call_slug)?,
         service_slug: parse_slug(&row.service_slug)?,
+        method,
+        url_redacted: row.url_redacted,
+        headers_redacted: row.headers_redacted,
         status_code: row.status_code.map(|v| v as u16),
         response_bytes: row.response_bytes.map(|v| v as u64),
         response_truncated: row.response_truncated,
         error: row.error,
+        response_body: row.body_redacted,
     })
 }
+
+#[cfg(test)]
+#[path = "run_tests.rs"]
+mod tests;

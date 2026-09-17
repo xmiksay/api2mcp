@@ -24,6 +24,7 @@ use crate::fixture::harness::{service_for, slug};
 pub fn plan_with_script(fixture: &Fixture, script_slug: &Slug) -> EndpointPlan {
     let service = service_for(fixture);
     let call = ApiCall {
+        owner_id: uuid::Uuid::nil(),
         slug: slug("item"),
         service_slug: service.slug.clone(),
         auth_provider_slug: None,
@@ -67,6 +68,7 @@ pub fn plan_with_script(fixture: &Fixture, script_slug: &Slug) -> EndpointPlan {
     callable_by.insert(script_slug.clone(), callable);
 
     EndpointPlan {
+        owner_id: uuid::Uuid::nil(),
         slug: slug("ep-script"),
         write_ceiling: Access::Read,
         instructions: None,
@@ -87,6 +89,7 @@ pub fn plan_with_script(fixture: &Fixture, script_slug: &Slug) -> EndpointPlan {
 
 pub fn script_def(source: &str) -> ScriptDef {
     ScriptDef {
+        owner_id: uuid::Uuid::nil(),
         slug: slug("demo-script"),
         source: source.to_owned(),
         params: vec![],

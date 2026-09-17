@@ -5,8 +5,8 @@
 //! Every `JSONB` column — the plan's `TEXT[]` array columns included — is typed as
 //! [`sea_orm::entity::prelude::Json`] (`serde_json::Value`) here. `Vec<String>` would be
 //! the more precise type for a column like `origin_allowlist`, but `sea-orm`'s Postgres
-//! array (de)serialization needs the `postgres-array` feature, which `Cargo.toml` (not
-//! this chunk's to edit) does not enable; `sea_query::Value::Json` is hard-coded to
+//! array (de)serialization needs the `postgres-array` feature, which `Cargo.toml`
+//! does not enable; `sea_query::Value::Json` is hard-coded to
 //! `serde_json::Value` regardless. Entities stay dumb row mirrors — [`crate::store`]
 //! converts into the typed [`crate::model`] shapes the rest of the crate sees.
 //!
@@ -37,6 +37,7 @@ pub mod script_api_calls;
 pub mod script_params;
 pub mod script_tags;
 pub mod scripts;
+pub mod service_token_endpoints;
 pub mod service_tokens;
 pub mod services;
 pub mod sessions;

@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 
 use serde_json::Value;
+use uuid::Uuid;
 
 use super::param::Param;
 use super::projection::Projection;
@@ -38,6 +39,9 @@ pub enum Pagination {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiCall {
+    /// The user who created this api_call — always the same owner as `service_slug`'s service
+    /// (enforced at write time). See `model::Service::owner_id`.
+    pub owner_id: Uuid,
     pub slug: Slug,
     pub service_slug: Slug,
     pub auth_provider_slug: Option<Slug>,

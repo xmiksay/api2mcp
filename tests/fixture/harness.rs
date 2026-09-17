@@ -23,6 +23,7 @@ pub fn slug(s: &str) -> Slug {
 pub fn service_for(fixture: &Fixture) -> Service {
     let origin = Origin::of(&fixture.base_url()).expect("fixture base url has a valid origin");
     Service {
+        owner_id: uuid::Uuid::nil(),
         slug: slug("demo"),
         base_url: fixture.base_url(),
         origin_allowlist: BTreeSet::from([origin]),

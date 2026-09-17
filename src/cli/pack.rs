@@ -13,15 +13,16 @@ use crate::model::Slug;
 use crate::pack::ImportChange;
 use crate::store::Stores;
 
-pub async fn export(endpoint: &str) -> Result<()> {
+pub async fn export(endpoint: &str, user: Option<&str>) -> Result<()> {
     let slug: Slug = endpoint
         .parse()
         .with_context(|| format!("{endpoint:?} is not a valid slug"))?;
     let cfg = Config::from_env()?;
     let conn = db::connect(&cfg.database_url).await?;
     let stores = Stores::new(conn);
+    let owner = crate::cli::resolve_user(&stores, user).await?;
 
-    let pack = crate::pack::export_endpoint(&stores, &slug)
+    let pack = crate::pack::export_endpoint(&stores, owner.id, &slug)
         .await
         .with_context(|| format!("exporting endpoint {endpoint:?}"))?;
     let yaml = serde_norway::to_string(&pack).context("serializing pack as YAML")?;
@@ -29,7 +30,7 @@ pub async fn export(endpoint: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn import(path: &Path, dry_run: bool) -> Result<()> {
+pub async fn import(path: &Path, dry_run: bool, user: Option<&str>) -> Result<()> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let parsed: crate::pack::Pack = serde_norway::from_str(&text)
@@ -50,8 +51,9 @@ pub async fn import(path: &Path, dry_run: bool) -> Result<()> {
     let cfg = Config::from_env()?;
     let conn = db::connect(&cfg.database_url).await?;
     let stores = Stores::new(conn);
+    let owner = crate::cli::resolve_user(&stores, user).await?;
 
-    let report = crate::pack::import(&stores, &parsed, dry_run)
+    let report = crate::pack::import(&stores, &parsed, dry_run, owner.id)
         .await
         .with_context(|| format!("importing {}", path.display()))?;
 

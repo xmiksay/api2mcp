@@ -41,6 +41,7 @@ mod tests {
     fn planned(access: Access) -> PlannedApiCall {
         let base_url: url::Url = "https://acme.example.com/".parse().unwrap();
         let service = Service {
+            owner_id: uuid::Uuid::nil(),
             slug: "acme".parse().unwrap(),
             base_url: base_url.clone(),
             origin_allowlist: [Origin::of(&base_url).unwrap()].into_iter().collect(),
@@ -51,6 +52,7 @@ mod tests {
             max_response_bytes: 1_000_000,
         };
         let api_call = ApiCall {
+            owner_id: uuid::Uuid::nil(),
             slug: "call-a".parse().unwrap(),
             service_slug: service.slug.clone(),
             auth_provider_slug: None,

@@ -1,6 +1,6 @@
-//! I1's runtime enforcement: [`dispatch`] is **the only path in the crate that can reach
+//! [`dispatch`] is **the only path in the crate that can reach
 //! `http::send`** (via `http::paginate`, which calls it). Every other way of getting from a name
-//! to an HTTP request — a script's `api()`/`api_many()` (C9), a directly-invoked tool, the CLI —
+//! to an HTTP request — a script's `api()`/`api_many()`, a directly-invoked tool, the CLI —
 //! must funnel through this function.
 //!
 //! Name resolution has two shapes:
@@ -10,25 +10,24 @@
 //!   it (I1's data structure is `EndpointPlan::callable_by` itself; this module only reads it).
 //! - `caller_script = None`: the caller is a directly-invoked tool, so `name` is resolved against
 //!   the plan's own tool set (`EndpointPlan::tool`), which additionally applies endpoint aliasing.
-//!   A `Script`-target tool can't be dispatched directly — running a script is `script::engine`'s
-//!   job (C9), not this function's.
+//!   A `Script`-target tool can't be dispatched directly — running a script is
+//!   [`crate::script::run_script`]'s job, not this function's.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use serde::Serialize;
 use serde_json::Value;
-use thiserror::Error;
 
-use crate::http::{CallError, CallResponse, PaginateError, SendParams, SsrfPolicy, UpstreamPool};
+use crate::http::{CallResponse, SendParams, SsrfPolicy, UpstreamPool};
 use crate::model::{AuthProvider, Slug};
-use crate::project::{CompiledProjection, ProjectionError};
+use crate::project::CompiledProjection;
 use crate::resolve::EndpointPlan;
 use crate::resolve::plan::{PlannedApiCall, ToolTarget};
-use crate::schema::{ValidationError, bind_args};
+use crate::schema::bind_args;
 use crate::store::{AuthProviderStore, StoreError};
 
-use super::budget::BudgetAxis;
+mod error;
+pub use error::{DispatchAttempt, DispatchError};
 
 /// Every non-secret [`AuthProvider`] a plan's selected api_calls might need, resolved once per
 /// run (see [`AuthProviders::load`]) rather than hit the database on every dispatched call.
@@ -52,7 +51,7 @@ impl AuthProviders {
                 continue;
             }
             if let Some(provider) = auth_providers
-                .get(&planned.service.slug, provider_slug)
+                .get(plan.owner_id, &planned.service.slug, provider_slug)
                 .await?
             {
                 map.insert(provider_slug.clone(), provider);
@@ -113,57 +112,6 @@ impl DispatchOutcome {
 
     pub fn pages_fetched(&self) -> u32 {
         self.pages.len() as u32
-    }
-}
-
-/// Errors from [`dispatch`]. `thiserror` + `Serialize` — never `anyhow` — because a per-item
-/// dispatch failure can land directly in a run's `errors[]` column.
-/// The `kind` tag is a **stable contract**: a script branches on it (`if e.kind == "http_status"`)
-/// and a run's persisted `errors[]` records it, so renaming a variant is a breaking change to
-/// both surfaces at once.
-#[derive(Debug, Clone, Error, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum DispatchError {
-    #[error("{name:?} is not declared for this caller")]
-    NotDeclared { name: String },
-    #[error("{name:?} is a script, not an api_call — it cannot be dispatched directly")]
-    NotAnApiCall { name: String },
-    #[error("arguments: {0}")]
-    Args(#[from] ValidationError),
-    #[error("binding request: {0}")]
-    Bind(#[from] crate::http::BindError),
-    #[error("sending request: {0}")]
-    Send(#[from] PaginateError),
-    #[error("building the upstream client: {0}")]
-    Client(String),
-    #[error("upstream returned {status} {reason}: {detail}")]
-    HttpStatus {
-        status: u16,
-        reason: String,
-        /// A short, redacted excerpt of the upstream's own error body. Upstreams explain a 422
-        /// far better than we can, and a model that can read that explanation can often fix its
-        /// own arguments and retry.
-        detail: String,
-    },
-    #[error("response was not valid JSON: {message}")]
-    ResponseNotJson { message: String },
-    #[error("projection: {0}")]
-    Projection(#[from] ProjectionError),
-}
-
-impl DispatchError {
-    /// Whether this error is actually a run-level budget trip wearing a per-item error's clothes
-    /// — see the module docs on `runtime::budget` for why a wall-clock timeout and a page-cap hit
-    /// must both collapse onto [`BudgetAxis`] rather than surface as an ordinary per-item failure
-    /// a script's `try`/`catch` (once C9 exists) could otherwise swallow.
-    pub fn budget_trip(&self) -> Option<BudgetAxis> {
-        match self {
-            DispatchError::Send(PaginateError::PageCapExceeded { .. }) => Some(BudgetAxis::Pages),
-            DispatchError::Send(PaginateError::Call(CallError::Timeout)) => {
-                Some(BudgetAxis::WallClock)
-            }
-            _ => None,
-        }
     }
 }
 
@@ -251,10 +199,38 @@ pub async fn dispatch(
     // handing it back as a successful result is the worst outcome available: the model cannot
     // tell it apart from real data, and the projection will usually "succeed" on it — an error
     // payload is still JSON. This is the plan's `kind: "http_status"` per-item failure.
+    //
+    // From here on, `pages` is a real, completed upstream exchange — every remaining failure
+    // path attaches it as a `DispatchAttempt` so `runtime::recorder` can still write a truthful
+    // `run_calls` row even though the call as a whole didn't succeed (see `DispatchAttempt`'s own
+    // doc for why that lives on the error rather than reshaping `ItemOutcome`).
     if let Some(bad) = pages.iter().find(|p| !p.status.is_success()) {
-        return Err(http_status_error(bad));
+        let error = http_status_error(bad);
+        // `bad` borrows `pages`; its borrow ends with the statement above, so `pages` can move.
+        let attempt = DispatchAttempt {
+            api_call_slug: planned.api_call.slug.clone(),
+            service_slug: planned.service.slug.clone(),
+            method: planned.api_call.method.clone(),
+            request_headers,
+            request_body,
+            pages,
+        };
+        return Err(error.with_attempt(attempt));
     }
-    let value = project_pages(planned, &pages)?;
+    let value = match project_pages(planned, &pages) {
+        Ok(value) => value,
+        Err(e) => {
+            let attempt = DispatchAttempt {
+                api_call_slug: planned.api_call.slug.clone(),
+                service_slug: planned.service.slug.clone(),
+                method: planned.api_call.method.clone(),
+                request_headers,
+                request_body,
+                pages,
+            };
+            return Err(e.with_attempt(attempt));
+        }
+    };
 
     Ok(DispatchOutcome {
         api_call_slug: planned.api_call.slug.clone(),
@@ -276,10 +252,11 @@ pub async fn dispatch(
 /// `model::Projection`) on every call rather than reusing `planned.projection`
 /// (`resolve::plan::CompiledProjection`, already parsed once at plan-build time): that type's
 /// fields are `pub`, but `crate::project::CompiledProjection` — the type `crate::project::apply`
-/// actually takes — only exposes a private-field, `compile`-only constructor. Reusing the
-/// already-parsed form would need a small `pub(crate)` seam on one of those two chunks' types;
-/// this chunk owns neither `resolve/` nor `project/`, so it re-parses instead. See the chunk
-/// report for the follow-up.
+/// actually takes — only exposes a private-field, `compile`-only constructor. This is a real
+/// inefficiency (every dispatch re-parses every JSONPath expression in the projection instead of
+/// reusing the copy already parsed at plan-build time); fixing it would need a `pub(crate)`
+/// constructor (or field access) on `project::CompiledProjection` so this function could adapt
+/// the already-parsed `resolve::plan::CompiledProjection` directly.
 /// Builds the failure for a non-2xx page, carrying a bounded excerpt of the upstream's body.
 /// Truncated because an upstream error page can be a megabyte of HTML, and redacted because it
 /// is about to cross into a model's context and an audit row (I4).
@@ -295,6 +272,7 @@ fn http_status_error(page: &CallResponse) -> DispatchError {
         status: page.status.as_u16(),
         reason: page.status.canonical_reason().unwrap_or("").to_owned(),
         detail,
+        attempt: None,
     }
 }
 
@@ -304,7 +282,11 @@ fn project_pages(planned: &PlannedApiCall, pages: &[CallResponse]) -> Result<Val
         .projection
         .as_ref()
         .map(CompiledProjection::compile)
-        .transpose()?;
+        .transpose()
+        .map_err(|source| DispatchError::Projection {
+            source,
+            attempt: None,
+        })?;
 
     let mut values = Vec::with_capacity(pages.len());
     for page in pages {
@@ -313,10 +295,16 @@ fn project_pages(planned: &PlannedApiCall, pages: &[CallResponse]) -> Result<Val
         } else {
             serde_json::from_slice(&page.body).map_err(|e| DispatchError::ResponseNotJson {
                 message: e.to_string(),
+                attempt: None,
             })?
         };
         let projected = match &compiled {
-            Some(p) => crate::project::apply(p, &body)?,
+            Some(p) => {
+                crate::project::apply(p, &body).map_err(|source| DispatchError::Projection {
+                    source,
+                    attempt: None,
+                })?
+            }
             None => body,
         };
         values.push(projected);

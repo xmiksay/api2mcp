@@ -5,9 +5,10 @@
 //! audit story — see the module's own tests for what's asserted present.
 //!
 //! Deliberately its own, self-contained set of JSON builders rather than reusing
-//! `resolve::digest`'s (which build near-identical shapes): that module is private to `resolve/`,
-//! and this chunk owns neither it nor `resolve/` itself. See the chunk report for the follow-up
-//! (hoisting a shared, `pub(crate)` set of these helpers) this duplication motivates.
+//! `resolve::digest`'s (which build near-identical shapes): that module is private to `resolve/`
+//! (`mod digest;`, not `pub`), so nothing outside it can call in. Hoisting a shared,
+//! `pub(crate)` set of these helpers would remove the duplication; until then the two shape-
+//! builders have to be kept in sync by hand.
 
 use std::collections::BTreeMap;
 
@@ -201,6 +202,7 @@ mod tests {
     fn service() -> Service {
         let base_url: url::Url = "https://svc.example.com/".parse().unwrap();
         Service {
+            owner_id: uuid::Uuid::nil(),
             slug: "svc".parse().unwrap(),
             base_url: base_url.clone(),
             origin_allowlist: BTreeSet::from([Origin::of(&base_url).unwrap()]),
@@ -214,6 +216,7 @@ mod tests {
 
     fn api_call() -> ApiCall {
         ApiCall {
+            owner_id: uuid::Uuid::nil(),
             slug: "call-a".parse().unwrap(),
             service_slug: "svc".parse().unwrap(),
             auth_provider_slug: None,
@@ -251,6 +254,7 @@ mod tests {
             budgets: Budgets::default(),
         };
         let plan = EndpointPlan {
+            owner_id: uuid::Uuid::nil(),
             slug: "ep".parse().unwrap(),
             write_ceiling: Access::Read,
             instructions: None,
@@ -319,6 +323,7 @@ mod tests {
 
         let script_slug: Slug = "script-a".parse().unwrap();
         let script = ScriptDef {
+            owner_id: uuid::Uuid::nil(),
             slug: script_slug.clone(),
             source: "()".to_owned(),
             params: vec![],
@@ -341,6 +346,7 @@ mod tests {
             budgets: Budgets::default(),
         };
         let plan = EndpointPlan {
+            owner_id: uuid::Uuid::nil(),
             slug: "ep".parse().unwrap(),
             write_ceiling: Access::Read,
             instructions: None,

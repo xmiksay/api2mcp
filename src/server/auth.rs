@@ -1,14 +1,24 @@
 //! MCP authentication and the session-cookie plumbing the browser login path
 //! ([`super::login`]) builds on.
 //!
-//! A `/mcp` request carries `Authorization: Bearer <token>`. [`authenticate_mcp`] resolves
-//! it against the service-token store (which already rejects a revoked or expired row —
-//! see [`crate::store::ServiceTokenStore::resolve`]) and, on any failure, returns a
-//! [`BearerChallenge`]: the caller (chunk C11's router) turns that into a `401` carrying
-//! `WWW-Authenticate: Bearer resource_metadata="…"`, the RFC 9728 discovery hook an
-//! OAuth-aware MCP client follows to find the authorization server. Chunk C12's OAuth
-//! access-token branch slots in ahead of the service-token check below — same bearer, same
-//! header, just a second store tried before giving up.
+//! A `/mcp` request carries `Authorization: Bearer <token>`. [`authenticate_mcp`] tries an
+//! OAuth 2.1 access token first ([`crate::server::oauth`]'s token endpoint is what mints
+//! these) and falls back to the service-token store (which already rejects a revoked or
+//! expired row — see [`crate::store::ServiceTokenStore::resolve`]); either failing, it
+//! returns a [`BearerChallenge`]: the caller (`server::mcp::unauthorized`) turns that
+//! into a `401` carrying `WWW-Authenticate: Bearer resource_metadata="…"`, the RFC 9728 discovery
+//! hook an OAuth-aware MCP client follows to find the authorization server.
+//!
+//! **Endpoint grants.** Alongside the resolved [`Caller`], [`authenticate_mcp`] returns the
+//! set of endpoint slugs that credential is restricted to (`ServiceTokenRecord::endpoints`,
+//! `store::service_token`'s own doc) — empty means unrestricted, which is what every non-
+//! service-token credential gets (a session, the CLI, or an OAuth access token stands in for
+//! its granting user's full session, not for a narrower token row). This travels as a plain
+//! `BTreeSet<Slug>` rather than a `Caller` field: `Caller` is resolved from a session cookie
+//! by its own `FromRequestParts` impl (`server::identity`) with no notion of a request's
+//! target endpoint, so there is nowhere on it to hang a per-request restriction — the caller
+//! (`server::mcp::resolve_plan`) is the one place that has both this set and the endpoint
+//! slug being requested, and is where the restriction is actually enforced.
 //!
 //! **Two hashing schemes, deliberately not shared:** [`hash_token`] is sha256
 //! ([`crate::store::sha256_hex`]) — right for a service token or session cookie, both
@@ -22,6 +32,8 @@
 //! [`create_session`]/[`resolve_session`]/[`delete_session`] are thin wrappers over
 //! [`crate::store::SessionStore`], which is where the queries live.
 
+use std::collections::BTreeSet;
+
 use axum::http::{HeaderMap, header};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -33,7 +45,10 @@ use uuid::Uuid;
 use anyhow::{Context, Result};
 
 use crate::config::Config;
+use crate::model::Slug;
+use crate::store::OauthStore;
 use crate::store::ServiceTokenStore;
+use crate::store::UserStore;
 
 use crate::store::SessionStore;
 
@@ -44,35 +59,134 @@ pub const SESSION_COOKIE_NAME: &str = "a2m_session";
 
 /// A `401` bearer challenge: the `WWW-Authenticate` value pointing an MCP client at the
 /// protected-resource metadata so it can discover OAuth. Plain data — building the actual
-/// HTTP response is chunk C11's job (it owns `server/error.rs` and the router).
+/// HTTP response is `server::mcp::unauthorized`'s job.
 pub struct BearerChallenge {
     pub www_authenticate: String,
 }
 
-/// Resolve the caller behind an MCP request: bearer service token only, this chunk (OAuth
-/// access tokens are chunk C12). No credential, or a credential that fails to resolve,
-/// both come back as the same [`BearerChallenge`] — a caller must not be able to tell
-/// "missing" from "invalid" from the response shape alone.
+/// Which endpoints a caller may reach.
+///
+/// Deliberately an enum rather than a `BTreeSet` where empty means "all". Those are different
+/// things and conflating them is a privilege escalation: a token granted exactly one endpoint has
+/// its grant rows cascaded away when that endpoint is deleted, and under the empty-means-all
+/// reading it would silently widen to *every* endpoint as a side effect of an unrelated edit.
+/// `Only(empty)` reaches nothing, which is the safe reading, and this shape makes the unsafe one
+/// impossible to write by accident.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EndpointGrants {
+    All,
+    Only(BTreeSet<Slug>),
+}
+
+impl EndpointGrants {
+    pub fn allows(&self, slug: &Slug) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only(allowed) => allowed.contains(slug),
+        }
+    }
+}
+
+/// The result of resolving a bearer credential against `/mcp`: who is calling, which endpoints
+/// (`/mcp/{slug}`) they may reach, and whether they may reach the control plane (bare `/mcp`,
+/// `server::mcp::control`) at all. Bundled into one struct — rather than a growing tuple — now
+/// that there are two independent capabilities to carry alongside [`Caller`].
+#[derive(Debug)]
+pub struct ResolvedCredential {
+    pub caller: Caller,
+    pub endpoint_grants: EndpointGrants,
+    /// Whether this credential may reach `server::mcp::control`.
+    ///
+    /// An OAuth caller always may; a static token may only when minted with
+    /// `ServiceTokenRecord::control_plane`. That asymmetry is the point rather than an
+    /// inconsistency: OAuth is a browser sign-in by a specific person, short-lived and revocable
+    /// at the provider, so it already carries everything that user can do. A service token is a
+    /// long-lived secret sitting in a config file somewhere, and *that* is the thing worth
+    /// narrowing — which is what the flag, defaulting to false, does.
+    ///
+    /// Turning it round would mean the browser-authenticated human is refused while a pasted
+    /// token file is allowed, which is backwards.
+    pub control_plane: bool,
+}
+
+/// Resolve the caller behind an MCP request: an OAuth 2.1 access token first, then a static
+/// service token. No credential, or a credential that fails to resolve against either store, all
+/// come back as the same [`BearerChallenge`] — a caller must not be able to tell "missing" from
+/// "invalid" from the response shape alone.
+///
+/// Returns a [`ResolvedCredential`] — see its own doc for why [`EndpointGrants`] and
+/// `control_plane` travel separately from [`Caller`] itself.
 pub async fn authenticate_mcp(
     db: &DatabaseConnection,
     cfg: &Config,
     headers: &HeaderMap,
-) -> std::result::Result<Caller, BearerChallenge> {
+) -> std::result::Result<ResolvedCredential, BearerChallenge> {
     let Some(token) = bearer_token(headers) else {
         return Err(challenge(cfg));
     };
 
-    // OAuth access-token branch (C12) goes here, ahead of the service-token fallback.
+    if let Some(caller) = oauth_caller(db, token).await {
+        // A person acting as themselves, not a narrowed credential: every endpoint they own, and
+        // the control plane. See `ResolvedCredential::control_plane` for why a signed-in human
+        // needs no opt-in where a static token does.
+        return Ok(ResolvedCredential {
+            caller,
+            endpoint_grants: EndpointGrants::All,
+            control_plane: true,
+        });
+    }
 
     let store = ServiceTokenStore::new(db.clone());
     match store.resolve(token).await {
-        Ok(Some(record)) => Ok(Caller::from_service_token(&record)),
+        Ok(Some(record)) => {
+            let caller = Caller::from_service_token(&record);
+            let endpoint_grants = if record.restricted {
+                EndpointGrants::Only(record.endpoints.clone())
+            } else {
+                EndpointGrants::All
+            };
+            Ok(ResolvedCredential {
+                caller,
+                endpoint_grants,
+                control_plane: record.control_plane,
+            })
+        }
         Ok(None) => Err(challenge(cfg)),
         Err(e) => {
             // Fail closed: a store error resolving the token is not evidence the token is
             // valid, so it must not be treated any more favourably than "not found".
             tracing::error!(error = %e, "authenticate_mcp: service token lookup failed");
             Err(challenge(cfg))
+        }
+    }
+}
+
+/// Resolves an OAuth access token (`server::oauth`'s token endpoint) to its granting user,
+/// via [`Caller::from_oauth_user`] — this system's OAuth grant is one coarse `mcp` scope, not a
+/// narrower delegation, so an OAuth-authenticated caller can do exactly what that user's
+/// browser session could, even though the resolved [`CallerKind`] is `Oauth`, not `Session`
+/// (see that variant's own doc — the audit log wants the two distinguishable even though
+/// authorization treats them identically). `None` covers "not an OAuth token", "revoked/expired"
+/// and "the granting user has since been deleted" alike, so the caller falls through to the
+/// service-token branch indistinguishably; a store error fails closed (logged, then `None`)
+/// rather than being treated as "not an OAuth token".
+async fn oauth_caller(db: &DatabaseConnection, token: &str) -> Option<Caller> {
+    let record = match OauthStore::new(db.clone())
+        .resolve_access_token(token)
+        .await
+    {
+        Ok(record) => record?,
+        Err(e) => {
+            tracing::error!(error = %e, "authenticate_mcp: oauth access token lookup failed");
+            return None;
+        }
+    };
+    match UserStore::new(db.clone()).get_by_id(record.user_id).await {
+        Ok(Some(user)) => Some(Caller::from_oauth_user(&user)),
+        Ok(None) => None,
+        Err(e) => {
+            tracing::error!(error = %e, "authenticate_mcp: oauth token's user lookup failed");
+            None
         }
     }
 }
@@ -148,8 +262,6 @@ pub async fn resolve_session(db: &DatabaseConnection, plaintext: &str) -> Result
     Ok(found.map(|u| Caller {
         kind: CallerKind::Session,
         id: u.user_id,
-        is_admin: u.is_admin,
-        scopes: Vec::new(),
     }))
 }
 
@@ -173,13 +285,13 @@ mod tests {
             host: "127.0.0.1".into(),
             port: 8080,
             base_url: "http://h:8080".into(),
-            default_endpoint: "default".into(),
-            admin_email: None,
-            admin_password: None,
+            seed_email: None,
+            seed_password: None,
             run_retention_days: 30,
             allow_loopback_upstream: false,
             session_ttl: std::time::Duration::from_secs(3600),
             max_request_bytes: 1024 * 1024,
+            oidc: None,
         }
     }
 
