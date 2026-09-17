@@ -333,6 +333,8 @@ export interface TokenCreateRequest {
   label: string;
   expires_in_days: number | null;
   endpoints: string[];
+  /** Whether this token may reach the control plane at `/mcp`. Defaults to false server-side. */
+  control_plane: boolean;
 }
 
 /** `token` is the plaintext — returned only from the create call, never again. */
@@ -343,6 +345,7 @@ export interface TokenCreateResponse {
   label: string;
   expires_at: string | null;
   endpoints: string[];
+  control_plane: boolean;
 }
 
 export interface TokenView {
@@ -354,4 +357,5 @@ export interface TokenView {
   expires_at: string | null;
   revoked_at: string | null;
   endpoints: string[];
+  control_plane: boolean;
 }

@@ -21,6 +21,9 @@ onMounted(() => endpoints.fetchList());
 const label = ref("");
 const expiryChoice = ref<"30" | "60" | "90" | "never">("30");
 const scope = ref<"all" | "specific">("all");
+// Off by default, matching the server: a token that can rewrite definitions is a different thing
+// from one that can call tools, and it should be a deliberate choice rather than a default.
+const controlPlane = ref(false);
 const selected = ref<string[]>([]);
 
 const submitting = ref(false);
@@ -40,6 +43,7 @@ function reset(): void {
   expiryChoice.value = "30";
   scope.value = "all";
   selected.value = [];
+  controlPlane.value = false;
 }
 
 async function submit(): Promise<void> {
@@ -51,6 +55,7 @@ async function submit(): Promise<void> {
       label: label.value.trim(),
       expires_in_days: expiryChoice.value === "never" ? null : Number(expiryChoice.value),
       endpoints: scope.value === "all" ? [] : selected.value,
+      control_plane: controlPlane.value,
     });
     reset();
     emit("created", created);
@@ -103,6 +108,20 @@ async function submit(): Promise<void> {
             <p v-if="endpoints.items.length === 0" class="text-xs text-ink-faint italic">no endpoints defined</p>
           </div>
         </div>
+      </FormField>
+
+      <FormField label="control plane">
+        <label class="flex items-start gap-2 text-sm text-ink">
+          <input v-model="controlPlane" type="checkbox" :class="checkboxClass" class="mt-0.5" />
+          <span>
+            may define services, api_calls, scripts and endpoints
+            <span class="block text-xs text-ink-faint">
+              needed to connect an MCP client to <span class="font-mono">/mcp</span>, the factory.
+              Without it this token can only call tools on the endpoints granted above, and
+              <span class="font-mono">/mcp</span> reports itself as not existing.
+            </span>
+          </span>
+        </label>
       </FormField>
 
       <div class="flex items-center gap-3">
