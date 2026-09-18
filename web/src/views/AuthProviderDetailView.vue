@@ -78,7 +78,10 @@ async function remove(): Promise<void> {
       <dl>
         <FieldRow label="header name" mono>{{ provider.header_name }}</FieldRow>
         <FieldRow label="value template" mono>{{ provider.value_template }}</FieldRow>
-        <FieldRow label="credential env key" mono>{{ provider.credential_env_key }}</FieldRow>
+        <FieldRow v-if="provider.credential_env_key" label="credential env key" mono>{{ provider.credential_env_key }}</FieldRow>
+        <FieldRow v-else label="credential" mono>
+          {{ provider.has_stored_credential ? "stored on this provider" : "stored on this provider — not set yet" }}
+        </FieldRow>
       </dl>
       <p class="mt-3 text-xs text-ink-faint">
         Only the env var <em>name</em> above is stored — the credential value itself never enters

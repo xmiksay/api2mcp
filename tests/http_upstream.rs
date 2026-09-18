@@ -16,7 +16,7 @@ use std::sync::Arc;
 use api2mcp::http::{
     self, BindError, BodyError, CallError, GuardError, SsrfPolicy, StaticDns, UpstreamPool,
 };
-use api2mcp::model::{AuthKind, AuthProvider, Origin, Service};
+use api2mcp::model::{AuthKind, AuthProvider, CredentialSource, Origin, Service};
 use fixture::harness::{bound_get, loopback_pool, send_params, service_for, slug};
 use fixture::{Behavior, Fixture};
 
@@ -200,7 +200,7 @@ async fn a_redirect_to_a_different_allowlisted_origin_does_not_carry_the_first_o
         slug: slug("demo-auth"),
         service_slug: service.slug.clone(),
         kind: AuthKind::StaticHeader,
-        credential_env_key: "A2M_TEST_HTTP_UPSTREAM_REDIRECT_AUTH".to_owned(),
+        credential: CredentialSource::Env("A2M_TEST_HTTP_UPSTREAM_REDIRECT_AUTH".to_owned()),
         header_name: "Authorization".to_owned(),
         value_template: "Bearer ".to_owned(),
         scopes: Vec::new(),

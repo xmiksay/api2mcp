@@ -22,7 +22,6 @@ fn call() -> ApiCall {
         owner_id: uuid::Uuid::nil(),
         slug: Slug::from_str("get-item").expect("valid slug"),
         service_slug: Slug::from_str("demo").expect("valid slug"),
-        auth_provider_slug: None,
         method: ::http::Method::GET,
         path_template: "/items/{id}".to_owned(),
         query_fixed: Default::default(),

@@ -77,7 +77,6 @@ mod tests {
             owner_id: uuid::Uuid::nil(),
             slug: call_slug.parse().unwrap(),
             service_slug: service.slug.clone(),
-            auth_provider_slug: None,
             method: http::Method::GET,
             path_template: "/things".to_owned(),
             query_fixed: BTreeMap::new(),

@@ -17,8 +17,9 @@
 //!
 //! Module layout: [`dto`] (wire shapes, reusing `pack::Pack*` types), [`convert`]/
 //! [`convert_items`] (`model::` <-> those shapes), [`validate_write`] (the pre-write
-//! `pack::validate` gate), [`test_run`] (shared plumbing for the two test-run routes), then one
-//! file per resource.
+//! `pack::validate` gate), [`test_run`] (shared plumbing for the two test-run routes), [`packs`]
+//! (`GET /api/endpoints/{slug}/pack`, `POST /api/packs/import` — export/import over HTTP,
+//! sharing `pack::` with the CLI), then one file per resource.
 
 // Several of these are `pub(crate)`, not private: `server::mcp::control` (the MCP control-plane
 // tool surface — bare `POST /mcp`) reuses their `_for_owner`/`find` functions, DTOs and
@@ -32,6 +33,7 @@ pub(crate) mod dto;
 pub(crate) mod endpoints;
 mod health;
 mod me;
+mod packs;
 pub(crate) mod runs;
 pub(crate) mod scripts;
 pub(crate) mod services;
@@ -59,6 +61,7 @@ pub fn router() -> Router<AppState> {
         .merge(tags::router())
         .merge(runs::router())
         .merge(tokens::router())
+        .merge(packs::router())
 }
 
 #[cfg(test)]

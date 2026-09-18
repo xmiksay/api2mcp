@@ -1,14 +1,14 @@
 //! YAML packs: the portable, credential-free export/import format for a curated set of
-//! services, auth providers, api_calls, scripts and endpoints — the seed for `plan.md` §6
-//! ("Sdílení"). Postgres is this crate's source of truth (see `lib.rs`'s module doc); a pack is
-//! what a human moves between instances, or checks into git as `examples/demo.pack.yaml`.
+//! services, api_calls, scripts and endpoints — the seed for `plan.md` §6 ("Sdílení"). Postgres
+//! is this crate's source of truth (see `lib.rs`'s module doc); a pack is what a human moves
+//! between instances, or checks into git as `examples/demo.pack.yaml`.
 //!
 //! Three properties are non-negotiable (`plan.md` §6 restated in the C13 brief):
-//! - **A pack never contains a credential, nor a reference to one.** [`PackAuthProvider`] carries
-//!   only `credential_env_key` — an env var *name* — and the declared scopes; there is no field
-//!   anywhere in this module a secret *value* could occupy. [`validate_credentials`] is the
-//!   backstop for the one way that guarantee could still be defeated: a human pasting a live
-//!   token into a free-text field that wasn't meant to hold one.
+//! - **A pack never contains a credential, nor a reference to one.** There is no field anywhere
+//!   in this module a secret *value*, or even an auth-provider *reference*, could occupy — a
+//!   pack carries no auth providers at all (see this module's own note below).
+//!   [`validate_credentials`] is the backstop for the one way that guarantee could still be
+//!   defeated: a human pasting a live token into a free-text field that wasn't meant to hold one.
 //! - **A pack never contains database ids or timestamps.** Every reference here is a slug
 //!   (`String` on the wire, validated into [`crate::model::Slug`] by [`convert`]), so importing
 //!   the same pack into a different instance reproduces the identical
@@ -24,12 +24,26 @@
 //! [`export::export_endpoint`] walks a live database into a [`Pack`]; [`validate::validate`]
 //! checks a `Pack` value in isolation, before any transaction opens; [`import::import`] upserts
 //! a validated `Pack` into the database.
+//!
+//! **A pack carries no auth providers at all** — not the definitions (there is no
+//! `auth_providers` map on [`Pack`]) and not even a reference to one from an api_call (an
+//! api_call names no provider of its own in the first place — see `model::ApiCall`'s doc: a
+//! service has at most one, and every api_call on it uses it). `#[serde(deny_unknown_fields)]`
+//! on [`Pack`] turns an older pack's top-level `auth_providers:` key into a parse error rather
+//! than a silently-ignored, half-imported one. `PackEndpoint::auth_providers` (the endpoint's
+//! own provider *scope*, a set of bare slugs) is the one survivor — it doubles as the
+//! read-write admin API's live DTO field (`server::api::dto`), so it stays even though
+//! [`export::export_endpoint`] always emits it empty; a hand-written pack that sets it is
+//! importable only if the target instance already has matching provider slugs.
 
 mod convert;
 pub mod export;
 pub mod import;
 pub mod validate;
-mod validate_credentials;
+// `pub(crate)`, not private: `server::api::auth_providers` reuses `looks_like_credential`
+// directly for its own live pre-write check, now that a pack carries no auth providers for
+// `pack::validate` to run that heuristic over on its behalf (see this module's own doc).
+pub(crate) mod validate_credentials;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -51,12 +65,11 @@ pub const PACK_VERSION: u32 = 1;
 /// this crate's one on-disk format: a diff between two exports of an unchanged definition set
 /// must be empty).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Pack {
     pub version: u32,
     #[serde(default)]
     pub services: BTreeMap<String, PackService>,
-    #[serde(default)]
-    pub auth_providers: BTreeMap<String, PackAuthProvider>,
     #[serde(default)]
     pub api_calls: BTreeMap<String, PackApiCall>,
     #[serde(default)]
@@ -97,9 +110,13 @@ pub struct PackAuthProvider {
     /// The service slug this provider authenticates against.
     pub service: String,
     pub kind: PackAuthKind,
-    /// An environment variable *name* — never a value. See this module's doc for why no
-    /// sibling field here could ever hold one instead.
-    pub credential_env_key: String,
+    /// An environment variable *name* — never a value. Absent means the provider's credential
+    /// is stored on its own row instead, and a pack deliberately carries no way to express what
+    /// that value is: importing such a provider creates it with no value set, for the importing
+    /// owner to fill in themselves. See this module's doc for why no sibling field here could
+    /// ever hold a value instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_env_key: Option<String>,
     pub header_name: String,
     pub value_template: String,
     #[serde(default)]
@@ -194,9 +211,10 @@ pub struct PackBudgets {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PackApiCall {
+    /// Which service this call targets — and, transitively, which auth provider (if any) it
+    /// uses: a service has at most one, and every api_call on it uses it. An api_call names no
+    /// provider of its own (see `model::ApiCall`'s doc).
     pub service: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth_provider: Option<String>,
     /// An HTTP method token (e.g. `"GET"`), parsed by [`convert`].
     pub method: String,
     pub path_template: String,
@@ -264,9 +282,14 @@ pub struct PackEndpoint {
     /// alias -> target: renames a tool's exposed name away from its own slug.
     #[serde(default)]
     pub aliases: BTreeMap<String, PackEndpointTarget>,
-    /// Which auth providers this endpoint may bind to, on top of whatever an api_call already
-    /// declares. Empty means "every provider belonging to a selected service" — see
-    /// [`crate::resolve::auth_bind`].
+    /// Which auth providers this endpoint may bind to — a service has at most one, and an
+    /// api_call declares none of its own, so this restricts by service, not by api_call. Empty
+    /// means "every provider belonging to a selected service" — see
+    /// [`crate::resolve::auth_bind`]. Not carried by [`export::export_endpoint`] (a pack
+    /// carries no auth providers at all — see this module's own doc); it survives here only
+    /// because [`PackEndpoint`] doubles as the read-write admin API's live DTO
+    /// (`server::api::dto::EndpointView`/`EndpointCreate`), where this scope is a real,
+    /// still-live feature.
     #[serde(default)]
     pub auth_providers: BTreeSet<String>,
 }
@@ -298,7 +321,6 @@ mod tests {
                     max_response_bytes: 1_000_000,
                 },
             )]),
-            auth_providers: BTreeMap::new(),
             api_calls: BTreeMap::new(),
             scripts: BTreeMap::new(),
             endpoints: BTreeMap::new(),
@@ -321,5 +343,14 @@ mod tests {
         assert_eq!(pack.version, 1);
         assert!(pack.api_calls.is_empty());
         assert!(pack.tags.is_empty());
+    }
+
+    /// The specific regression Change 2 exists to prevent: an older pack's top-level
+    /// `auth_providers:` key must fail to parse, not silently vanish into a half-imported pack.
+    #[test]
+    fn a_top_level_auth_providers_key_is_rejected_outright() {
+        let yaml = "version: 1\nservices: {}\nauth_providers: {}\n";
+        let err = serde_norway::from_str::<Pack>(yaml).unwrap_err();
+        assert!(err.to_string().contains("auth_providers"));
     }
 }

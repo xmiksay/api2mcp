@@ -22,8 +22,9 @@ use crate::resolve::EndpointPlan;
 use crate::resolve::plan::{PlannedTool, ToolTarget};
 
 /// The full definition slice a tool ran from, redaction-safe by construction: nothing here ever
-/// touches a credential value (`Service` structurally can't hold one — I4 — and `ApiCall` only
-/// ever names an auth provider by slug).
+/// touches a credential value — `Service`/`ApiCall` structurally can't hold one (I4), and an
+/// api_call names no auth provider at all (a service has at most one, applied by
+/// `runtime::dispatch` from the service slug, never recorded on the call itself).
 pub fn build_snapshot(plan: &EndpointPlan, tool: &PlannedTool) -> Value {
     match &tool.target {
         ToolTarget::ApiCall(slug) => {
@@ -136,7 +137,6 @@ fn api_call_json(c: &ApiCall) -> Value {
     json!({
         "slug": c.slug.as_str(),
         "service_slug": c.service_slug.as_str(),
-        "auth_provider_slug": c.auth_provider_slug.as_ref().map(|s| s.as_str()),
         "method": c.method.as_str(),
         "path_template": c.path_template,
         "query_fixed": c.query_fixed,
@@ -219,7 +219,6 @@ mod tests {
             owner_id: uuid::Uuid::nil(),
             slug: "call-a".parse().unwrap(),
             service_slug: "svc".parse().unwrap(),
-            auth_provider_slug: None,
             method: http::Method::GET,
             path_template: "/things".to_owned(),
             query_fixed: BTreeMap::new(),

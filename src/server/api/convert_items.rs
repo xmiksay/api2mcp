@@ -20,7 +20,6 @@ use super::convert::{
 pub fn api_call_to_pack(c: &ApiCall, tags: &BTreeSet<Tag>) -> PackApiCall {
     PackApiCall {
         service: c.service_slug.as_str().to_owned(),
-        auth_provider: c.auth_provider_slug.as_ref().map(|s| s.as_str().to_owned()),
         method: c.method.as_str().to_owned(),
         path_template: c.path_template.clone(),
         query_fixed: c.query_fixed.clone(),
@@ -41,7 +40,6 @@ pub fn api_call_from_pack(
     owner_id: Uuid,
     slug: Slug,
     service_slug: Slug,
-    auth_provider_slug: Option<Slug>,
     c: &PackApiCall,
 ) -> Result<ApiCall, String> {
     let method = http::Method::from_str(&c.method)
@@ -50,7 +48,6 @@ pub fn api_call_from_pack(
         owner_id,
         slug,
         service_slug,
-        auth_provider_slug,
         method,
         path_template: c.path_template.clone(),
         query_fixed: c.query_fixed.clone(),
@@ -186,7 +183,6 @@ mod tests {
             owner_id,
             slug: "call-a".parse().unwrap(),
             service_slug: "svc".parse().unwrap(),
-            auth_provider_slug: None,
             method: http::Method::GET,
             path_template: "/things/{id}".to_owned(),
             query_fixed: Map::new(),
@@ -218,7 +214,6 @@ mod tests {
             owner_id,
             call.slug.clone(),
             call.service_slug.clone(),
-            None,
             &pack,
         )
         .unwrap();

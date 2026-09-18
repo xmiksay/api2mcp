@@ -12,7 +12,7 @@
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::model::{AuthProvider, Origin};
+use crate::model::{AuthProvider, CredentialSource, Origin};
 use crate::secret::{CredError, Secret};
 
 #[derive(Debug, Clone, PartialEq, Eq, Error, Serialize)]
@@ -40,7 +40,11 @@ pub fn apply(
         return Ok(());
     }
 
-    let secret = Secret::load(&provider.credential_env_key)?;
+    let secret = match &provider.credential {
+        CredentialSource::Env(key) => Secret::load(key)?,
+        CredentialSource::Stored(Some(value)) => value.clone(),
+        CredentialSource::Stored(None) => return Err(CredError::MissingStoredCredential.into()),
+    };
     let value = secret.into_header_value(&provider.value_template)?;
     let name = ::http::HeaderName::try_from(provider.header_name.as_str()).map_err(|_| {
         AuthError::InvalidHeaderName {
@@ -62,12 +66,19 @@ mod tests {
     // one, since a shared name would make "expects the var to be absent" flaky against whichever
     // other test happened to have it set at the same moment.
     fn provider(bound_origin: &str, credential_env_key: &str) -> AuthProvider {
+        with_credential(
+            bound_origin,
+            CredentialSource::Env(credential_env_key.to_owned()),
+        )
+    }
+
+    fn with_credential(bound_origin: &str, credential: CredentialSource) -> AuthProvider {
         AuthProvider {
             owner_id: uuid::Uuid::nil(),
             slug: Slug::from_str("demo-auth").expect("valid slug"),
             service_slug: Slug::from_str("demo").expect("valid slug"),
             kind: AuthKind::StaticHeader,
-            credential_env_key: credential_env_key.to_owned(),
+            credential,
             header_name: "Authorization".to_owned(),
             value_template: "Bearer ".to_owned(),
             scopes: Vec::new(),
@@ -130,5 +141,47 @@ mod tests {
             err,
             AuthError::Credential(CredError::MissingEnvVar { .. })
         ));
+    }
+
+    #[test]
+    fn a_stored_credential_needs_no_environment_variable() {
+        let mut headers = ::http::HeaderMap::new();
+        let url = url::Url::parse("https://api.example.com/x").expect("valid url");
+        apply(
+            &with_credential(
+                "https://api.example.com",
+                CredentialSource::Stored(Some(Secret::from_raw("sh-stored".to_owned()))),
+            ),
+            &url,
+            &mut headers,
+        )
+        .expect("applies");
+        let value = headers
+            .get(::http::header::AUTHORIZATION)
+            .expect("header set");
+        assert_eq!(value.to_str().expect("ascii"), "Bearer sh-stored");
+        assert!(
+            value.is_sensitive(),
+            "a stored credential is still sensitive"
+        );
+    }
+
+    /// A stored-source provider whose owner has not set a value yet must fail loudly at send
+    /// time, never send the request unauthenticated and let a 401 look like the upstream's fault.
+    #[test]
+    fn an_unset_stored_credential_is_an_error() {
+        let mut headers = ::http::HeaderMap::new();
+        let url = url::Url::parse("https://api.example.com/x").expect("valid url");
+        let err = apply(
+            &with_credential("https://api.example.com", CredentialSource::Stored(None)),
+            &url,
+            &mut headers,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            AuthError::Credential(CredError::MissingStoredCredential)
+        ));
+        assert!(headers.get(::http::header::AUTHORIZATION).is_none());
     }
 }

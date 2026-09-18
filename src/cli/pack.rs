@@ -61,7 +61,6 @@ pub async fn import(path: &Path, dry_run: bool, user: Option<&str>) -> Result<()
         println!("dry run — nothing written");
     }
     print_rows("services", &report.services);
-    print_rows("auth_providers", &report.auth_providers);
     print_rows("api_calls", &report.api_calls);
     print_rows("scripts", &report.scripts);
     print_rows("endpoints", &report.endpoints);

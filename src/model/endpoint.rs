@@ -36,7 +36,9 @@ pub struct EndpointDef {
     pub enabled: bool,
     /// alias -> target, from `endpoint_aliases`.
     pub aliases: BTreeMap<String, EndpointTarget>,
-    /// `endpoint_auth_providers`: which auth providers this endpoint may bind to, on top of
-    /// whatever an api_call already declares.
+    /// `endpoint_auth_providers`: which auth providers this endpoint may bind to. Empty means
+    /// every provider belonging to a selected api_call's service; a service has at most one
+    /// (see `model::AuthProvider`), so this restricts by service, not by api_call — an api_call
+    /// declares no auth provider of its own. See `resolve::auth_bind`.
     pub auth_providers: BTreeSet<Slug>,
 }

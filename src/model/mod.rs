@@ -18,7 +18,7 @@ mod slug;
 mod tag;
 
 pub use api_call::{Access, ApiCall, Pagination};
-pub use auth::{AuthKind, AuthProvider};
+pub use auth::{AuthKind, AuthProvider, CredentialSource};
 pub use budget::Budgets;
 pub use endpoint::{EndpointDef, EndpointTarget};
 pub use origin::{Origin, OriginError};

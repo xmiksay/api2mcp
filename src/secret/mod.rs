@@ -19,11 +19,16 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-/// A credential value read from the environment. See the module docs for what's deliberately
-/// *not* implemented on this type. `Clone` is safe to derive: it duplicates the wrapped
-/// `Zeroizing<String>` (each copy still zeroizes its own memory on drop) without adding any new
-/// way to read the value out as a plain `String`.
-#[derive(Clone)]
+/// A credential value, read either from the environment or from the row that stores it. See the
+/// module docs for what's deliberately *not* implemented on this type. `Clone` is safe to derive:
+/// it duplicates the wrapped `Zeroizing<String>` (each copy still zeroizes its own memory on
+/// drop) without adding any new way to read the value out as a plain `String`.
+///
+/// `PartialEq`/`Eq` compare the wrapped values directly, and deliberately not in constant time:
+/// they exist so [`crate::model::AuthProvider`] can stay comparable for definition diffing, and
+/// both sides of any comparison here are already in this process's memory. This is not an
+/// authentication primitive and must never be used as one.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Secret(Zeroizing<String>);
 
 impl fmt::Debug for Secret {
@@ -43,6 +48,8 @@ pub enum CredError {
     MissingEnvVar { env_key: String },
     #[error("credential value cannot be represented as an HTTP header value")]
     InvalidHeaderValue,
+    #[error("auth provider stores its credential on the row, but no value has been set yet")]
+    MissingStoredCredential,
 }
 
 impl Secret {
@@ -56,14 +63,22 @@ impl Secret {
         Ok(Secret::from_raw(value))
     }
 
-    /// Wraps an already-obtained value (e.g. one a caller resolved through its own
-    /// testable env-lookup indirection, like `config::Config::from_lookup`) without going
-    /// through [`Self::load`]'s own `std::env::var` call. `pub(crate)`: every value that
-    /// reaches this still traces back to a real environment variable somewhere, just read by
-    /// a caller that needed to mock that read for a unit test — this is not a second, looser
-    /// way to construct a `Secret` from arbitrary application data.
+    /// Wraps an already-obtained value — one a caller resolved through its own testable
+    /// env-lookup indirection (like `config::Config::from_lookup`), or one read back out of
+    /// `auth_providers.credential_value` by [`crate::store`]. `pub(crate)`: the point is that
+    /// everything *above* the store boundary still has no way to mint a `Secret` from arbitrary
+    /// application data, and no way to read one back out again.
     pub(crate) fn from_raw(value: String) -> Secret {
         Secret(Zeroizing::new(value))
+    }
+
+    /// The single, deliberate read-back of a stored credential, used only by
+    /// [`crate::store::auth_provider`] on its way into the `auth_providers.credential_value`
+    /// column. `pub(crate)` and named to be greppable: this is the one place a credential
+    /// becomes a `String` again, and it exists because the value has to reach the database.
+    /// Nothing model-visible may call it — that is what keeps I4 true (see the module docs).
+    pub(crate) fn expose_for_storage(&self) -> &str {
+        self.0.as_str()
     }
 
     /// The one exit from this type: renders `template` into a sensitive `http::HeaderValue` with

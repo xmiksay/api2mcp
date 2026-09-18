@@ -19,7 +19,6 @@ use crate::pack::{PackApiCall, PackEndpoint, PackEndpointTarget, PackScript};
 pub(crate) fn api_call_to_pack(c: &ApiCall, tags: &BTreeSet<Tag>) -> PackApiCall {
     PackApiCall {
         service: c.service_slug.as_str().to_owned(),
-        auth_provider: c.auth_provider_slug.as_ref().map(|s| s.as_str().to_owned()),
         method: c.method.as_str().to_owned(),
         path_template: c.path_template.clone(),
         query_fixed: c.query_fixed.clone(),
@@ -40,7 +39,6 @@ pub(crate) fn api_call_from_pack(
     owner_id: Uuid,
     slug: Slug,
     service_slug: Slug,
-    auth_provider_slug: Option<Slug>,
     c: &PackApiCall,
 ) -> Result<ApiCall, ConvertError> {
     let method = http::Method::from_str(&c.method)
@@ -49,7 +47,6 @@ pub(crate) fn api_call_from_pack(
         owner_id,
         slug,
         service_slug,
-        auth_provider_slug,
         method,
         path_template: c.path_template.clone(),
         query_fixed: c.query_fixed.clone(),

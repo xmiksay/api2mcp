@@ -27,7 +27,6 @@ fn plan_for(fixture: &Fixture, name: &str) -> EndpointPlan {
         owner_id: uuid::Uuid::nil(),
         slug: slug(name),
         service_slug: service.slug.clone(),
-        auth_provider_slug: None,
         method: ::http::Method::GET,
         path_template: format!("/{name}"),
         query_fixed: BTreeMap::new(),

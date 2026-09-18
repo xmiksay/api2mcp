@@ -21,13 +21,6 @@ pub fn uuid_col(name: impl IntoIden) -> ColumnDef {
     c
 }
 
-/// A nullable UUID column — for optional foreign keys (`ON DELETE SET NULL` targets).
-pub fn uuid_col_null(name: impl IntoIden) -> ColumnDef {
-    let mut c = ColumnDef::new(name);
-    c.uuid().null();
-    c
-}
-
 /// `<name> TIMESTAMPTZ NOT NULL DEFAULT now()`.
 pub fn timestamptz_now(name: impl IntoIden) -> ColumnDef {
     let mut c = ColumnDef::new(name);

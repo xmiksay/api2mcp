@@ -25,6 +25,14 @@
 //! | I2 | The set of origins an endpoint can reach is computable statically, before execution. | [`resolve::origins`] |
 //! | I3 | A param value is always a leaf: it can never alter the request's origin, path structure, method, or any header outside the parameterisable-header allowlist. | [`http::url_template`], [`http::bind`] |
 //! | I4 | A credential has no path to a `String` that reaches a model-visible surface. | [`secret::Secret`] (no `Display`/`Serialize`), [`http::redact`] |
+//!
+//! I4 is about *leaking*, not about *persistence*: a credential may be stored on an
+//! [`model::AuthProvider`] row ([`model::CredentialSource::Stored`], the per-owner case an
+//! environment variable cannot express) and is still a [`secret::Secret`] with no `Display`,
+//! `Serialize` or `Deref` the moment it is read back. The read/write API reports only whether a
+//! value is set, the control-plane MCP surface cannot see auth providers at all, and
+//! [`pack::export`] emits no value — see [`model::auth`]'s module doc for the trade that storage
+//! accepts.
 //! | I5 | The auth-provider-to-origin binding is set by a human. An agent can neither propose nor change it. | [`resolve::auth_bind`], `pub(crate)` writes in [`store`] |
 //! | I6 | Budgets (calls, bytes, wall clock, pages) are enforced by the runtime, never by the script. | [`runtime::budget`] |
 //! | I7 | Ordering and budget attribution are always deterministic: stable iteration order, fan-out results in input order, budgets committed in index order. A script's *output* is reproducible given the same upstream responses and the same recorded `execution_start` — unless it calls `now()`. | [`runtime::fanout`], [`runtime::budget`], [`script::dates`] |

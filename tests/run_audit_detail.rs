@@ -58,7 +58,6 @@ fn plain_get_call(
         owner_id,
         slug: slug(slug_str),
         service_slug: service_slug.clone(),
-        auth_provider_slug: None,
         method: http::Method::GET,
         path_template: path.to_owned(),
         query_fixed: BTreeMap::new(),
@@ -205,8 +204,9 @@ async fn a_credential_used_by_a_call_appears_in_neither_the_list_nor_the_detail_
         "seeding auth provider: {resp:?}"
     );
 
-    let mut call = plain_get_call(h.admin_id, "secure-thing", &service_slug, "/secure");
-    call.auth_provider_slug = Some(slug("cred-provider"));
+    // No per-call wiring needed: the provider just created is already bound to `service_slug`,
+    // and a service has at most one — this api_call picks it up automatically (Change 1).
+    let call = plain_get_call(h.admin_id, "secure-thing", &service_slug, "/secure");
     let tag = Tag(slug("tag-cred"));
     h.stores
         .api_call()

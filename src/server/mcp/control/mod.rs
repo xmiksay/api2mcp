@@ -17,28 +17,28 @@
 //!
 //! **`auth_provider` is invisible here, entirely — not read-only, absent.** No tool on this
 //! surface lists, reads, creates, updates or deletes an auth provider, and none accepts an
-//! auth-provider slug as an input field: [`api_calls`] never exposes `auth_provider` in
-//! `api_call.create`/`update`'s schema and always forces it to `None` on create / preserves
-//! whatever the existing row already has on update (ignoring anything a caller sent under that
-//! key); [`endpoints`] does the identical thing for `auth_providers` (an endpoint's own I5 join,
-//! `endpoint_auth_providers` — see `store::endpoint`'s module doc). I5's whole point is that the
-//! credential-to-origin binding is set by a human, never proposed, read or moved by an agent, and
-//! a read-only list would still leak which credentials exist and what they're bound to — so
-//! there is no read surface either.
+//! auth-provider slug as an input field: an api_call names no provider of its own in the first
+//! place (a service has at most one, and every api_call on it uses it — see `model::ApiCall`'s
+//! doc), so [`api_calls`] has nothing to expose, force or preserve there at all; [`endpoints`]
+//! still forces `auth_providers` (an endpoint's own I5 join, `endpoint_auth_providers` — see
+//! `store::endpoint`'s module doc) empty on create / preserves it on update, since that scope is
+//! independent of Change 1. I5's whole point is that the credential-to-origin binding is set by
+//! a human, never proposed, read or moved by an agent, and a read-only list would still leak
+//! which credentials exist and what they're bound to — so there is no read surface either.
 //!
 //! **The consequence, handled deliberately, not left to fall out as a bug:** an api_call created
-//! or updated through this surface always ends up with no `auth_provider` (on create) or its
-//! prior one, unchanged (on update). That is the intended workflow, not a gap — an agent defines
-//! the *shape* of a capability, and a human wires the credential to it afterwards through `/api`
-//! or the CLI, which is exactly what I5 reserves for a person. [`INSTRUCTIONS`] and
-//! [`api_calls::descriptors`]/[`endpoints::descriptors`]'s own tool descriptions say this
-//! plainly, so an agent is told *who* attaches a credential and *why it isn't this tool*, rather
-//! than discovering a silent gap or mistaking a resulting 401 for its own error. Calling an
-//! api_call with no `auth_provider` is not a special case at the HTTP layer either — `dispatch`
-//! (`runtime::dispatch::AuthProviders`) already sends no credential whenever
-//! `auth_provider_slug` is `None`, exactly as a human-authored, credential-less api_call over
-//! `/api` always has; the unauthenticated upstream response (a `401`, typically) is recorded and
-//! returned like any other non-2xx response, nothing more.
+//! through this surface starts on a service with whatever auth provider (if any) that service
+//! already has — there is no per-call wiring for an agent to set or fail to set. That is the
+//! intended workflow, not a gap — an agent defines the *shape* of a capability, and a human wires
+//! a service's credential up afterwards through `/api` or the CLI, which is exactly what I5
+//! reserves for a person. [`INSTRUCTIONS`] and [`api_calls::descriptors`]/
+//! [`endpoints::descriptors`]'s own tool descriptions say this plainly, so an agent is told *who*
+//! attaches a credential and *why it isn't this tool*, rather than discovering a silent gap or
+//! mistaking a resulting 401 for its own error. Calling an api_call on a service with no provider
+//! is not a special case at the HTTP layer either — `dispatch` (`runtime::dispatch::AuthProviders`)
+//! already sends no credential whenever a service has none, exactly as a human-authored,
+//! credential-less service over `/api` always has; the unauthenticated upstream response (a
+//! `401`, typically) is recorded and returned like any other non-2xx response, nothing more.
 //!
 //! Module layout: [`schema`] (shared `inputSchema` fragments), [`support`] (arg parsing +
 //! [`crate::server::error::ApiError`]-to-[`ToolOutcome`] rendering), [`registry`] (the static

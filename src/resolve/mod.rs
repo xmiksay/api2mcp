@@ -210,7 +210,9 @@ pub async fn build_plan(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{AuthKind, AuthProvider, EndpointDef, Origin, Pagination, Service, Tag};
+    use crate::model::{
+        AuthKind, AuthProvider, CredentialSource, EndpointDef, Origin, Pagination, Service, Tag,
+    };
     use crate::store::AuthProviderStore;
     use crate::store::test_support::ScratchDb;
 
@@ -256,7 +258,7 @@ mod tests {
             slug: "prov-e2e".parse().unwrap(),
             service_slug: service.slug.clone(),
             kind: AuthKind::StaticHeader,
-            credential_env_key: "A2M_CRED_TEST_RESOLVE_E2E".into(),
+            credential: CredentialSource::Env("A2M_CRED_TEST_RESOLVE_E2E".into()),
             header_name: "Authorization".into(),
             value_template: "Bearer {token}".into(),
             scopes: vec![],
@@ -273,7 +275,6 @@ mod tests {
             owner_id,
             slug: "call-i5-e2e".parse().unwrap(),
             service_slug: service.slug.clone(),
-            auth_provider_slug: Some(provider.slug.clone()),
             method: http::Method::GET,
             path_template: "/things".to_owned(),
             query_fixed: BTreeMap::new(),

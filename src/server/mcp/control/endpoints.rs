@@ -3,10 +3,10 @@
 //!
 //! **`auth_providers` never appears here** — an endpoint's own I5 join (`endpoint_auth_providers`,
 //! `store::endpoint`'s own doc: "which auth providers this endpoint may bind to"), hidden for the
-//! identical reason an api_call's own `auth_provider` is (see `super`'s module doc and
-//! `super::api_calls`): a human sets it, never this tool. A freshly created endpoint gets the
-//! permissive empty default (every provider a selected api_call is otherwise allowed to bind);
-//! `endpoint.update` always preserves whatever is already on the row.
+//! same reason `super::api_calls` exposes no auth field at all (see `super`'s module doc): a
+//! human sets it, never this tool. A freshly created endpoint gets the permissive empty default
+//! (every provider a selected api_call's service is otherwise allowed to bind); `endpoint.update`
+//! always preserves whatever is already on the row.
 
 use std::collections::BTreeSet;
 

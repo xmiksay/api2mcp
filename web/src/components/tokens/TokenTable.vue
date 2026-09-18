@@ -21,6 +21,7 @@ const columns: Column[] = [
   { key: "token_prefix", label: "prefix" },
   { key: "label", label: "label" },
   { key: "endpoints", label: "endpoints" },
+  { key: "reach", label: "reach" },
   { key: "created_at", label: "created" },
   { key: "last_used_at", label: "last used" },
   { key: "expires_at", label: "expires" },
@@ -57,6 +58,13 @@ function orNever(iso: string | null): string {
       <template #cell-token_prefix="{ row }">
         <span class="font-mono text-ink">{{ row.token_prefix }}&hellip;</span>
       </template>
+      <!-- Whether the token can define things, as opposed to only calling them — a different
+           kind of power from the endpoint grant beside it, so it gets its own column. -->
+      <template #cell-reach="{ row }">
+        <span v-if="row.control_plane" class="text-xs text-write">control plane</span>
+        <span v-else class="text-xs text-ink-faint">tools only</span>
+      </template>
+
       <template #cell-endpoints="{ row }">
         <span v-if="row.endpoints.length === 0" class="text-xs text-ink-faint italic">all endpoints</span>
         <TagChips v-else :tags="row.endpoints" />

@@ -1,7 +1,9 @@
 //! `api_calls` façade. [`ApiCallStore::get`] does the composite read in one pass — the
-//! api_call row, its params (ordered by `position`, I7), its service and auth-provider
-//! slugs, and its tags — because MCP, the CLI, the admin API and pack export all need
-//! exactly this shape; giving it one home here means the join is written once.
+//! api_call row, its params (ordered by `position`, I7), its service slug, and its tags —
+//! because MCP, the CLI, the admin API and pack export all need exactly this shape; giving it
+//! one home here means the join is written once. An api_call names no auth provider of its
+//! own — a service has at most one (`ux_auth_providers_service`), and every api_call on that
+//! service uses it; see `resolve::auth_bind` and `runtime::dispatch::AuthProviders`.
 //!
 //! `projection`/`pagination` are JSONB; decoding them into
 //! [`crate::model::Projection`]/[`crate::model::Pagination`] (and reporting a malformed
@@ -25,8 +27,8 @@ use super::api_call_projection::{
 };
 use super::meta::MetaStore;
 use super::{
-    AuthProviderStore, ServiceStore, StoreError, TagStore, access_to_str, db_err, json_string_map,
-    parse_slug, str_to_access, string_map_to_json,
+    ServiceStore, StoreError, TagStore, access_to_str, db_err, json_string_map, parse_slug,
+    str_to_access, string_map_to_json,
 };
 
 /// An api_call plus the tags it carries. Tags aren't a field of [`ApiCall`] itself (tag
@@ -101,10 +103,13 @@ impl ApiCallStore {
                 api_call.service_slug.as_str()
             )));
         }
-        let (service_id, auth_provider_id) = self.resolve_foreign_keys(api_call).await?;
+        let service_id = self
+            .services()
+            .id_by_slug(api_call.owner_id, &api_call.service_slug)
+            .await?;
         let id = Uuid::new_v4();
         let txn = self.db.begin().await.map_err(db_err("api_call::create"))?;
-        to_active_model(api_call, id, service_id, auth_provider_id)
+        to_active_model(api_call, id, service_id)
             .insert(&txn)
             .await
             .map_err(db_err("api_call::create"))?;
@@ -120,9 +125,12 @@ impl ApiCallStore {
         let id = self
             .id_by_slug(api_call.owner_id, &api_call.service_slug, &api_call.slug)
             .await?;
-        let (service_id, auth_provider_id) = self.resolve_foreign_keys(api_call).await?;
+        let service_id = self
+            .services()
+            .id_by_slug(api_call.owner_id, &api_call.service_slug)
+            .await?;
         let txn = self.db.begin().await.map_err(db_err("api_call::update"))?;
-        to_active_model(api_call, id, service_id, auth_provider_id)
+        to_active_model(api_call, id, service_id)
             .update(&txn)
             .await
             .map_err(db_err("api_call::update"))?;
@@ -208,55 +216,22 @@ impl ApiCallStore {
         service_slug: Slug,
     ) -> Result<TaggedApiCall, StoreError> {
         let id = row.id;
-        let auth_provider_slug = match row.auth_provider_id {
-            Some(aid) => Some(self.auth_providers().slug_by_id(aid).await?),
-            None => None,
-        };
         let params = load_params(&self.db, id).await?;
         let tags = TagStore::new(self.db.clone()).tags_for_api_call(id).await?;
-        let api_call = to_model(row, service_slug, auth_provider_slug, params)?;
+        let api_call = to_model(row, service_slug, params)?;
         Ok(TaggedApiCall { api_call, tags })
-    }
-
-    async fn resolve_foreign_keys(
-        &self,
-        api_call: &ApiCall,
-    ) -> Result<(Uuid, Option<Uuid>), StoreError> {
-        let service_id = self
-            .services()
-            .id_by_slug(api_call.owner_id, &api_call.service_slug)
-            .await?;
-        let auth_provider_id = match &api_call.auth_provider_slug {
-            Some(slug) => Some(
-                self.auth_providers()
-                    .id_by_slug(api_call.owner_id, &api_call.service_slug, slug)
-                    .await?,
-            ),
-            None => None,
-        };
-        Ok((service_id, auth_provider_id))
     }
 
     fn services(&self) -> ServiceStore {
         ServiceStore::new(self.db.clone())
     }
-
-    fn auth_providers(&self) -> AuthProviderStore {
-        AuthProviderStore::new(self.db.clone())
-    }
 }
 
-fn to_active_model(
-    api_call: &ApiCall,
-    id: Uuid,
-    service_id: Uuid,
-    auth_provider_id: Option<Uuid>,
-) -> api_calls::ActiveModel {
+fn to_active_model(api_call: &ApiCall, id: Uuid, service_id: Uuid) -> api_calls::ActiveModel {
     api_calls::ActiveModel {
         id: Set(id),
         owner_id: Set(api_call.owner_id),
         service_id: Set(service_id),
-        auth_provider_id: Set(auth_provider_id),
         slug: Set(api_call.slug.as_str().to_owned()),
         method: Set(api_call.method.to_string()),
         path_template: Set(api_call.path_template.clone()),
@@ -276,7 +251,6 @@ fn to_active_model(
 fn to_model(
     row: api_calls::Model,
     service_slug: Slug,
-    auth_provider_slug: Option<Slug>,
     params: Vec<crate::model::Param>,
 ) -> Result<ApiCall, StoreError> {
     let access = str_to_access(&row.access)?;
@@ -293,7 +267,6 @@ fn to_model(
         owner_id: row.owner_id,
         slug: parse_slug(&row.slug)?,
         service_slug,
-        auth_provider_slug,
         method,
         path_template: row.path_template,
         query_fixed: json_string_map(&row.query_fixed, "api_calls.query_fixed")?,

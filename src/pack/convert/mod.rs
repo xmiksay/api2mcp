@@ -1,7 +1,9 @@
 //! Conversions between the wire ([`super::Pack*`]) shapes and [`crate::model`] types. Split into
-//! this file (scalars, `Param`/`Projection`/`Pagination`/`Budgets`/`Service`/`AuthProvider`) and
-//! [`items`] (`ApiCall`/`ScriptDef`/`EndpointDef`, which compose the former) to keep both under
-//! the workspace's 400-line cap.
+//! this file (scalars, `Param`/`Projection`/`Pagination`/`Budgets`/`Service`) and [`items`]
+//! (`ApiCall`/`ScriptDef`/`EndpointDef`, which compose the former) to keep both under the
+//! workspace's 400-line cap. No `AuthProvider` conversion lives here: a pack carries no auth
+//! providers at all (see `pack`'s own module doc) — `server::api::convert`'s own
+//! `auth_provider_to_pack`/`from_pack` are the live read-write API's, unconnected to this one.
 //!
 //! Deliberately not `crate::store`'s `parse_slug`/`parse_url`/`parse_origin`/`access_to_str`/
 //! `str_to_access` even though those already exist: they return `StoreError`, and threading that
@@ -25,13 +27,13 @@ use std::collections::BTreeSet;
 use uuid::Uuid;
 
 use crate::model::{
-    Access, AuthKind, AuthProvider, Budgets, Cardinality, Origin, Pagination, Param, ParamLocation,
-    ParamType, Projection, ProjectionField, Service, Slug, SlugError, Tag,
+    Access, Budgets, Cardinality, Origin, Pagination, Param, ParamLocation, ParamType, Projection,
+    ProjectionField, Service, Slug, SlugError, Tag,
 };
 
 use super::{
-    PackAuthKind, PackAuthProvider, PackBudgets, PackCardinality, PackPagination, PackParam,
-    PackParamLocation, PackProjection, PackProjectionField, PackService,
+    PackBudgets, PackCardinality, PackPagination, PackParam, PackParamLocation, PackProjection,
+    PackProjectionField, PackService,
 };
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -274,53 +276,6 @@ pub(crate) fn service_from_pack(
         max_concurrency: s.max_concurrency,
         rate_limit_per_min: s.rate_limit_per_min,
         max_response_bytes: s.max_response_bytes,
-    })
-}
-
-fn auth_kind_to_pack(k: &AuthKind) -> PackAuthKind {
-    match k {
-        AuthKind::StaticHeader => PackAuthKind::StaticHeader,
-        AuthKind::OAuth2ClientCredentials => PackAuthKind::OAuth2ClientCredentials,
-    }
-}
-
-fn auth_kind_from_pack(k: PackAuthKind) -> AuthKind {
-    match k {
-        PackAuthKind::StaticHeader => AuthKind::StaticHeader,
-        PackAuthKind::OAuth2ClientCredentials => AuthKind::OAuth2ClientCredentials,
-    }
-}
-
-pub(crate) fn auth_provider_to_pack(p: &AuthProvider) -> PackAuthProvider {
-    PackAuthProvider {
-        service: p.service_slug.as_str().to_owned(),
-        kind: auth_kind_to_pack(&p.kind),
-        credential_env_key: p.credential_env_key.clone(),
-        header_name: p.header_name.clone(),
-        value_template: p.value_template.clone(),
-        scopes: p.scopes.clone(),
-        token_url: p.token_url.as_ref().map(|u| u.to_string()),
-        bound_origin: p.bound_origin.to_string(),
-    }
-}
-
-pub(crate) fn auth_provider_from_pack(
-    owner_id: Uuid,
-    slug: Slug,
-    service_slug: Slug,
-    p: &PackAuthProvider,
-) -> Result<AuthProvider, ConvertError> {
-    Ok(AuthProvider {
-        owner_id,
-        slug,
-        service_slug,
-        kind: auth_kind_from_pack(p.kind),
-        credential_env_key: p.credential_env_key.clone(),
-        header_name: p.header_name.clone(),
-        value_template: p.value_template.clone(),
-        scopes: p.scopes.clone(),
-        token_url: p.token_url.as_deref().map(parse_url).transpose()?,
-        bound_origin: parse_origin(&p.bound_origin)?,
     })
 }
 

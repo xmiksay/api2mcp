@@ -17,7 +17,6 @@ fn reports_every_failure_at_once() {
         "call-a".to_owned(),
         PackApiCall {
             service: "does-not-exist".to_owned(),
-            auth_provider: None,
             method: "GET".to_owned(),
             path_template: "/things".to_owned(),
             query_fixed: BTreeMap::new(),
@@ -70,7 +69,6 @@ fn fixed_param_shape_matches_url_template() {
         "call-a".to_owned(),
         PackApiCall {
             service: "svc".to_owned(),
-            auth_provider: None,
             method: "GET".to_owned(),
             path_template: "/items/{id}".to_owned(),
             query_fixed: BTreeMap::new(),
@@ -117,7 +115,6 @@ fn a_header_param_named_authorization_is_rejected_at_validate_time() {
         "call-a".to_owned(),
         PackApiCall {
             service: "svc".to_owned(),
-            auth_provider: None,
             method: "GET".to_owned(),
             path_template: "/things".to_owned(),
             query_fixed: BTreeMap::new(),
@@ -161,7 +158,6 @@ fn a_header_param_using_an_allowed_name_passes() {
         "call-a".to_owned(),
         PackApiCall {
             service: "svc".to_owned(),
-            auth_provider: None,
             method: "GET".to_owned(),
             path_template: "/things".to_owned(),
             query_fixed: BTreeMap::new(),

@@ -69,8 +69,12 @@ export type PackAuthKind = "static_header" | "oauth2_client_credentials";
 export interface PackAuthProvider {
   service: string;
   kind: PackAuthKind;
-  /** An env var *name*, never a credential value — see `pack::mod`'s module doc. */
-  credential_env_key: string;
+  /**
+   * An env var *name*, never a credential value — see `pack::mod`'s module doc. Omitted when the
+   * provider stores its credential on its own row instead; the value itself travels only on
+   * `AuthProviderWrite.credential_value`, write-only, and is never returned by any read.
+   */
+  credential_env_key?: string;
   header_name: string;
   value_template: string;
   scopes: string[];
@@ -79,11 +83,21 @@ export interface PackAuthProvider {
 }
 export interface AuthProviderView extends PackAuthProvider {
   slug: string;
+  /** Whether a stored credential is set. Never the value itself. */
+  has_stored_credential: boolean;
+}
+
+/**
+ * A create/update body. `credential_value` is write-only and applies only when
+ * `credential_env_key` is absent: omitting it on an update leaves whatever is stored untouched
+ * (so editing a header doesn't require re-entering the token), and `""` clears it.
+ */
+export interface AuthProviderWrite extends PackAuthProvider {
+  credential_value?: string;
 }
 
 export interface PackApiCall {
   service: string;
-  auth_provider?: string;
   method: string;
   path_template: string;
   query_fixed: Record<string, string>;
@@ -179,8 +193,10 @@ export interface HealthView {
 
 export interface MeView {
   id: string;
-  kind: "session" | "service_token" | "cli";
-  is_admin: boolean;
+  /** The signed-in account. This is what identifies the person; `kind` does not. */
+  email: string;
+  /** How the caller authenticated — a fact about the credential, not about the human. */
+  kind: "session" | "oauth" | "service_token" | "cli";
 }
 
 // --- Runs (the audit trail) ----------------------------------------------------------------------
@@ -333,6 +349,8 @@ export interface TokenCreateRequest {
   label: string;
   expires_in_days: number | null;
   endpoints: string[];
+  /** Whether this token may reach the control plane at `/mcp`. Defaults to false server-side. */
+  control_plane: boolean;
 }
 
 /** `token` is the plaintext — returned only from the create call, never again. */
@@ -343,6 +361,7 @@ export interface TokenCreateResponse {
   label: string;
   expires_at: string | null;
   endpoints: string[];
+  control_plane: boolean;
 }
 
 export interface TokenView {
@@ -354,4 +373,5 @@ export interface TokenView {
   expires_at: string | null;
   revoked_at: string | null;
   endpoints: string[];
+  control_plane: boolean;
 }

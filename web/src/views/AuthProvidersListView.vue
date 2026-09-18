@@ -19,7 +19,7 @@ const columns: Column[] = [
   { key: "slug", label: "slug" },
   { key: "service", label: "service" },
   { key: "kind", label: "kind" },
-  { key: "credential_env_key", label: "credential env key" },
+  { key: "credential_env_key", label: "credential" },
   { key: "bound_origin", label: "bound origin" },
 ];
 
@@ -57,7 +57,9 @@ function open(row: AuthProviderView): void {
       </RouterLink>
     </template>
     <template #cell-credential_env_key="{ row }">
-      <span class="font-mono text-xs text-ink-dim">{{ row.credential_env_key }}</span>
+      <span class="font-mono text-xs text-ink-dim">
+        {{ row.credential_env_key ?? (row.has_stored_credential ? "stored" : "stored (unset)") }}
+      </span>
     </template>
     <template #cell-bound_origin="{ row }">
       <span class="font-mono text-xs text-ink-dim">{{ row.bound_origin }}</span>

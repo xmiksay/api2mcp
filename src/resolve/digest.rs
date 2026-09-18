@@ -122,7 +122,6 @@ fn api_call_json(c: &ApiCall) -> Value {
     json!({
         "slug": c.slug.as_str(),
         "service_slug": c.service_slug.as_str(),
-        "auth_provider_slug": c.auth_provider_slug.as_ref().map(Slug::as_str),
         "method": c.method.as_str(),
         "path_template": c.path_template,
         "query_fixed": c.query_fixed,

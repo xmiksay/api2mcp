@@ -29,39 +29,41 @@ use crate::store::{AuthProviderStore, StoreError};
 mod error;
 pub use error::{DispatchAttempt, DispatchError};
 
-/// Every non-secret [`AuthProvider`] a plan's selected api_calls might need, resolved once per
-/// run (see [`AuthProviders::load`]) rather than hit the database on every dispatched call.
-/// `dispatch` itself does no store I/O — this is the seam that keeps it that way.
+/// Every non-secret [`AuthProvider`] a plan's selected api_calls might need, keyed by *service*
+/// slug (a service has at most one provider — `ux_auth_providers_service` — and every api_call
+/// on it uses it, so there is no per-api_call or per-provider identity to key by any more),
+/// resolved once per run (see [`AuthProviders::load`]) rather than hit the database on every
+/// dispatched call. `dispatch` itself does no store I/O — this is the seam that keeps it that
+/// way.
 #[derive(Debug, Default, Clone)]
 pub struct AuthProviders(BTreeMap<Slug, AuthProvider>);
 
 impl AuthProviders {
-    /// Loads exactly the providers named by `plan.calls`' `auth_provider_slug`s, deduplicated by
-    /// provider slug (a provider shared by several api_calls on the same service is fetched once).
+    /// Loads exactly the providers `plan.calls`' services might need, deduplicated by service
+    /// slug (several api_calls sharing a service are fetched once).
     pub async fn load(
         auth_providers: &AuthProviderStore,
         plan: &EndpointPlan,
     ) -> Result<Self, StoreError> {
         let mut map = BTreeMap::new();
         for planned in plan.calls.values() {
-            let Some(provider_slug) = &planned.api_call.auth_provider_slug else {
-                continue;
-            };
-            if map.contains_key(provider_slug) {
+            let service_slug = &planned.service.slug;
+            if map.contains_key(service_slug) {
                 continue;
             }
             if let Some(provider) = auth_providers
-                .get(plan.owner_id, &planned.service.slug, provider_slug)
+                .get_for_service(plan.owner_id, service_slug)
                 .await?
             {
-                map.insert(provider_slug.clone(), provider);
+                map.insert(service_slug.clone(), provider);
             }
         }
         Ok(Self(map))
     }
 
-    pub fn get(&self, slug: &Slug) -> Option<&AuthProvider> {
-        self.0.get(slug)
+    /// The provider (if any) bound to `service_slug`.
+    pub fn get(&self, service_slug: &Slug) -> Option<&AuthProvider> {
+        self.0.get(service_slug)
     }
 }
 
@@ -167,11 +169,7 @@ pub async fn dispatch(
         .await
         .map_err(|e| DispatchError::Client(e.to_string()))?;
 
-    let auth = planned
-        .api_call
-        .auth_provider_slug
-        .as_ref()
-        .and_then(|slug| ctx.auth.get(slug));
+    let auth = ctx.auth.get(&planned.service.slug);
 
     let static_cap = planned
         .api_call

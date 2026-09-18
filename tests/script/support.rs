@@ -27,7 +27,6 @@ pub fn plan_with_script(fixture: &Fixture, script_slug: &Slug) -> EndpointPlan {
         owner_id: uuid::Uuid::nil(),
         slug: slug("item"),
         service_slug: service.slug.clone(),
-        auth_provider_slug: None,
         method: ::http::Method::GET,
         path_template: "/items/{id}".to_owned(),
         query_fixed: BTreeMap::new(),

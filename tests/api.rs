@@ -45,7 +45,6 @@ async fn seed_minimal(stores: &Stores, owner_id: Uuid) -> Result<()> {
         owner_id,
         slug: slug("call-api-read"),
         service_slug: service.slug.clone(),
-        auth_provider_slug: None,
         method: http::Method::GET,
         path_template: "/things".to_owned(),
         query_fixed: BTreeMap::new(),

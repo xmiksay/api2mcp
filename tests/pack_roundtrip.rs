@@ -1,17 +1,22 @@
 //! `src/pack/` integration tests, against real scratch Postgres instances (skipped when
 //! `TEST_DATABASE_URL` is unset — see `tests/common/mod.rs`). The headline assertion is
-//! [`pack_export_reimport_reproduces_identical_resolve_digest`]: export from one instance,
-//! import into a completely separate one, and prove `resolve::build_plan` produces a
-//! byte-identical `EndpointPlan::digest` — that single assertion is what proves a pack is
-//! genuinely portable, not merely well-formed YAML.
+//! [`pack_export_reimport_reproduces_everything_but_the_auth_binding`]: export from one
+//! instance, import into a completely separate one, and prove `resolve::build_plan` produces a
+//! byte-identical `EndpointPlan::digest` while the service's auth binding — deliberately not
+//! carried by a pack (Change 2) — is *not* reproduced. That single assertion is what proves a
+//! pack is genuinely portable, not merely well-formed YAML, without overclaiming a guarantee
+//! auth was never meant to have.
 
+mod api_support;
 mod common;
 mod fixture;
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Result;
+use axum::http::{Method, StatusCode};
 use common::ScratchDb;
+use serde_json::json;
 
 use api2mcp::http::{SsrfPolicy, UpstreamPool};
 use api2mcp::model::{
@@ -56,7 +61,6 @@ async fn seed_minimal(stores: &Stores, owner_id: Uuid, suffix: &str) -> Result<S
         owner_id,
         slug: slug(&format!("call-{suffix}")),
         service_slug: svc.slug.clone(),
-        auth_provider_slug: None,
         method: http::Method::GET,
         path_template: "/things".to_owned(),
         query_fixed: BTreeMap::new(),
@@ -89,22 +93,54 @@ async fn seed_minimal(stores: &Stores, owner_id: Uuid, suffix: &str) -> Result<S
     Ok(ep.slug)
 }
 
-/// The highest-value test: seed definitions in one database, export, import into a *separate*
-/// scratch database (standing in for "wipe and reimport" — a fresh instance is a stronger proof
-/// of portability than the same database emptied), resolve in both, and assert an identical
-/// `EndpointPlan::digest`.
+/// The highest-value test, restated for Change 2: a pack carries no auth providers at all, so
+/// "export → wipe → import" can no longer reproduce a service's auth binding — only everything
+/// else. Seeds a service *with* a bound auth provider (created over `/api/auth_providers`, since
+/// `AuthProviderStore::create` is `pub(crate)` and unreachable from this separate test crate —
+/// see `store::auth_provider`'s own doc), exports, imports into a completely separate scratch
+/// database (standing in for "wipe and reimport"), and proves two things at once: an identical
+/// `EndpointPlan::digest`/reachable-origin set (the structural portability claim that *is* still
+/// true) and a target service with **no** auth provider at all (the one thing that deliberately
+/// didn't travel). The endpoint still resolves on the target either way — a provider-less
+/// service is a normal state, not a build failure (Change 1).
 #[tokio::test]
-async fn pack_export_reimport_reproduces_identical_resolve_digest() -> Result<()> {
-    let Some(source) = ScratchDb::create().await? else {
+async fn pack_export_reimport_reproduces_everything_but_the_auth_binding() -> Result<()> {
+    let Some(source) = api_support::setup().await? else {
         eprintln!("TEST_DATABASE_URL unset — skipping");
         return Ok(());
     };
-    source.migrate_up().await?;
-    let source_stores = Stores::new(source.conn.clone());
-    let source_owner = source.create_user().await?;
-    let ep_slug = seed_minimal(&source_stores, source_owner, "digest").await?;
+    let source_owner = source.admin_id;
+    let ep_slug = seed_minimal(&source.stores, source_owner, "authbind").await?;
+    let service_slug = slug("svc-authbind");
 
-    let exported = pack::export_endpoint(&source_stores, source_owner, &ep_slug).await?;
+    let provider_body = json!({
+        "slug": "prov-authbind",
+        "service": "svc-authbind",
+        "kind": "static_header",
+        "credential_env_key": "A2M_CRED_TEST_ROUNDTRIP",
+        "header_name": "Authorization",
+        "value_template": "Bearer {token}",
+        "bound_origin": "https://svc-authbind.example.com",
+    });
+    let (status, body) = api_support::admin(
+        &source,
+        Method::POST,
+        "/api/auth_providers",
+        Some(provider_body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "body: {body:?}");
+    assert!(
+        source
+            .stores
+            .auth_provider()
+            .get_for_service(source_owner, &service_slug)
+            .await?
+            .is_some(),
+        "the source service must actually have a provider bound, or this test proves nothing"
+    );
+
+    let exported = pack::export_endpoint(&source.stores, source_owner, &ep_slug).await?;
     pack::validate(&exported).expect("exported pack is always valid");
 
     let Some(target) = ScratchDb::create().await? else {
@@ -116,12 +152,23 @@ async fn pack_export_reimport_reproduces_identical_resolve_digest() -> Result<()
     let target_owner = target.create_user().await?;
     pack::import(&target_stores, &exported, false, target_owner).await?;
 
-    let plan_source = build_plan(&source_stores, source_owner, &ep_slug).await?;
+    // Everything but the auth binding: an identical plan digest and reachable-origin set.
+    let plan_source = build_plan(&source.stores, source_owner, &ep_slug).await?;
     let plan_target = build_plan(&target_stores, target_owner, &ep_slug).await?;
     assert_eq!(plan_source.digest, plan_target.digest);
     assert_eq!(plan_source.origins, plan_target.origins);
 
-    source.teardown().await?;
+    // The auth binding itself: deliberately not reproduced.
+    assert!(
+        target_stores
+            .auth_provider()
+            .get_for_service(target_owner, &service_slug)
+            .await?
+            .is_none(),
+        "a pack must never carry an auth provider across the wire"
+    );
+
+    source.db.teardown().await?;
     target.teardown().await?;
     Ok(())
 }
@@ -219,7 +266,6 @@ fn validation_reports_multiple_independent_failures_at_once() {
     let pack = Pack {
         version: 999, // failure #1: unsupported version
         services: BTreeMap::new(),
-        auth_providers: BTreeMap::new(),
         api_calls: BTreeMap::new(),
         scripts: BTreeMap::new(),
         endpoints: BTreeMap::from([(
@@ -230,9 +276,12 @@ fn validation_reports_multiple_independent_failures_at_once() {
                 budgets: Default::default(),
                 instructions: None,
                 enabled: true,
-                aliases: BTreeMap::new(),
-                // failure #3: scopes a provider this pack never declares
-                auth_providers: BTreeSet::from(["ghost-provider".to_owned()]),
+                // failure #3: alias target this pack never declares
+                aliases: BTreeMap::from([(
+                    "renamed".to_owned(),
+                    api2mcp::pack::PackEndpointTarget::ApiCall("ghost-call".to_owned()),
+                )]),
+                auth_providers: BTreeSet::new(),
             },
         )]),
         tags: BTreeSet::from(["orphaned-tag".to_owned()]), // failure #4: tag vocabulary mismatch
@@ -244,32 +293,28 @@ fn validation_reports_multiple_independent_failures_at_once() {
     );
 }
 
+/// A pack carries no auth providers to smuggle a credential-shaped value through any more (see
+/// `pack`'s own module doc) — the heuristic still has to catch one pasted into a field a pack
+/// author fully controls, like a service's own default headers.
 #[test]
 fn a_credential_shaped_value_is_rejected() {
     let text = std::fs::read_to_string("examples/demo.pack.yaml").expect("demo pack readable");
     let mut demo: Pack = serde_norway::from_str(&text).expect("demo pack parses");
-    demo.auth_providers
-        .insert("leaky".to_owned(), leaky_auth_provider());
+    demo.services
+        .get_mut("demo-api")
+        .unwrap()
+        .default_headers
+        .insert(
+            "X-Leaky".to_owned(),
+            // A live-looking token where an ordinary header value belongs.
+            "ghp_aBcDeFgHiJkLmNoPqRsT1234567890".to_owned(),
+        );
     let errors = pack::validate(&demo).unwrap_err();
     assert!(
         errors
             .iter()
             .any(|e| matches!(e, pack::ValidationError::Credential { .. }))
     );
-}
-
-fn leaky_auth_provider() -> api2mcp::pack::PackAuthProvider {
-    api2mcp::pack::PackAuthProvider {
-        service: "demo-api".to_owned(),
-        kind: api2mcp::pack::PackAuthKind::StaticHeader,
-        // A live-looking token where an env var *name* belongs.
-        credential_env_key: "ghp_aBcDeFgHiJkLmNoPqRsT1234567890".to_owned(),
-        header_name: "Authorization".to_owned(),
-        value_template: "Bearer {token}".to_owned(),
-        scopes: Vec::new(),
-        token_url: None,
-        bound_origin: "http://127.0.0.1:8089".to_owned(),
-    }
 }
 
 /// The demo pack (`examples/demo.pack.yaml`, what `make seed` imports) actually runs: load it,

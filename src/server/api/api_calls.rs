@@ -91,12 +91,6 @@ pub(crate) async fn create_for_owner(
 ) -> Result<ApiCallView, ApiError> {
     let parsed_slug = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     let service_slug = parse_slug(&def.service).map_err(ApiError::BadRequest)?;
-    let auth_provider_slug = def
-        .auth_provider
-        .as_deref()
-        .map(parse_slug)
-        .transpose()
-        .map_err(ApiError::BadRequest)?;
     let tags = tags_from_pack(&def.tags).map_err(ApiError::BadRequest)?;
     validate_change(
         &state.stores(),
@@ -105,14 +99,8 @@ pub(crate) async fn create_for_owner(
     )
     .await
     .map_err(ApiError::Validation)?;
-    let call = api_call_from_pack(
-        owner_id,
-        parsed_slug,
-        service_slug,
-        auth_provider_slug,
-        &def,
-    )
-    .map_err(ApiError::BadRequest)?;
+    let call = api_call_from_pack(owner_id, parsed_slug, service_slug, &def)
+        .map_err(ApiError::BadRequest)?;
     state
         .stores()
         .api_call()
@@ -136,12 +124,6 @@ pub(crate) async fn update_for_owner(
                 .to_owned(),
         ));
     }
-    let auth_provider_slug = def
-        .auth_provider
-        .as_deref()
-        .map(parse_slug)
-        .transpose()
-        .map_err(ApiError::BadRequest)?;
     let tags = tags_from_pack(&def.tags).map_err(ApiError::BadRequest)?;
     validate_change(
         &state.stores(),
@@ -151,14 +133,8 @@ pub(crate) async fn update_for_owner(
     .await
     .map_err(ApiError::Validation)?;
     let parsed_slug = parse_slug(&slug).map_err(ApiError::BadRequest)?;
-    let call = api_call_from_pack(
-        owner_id,
-        parsed_slug,
-        existing.api_call.service_slug,
-        auth_provider_slug,
-        &def,
-    )
-    .map_err(ApiError::BadRequest)?;
+    let call = api_call_from_pack(owner_id, parsed_slug, existing.api_call.service_slug, &def)
+        .map_err(ApiError::BadRequest)?;
     state
         .stores()
         .api_call()

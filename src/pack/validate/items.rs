@@ -38,22 +38,6 @@ pub(super) fn validate_api_call(
             ),
         );
     }
-    if let Some(provider_slug) = &call.auth_provider {
-        match pack.auth_providers.get(provider_slug) {
-            None => push(
-                errors,
-                format!("references auth_provider {provider_slug:?}, which is not in this pack"),
-            ),
-            Some(p) if p.service != call.service => push(
-                errors,
-                format!(
-                    "auth_provider {provider_slug:?} belongs to service {:?}, not this api_call's {:?}",
-                    p.service, call.service
-                ),
-            ),
-            Some(_) => {}
-        }
-    }
     if http::Method::from_bytes(call.method.as_bytes()).is_err() {
         push(
             errors,
@@ -218,16 +202,11 @@ pub(super) fn validate_endpoint(
             });
         }
     }
-    for provider in &endpoint.auth_providers {
-        if !pack.auth_providers.contains_key(provider) {
-            errors.push(ValidationError::Endpoint {
-                slug: slug.to_owned(),
-                message: format!(
-                    "auth_providers scope names {provider:?}, which is not in this pack"
-                ),
-            });
-        }
-    }
+    // `endpoint.auth_providers` (the endpoint's provider scope) is not checked against `pack`
+    // here: a pack carries no auth providers at all (see `pack`'s own module doc), so a scope
+    // entry can only ever be resolved against whatever the *importing* owner already has —
+    // `pack::import`/`store::endpoint::replace_auth_providers` is where a dangling one surfaces,
+    // as a store error, not a pre-write validation failure.
 }
 
 #[cfg(test)]

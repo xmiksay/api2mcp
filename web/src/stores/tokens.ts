@@ -47,6 +47,7 @@ export const useTokensStore = defineStore("tokens", () => {
       expires_at: created.expires_at,
       revoked_at: null,
       endpoints: created.endpoints,
+      control_plane: created.control_plane,
     };
     items.value = [view, ...items.value];
     return created;

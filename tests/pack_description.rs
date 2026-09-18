@@ -47,7 +47,6 @@ async fn seed(stores: &Stores, owner_id: Uuid) -> Result<Slug> {
         owner_id,
         slug: slug("call-desc"),
         service_slug: svc.slug.clone(),
-        auth_provider_slug: None,
         method: http::Method::GET,
         path_template: "/things".to_owned(),
         query_fixed: BTreeMap::new(),

@@ -105,8 +105,9 @@ pub async fn run_script(
     }
 }
 
-/// The whole synchronous half, run entirely inside `spawn_blocking`: build the engine, compile
-/// once, bind the script's own params into scope, evaluate, marshal the return value. Nothing
+/// The whole synchronous half, run entirely inside `spawn_blocking`: build the engine, bind the
+/// script's own params into scope, compile once against that scope, evaluate, marshal the return
+/// value. Nothing
 /// here may touch the async runtime — every capability that needs one crosses via `tx`.
 fn run_blocking(
     source: &str,
@@ -118,14 +119,17 @@ fn run_blocking(
     let mut eng = engine::build_engine(deadline, execution_start);
     bindings::register(&mut eng, tx);
 
-    let ast = engine::compile(&eng, source)?;
-
+    // Scope first, then compile: `set_strict_variables(true)` resolves variables at compile
+    // time, so the script's own params must already be in scope or every parameterised script
+    // fails to parse.
     let mut scope = Scope::new();
     for (name, value) in &scope_vars {
         let dyn_value = marshal::to_dynamic(value)
             .map_err(|e| ScriptFailure::runtime(format!("binding parameter {name:?}: {e}")))?;
         scope.push_dynamic(name.clone(), dyn_value);
     }
+
+    let ast = engine::compile(&eng, &scope, source)?;
 
     let result = eng
         .eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
