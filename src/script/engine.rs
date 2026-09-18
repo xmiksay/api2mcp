@@ -18,7 +18,7 @@ use rhai::packages::{
     BasicArrayPackage, BasicBlobPackage, BasicMapPackage, BasicMathPackage, BitFieldPackage,
     CorePackage, LogicPackage, MoreStringPackage, Package,
 };
-use rhai::{AST, Dynamic, Engine};
+use rhai::{AST, Dynamic, Engine, Scope};
 
 use super::errors::ScriptFailure;
 use super::{dates, regex_lib, serde_stdlib, text};
@@ -126,9 +126,14 @@ fn apply_limits(engine: &mut Engine) {
 /// [`crate::model::ScriptDef`] recompiles its source from scratch. A resolve-level cache
 /// (mirroring `resolve::cache::PlanCache`, keyed the same way) would fix that but doesn't exist
 /// yet.
-pub fn compile(engine: &Engine, source: &str) -> Result<AST, ScriptFailure> {
+/// Compiled **with** the caller's already-populated [`Scope`], never bare: the engine runs with
+/// `set_strict_variables(true)`, which resolves every variable at compile time, so a script
+/// referencing one of its own declared params is a parse error unless that param is already in
+/// the scope handed to the compiler. Binding the scope after compiling would make every
+/// parameterised script uncompilable.
+pub fn compile(engine: &Engine, scope: &Scope, source: &str) -> Result<AST, ScriptFailure> {
     engine
-        .compile(source)
+        .compile_with_scope(scope, source)
         .map_err(|e| ScriptFailure::from_parse_error(source, &e))
 }
 
@@ -365,7 +370,26 @@ mod tests {
     fn compile_reports_the_syntax_errors_position() {
         let engine = build_engine(None, Utc::now());
         let source = "let x = 1;\nlet y = ;\n";
-        let failure = compile(&engine, source).unwrap_err();
+        let failure = compile(&engine, &Scope::new(), source).unwrap_err();
         assert_eq!(failure.line, Some(2));
+    }
+
+    /// Pins why [`compile`] takes a [`Scope`] at all: under `set_strict_variables(true)` a
+    /// script referencing one of its own declared params compiles only if that param is already
+    /// bound, so compiling against an empty scope — as `run_blocking` used to — made every
+    /// parameterised script uncompilable.
+    #[test]
+    fn a_param_is_only_compilable_when_already_bound_in_scope() {
+        let engine = build_engine(None, Utc::now());
+        let source = "project_id + 1";
+
+        assert!(
+            compile(&engine, &Scope::new(), source).is_err(),
+            "strict variables must still reject a genuinely unbound variable"
+        );
+
+        let mut scope = Scope::new();
+        scope.push_dynamic("project_id", Dynamic::from(1_i64));
+        assert!(compile(&engine, &scope, source).is_ok());
     }
 }
