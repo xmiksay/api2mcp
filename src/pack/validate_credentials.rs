@@ -1,10 +1,11 @@
-//! Heuristic detection of credential-shaped values in fields a pack author fully controls —
-//! `credential_env_key`, `value_template`, and every free-form string reachable from a param's
-//! `default`/`fixed`, an api_call's `query_fixed`/`body_template`, or a service's
-//! `default_headers`. This is the backstop `plan.md` §6 calls for ("a pack never contains a
-//! credential, nor a reference to one"): the *type* already rules out an actual secret-value
-//! field existing anywhere in [`super::Pack`], so the only way a credential can leak into a pack
-//! is a human pasting one into a string field that wasn't meant to hold one.
+//! Heuristic detection of credential-shaped values in fields a pack author fully controls — every
+//! free-form string reachable from a param's `default`/`fixed`, an api_call's
+//! `query_fixed`/`body_template`, or a service's `default_headers`. This is the backstop
+//! `plan.md` §6 calls for ("a pack never contains a credential, nor a reference to one"): the
+//! *type* already rules out an actual secret-value field, or even an auth-provider reference,
+//! existing anywhere in [`super::Pack`] (a pack carries no auth providers at all — see `pack`'s
+//! own module doc), so the only way a credential can leak into a pack is a human pasting one
+//! into a string field that wasn't meant to hold one.
 //!
 //! Deliberately a heuristic, not a proof: pattern-matching over free text can neither prove
 //! absence (a credential could be shaped like ordinary prose) nor prove presence (a long
@@ -36,7 +37,7 @@ const KNOWN_PREFIXES: &[&str] = &[
     "eyJ",  // a base64url JWT always starts with its header's `{"alg":` encoded this way
 ];
 
-pub(super) fn looks_like_credential(s: &str) -> bool {
+pub(crate) fn looks_like_credential(s: &str) -> bool {
     let trimmed = s.trim();
     if trimmed.len() < 12 {
         return false;
@@ -93,21 +94,6 @@ pub(super) fn scan(pack: &super::Pack, errors: &mut Vec<ValidationError>) {
         for v in svc.default_headers.values() {
             check(errors, &location, "default_headers", v);
         }
-    }
-    for (slug, provider) in &pack.auth_providers {
-        let location = format!("auth_providers.{slug}");
-        check(
-            errors,
-            &location,
-            "credential_env_key",
-            &provider.credential_env_key,
-        );
-        check(
-            errors,
-            &location,
-            "value_template",
-            &provider.value_template,
-        );
     }
     for (slug, call) in &pack.api_calls {
         let location = format!("api_calls.{slug}");

@@ -1,13 +1,19 @@
-//! The pre-write gate every CRUD route in `server::api` funnels through: build a [`Pack`]
-//! snapshot of *every* definition currently in the database, apply the one pending change this
-//! request wants to make, and run [`crate::pack::validate`] over the result — the same function
-//! `api2mcp import` runs, so a hand-authored YAML pack and a form submission are held to
-//! identical rules (URL templates compile, projections compile, tag expressions parse, a
-//! script's declared api_calls exist, an auth provider's `bound_origin` is inside its service's
-//! allowlist, a service's own origin is in its allowlist — see that module's own doc for the
-//! full list). Reporting *every* failure in one pass, not just the first, is the entire reason
-//! this revalidates the whole definition set instead of just the one item being written: someone
+//! The pre-write gate every CRUD route in `server::api` funnels through, **except**
+//! `auth_providers.rs`: build a [`Pack`] snapshot of *every* definition currently in the
+//! database, apply the one pending change this request wants to make, and run
+//! [`crate::pack::validate`] over the result — the same function `api2mcp import` runs, so a
+//! hand-authored YAML pack and a form submission are held to identical rules (URL templates
+//! compile, projections compile, tag expressions parse, a script's declared api_calls exist, a
+//! service's own origin is in its allowlist — see that module's own doc for the full list).
+//! Reporting *every* failure in one pass, not just the first, is the entire reason this
+//! revalidates the whole definition set instead of just the one item being written: someone
 //! fixing a form should see everything wrong with it at once.
+//!
+//! **Auth providers don't go through here** because a pack carries no auth providers at all (see
+//! `pack`'s own module doc) — there is no `Pack::auth_providers` field left for a
+//! `PendingChange` to edit or for [`crate::pack::validate`] to check. `auth_providers.rs` does
+//! its own direct, live check instead (bound_origin against the service's own row, fetched from
+//! the database, not reconstructed into a `Pack`).
 //!
 //! A useful side effect: because the snapshot always includes every *other* definition unchanged,
 //! removing an entity (a `Remove*` variant) and revalidating catches a now-dangling reference
@@ -23,7 +29,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use uuid::Uuid;
 
-use crate::pack::{Pack, PackApiCall, PackAuthProvider, PackEndpoint, PackScript, PackService};
+use crate::pack::{Pack, PackApiCall, PackEndpoint, PackScript, PackService};
 use crate::store::{StoreError, Stores};
 
 use super::convert::tags_to_pack;
@@ -35,8 +41,6 @@ use super::convert_items::{api_call_to_pack, endpoint_to_pack, script_to_pack};
 pub enum PendingChange {
     UpsertService(String, PackService),
     RemoveService(String),
-    UpsertAuthProvider(String, PackAuthProvider),
-    RemoveAuthProvider(String),
     UpsertApiCall(String, PackApiCall),
     RemoveApiCall(String),
     UpsertScript(String, PackScript),
@@ -56,14 +60,6 @@ pub async fn build_full_pack(stores: &Stores, owner_id: Uuid) -> Result<Pack, St
         services_map.insert(
             svc.slug.as_str().to_owned(),
             super::convert::service_to_pack(svc),
-        );
-    }
-
-    let mut auth_providers = BTreeMap::new();
-    for p in stores.auth_provider().list_all(owner_id).await? {
-        auth_providers.insert(
-            p.slug.as_str().to_owned(),
-            super::convert::auth_provider_to_pack(&p),
         );
     }
 
@@ -98,7 +94,6 @@ pub async fn build_full_pack(stores: &Stores, owner_id: Uuid) -> Result<Pack, St
     Ok(Pack {
         version: crate::pack::PACK_VERSION,
         services: services_map,
-        auth_providers,
         api_calls,
         scripts,
         endpoints: endpoints_map,
@@ -117,12 +112,6 @@ fn apply_change(pack: &mut Pack, change: PendingChange) {
         }
         PendingChange::RemoveService(slug) => {
             pack.services.remove(&slug);
-        }
-        PendingChange::UpsertAuthProvider(slug, p) => {
-            pack.auth_providers.insert(slug, p);
-        }
-        PendingChange::RemoveAuthProvider(slug) => {
-            pack.auth_providers.remove(&slug);
         }
         PendingChange::UpsertApiCall(slug, c) => {
             pack.api_calls.insert(slug, c);

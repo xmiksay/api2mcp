@@ -1,15 +1,22 @@
 //! Walks one endpoint's tag selection into a self-contained [`Pack`]: the transitive closure of
-//! selected api_calls and scripts, the api_calls those scripts declare, and the services and
-//! auth providers all of them need. A pack that imports into a plan-resolvable state is the
-//! whole point (see [`super::import`]'s highest-value test), so a missing transitive dependency
-//! here is a bug, not a warning — every branch below that could silently drop a reference
-//! instead returns [`ExportError`].
+//! selected api_calls and scripts, and the services they need. A pack that imports into a
+//! plan-resolvable state is the whole point (see [`super::import`]'s highest-value test), so a
+//! missing transitive dependency here is a bug, not a warning — every branch below that could
+//! silently drop a reference instead returns [`ExportError`].
+//!
+//! **A pack carries no auth providers, full stop** — not the provider definitions (there is no
+//! `Pack::auth_providers` map to put them in) and not even a reference to one: the exported
+//! endpoint's own `auth_providers` scope is always emptied (see [`super::PackEndpoint`]'s own
+//! doc for what an empty scope means at resolve time). An imported endpoint therefore always
+//! starts able to use whatever provider its services happen to have — which, on a fresh
+//! instance, is none, until a human wires one up. This is the flip side of Change 1 ("auth
+//! belongs to the service"): a provider is exactly as un-portable as the credential it holds.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use uuid::Uuid;
 
-use crate::model::{AuthProvider, EndpointTarget, Slug, eval_tag_expr};
+use crate::model::{EndpointTarget, Slug, eval_tag_expr};
 use crate::store::{StoreError, Stores};
 
 use super::Pack;
@@ -23,10 +30,6 @@ pub enum ExportError {
     Store(String),
     #[error("script {script:?} declares api_call {api_call:?}, which does not exist")]
     MissingApiCall { script: String, api_call: String },
-    #[error(
-        "endpoint {endpoint:?}'s auth_providers scope names {provider:?}, which does not exist"
-    )]
-    MissingAuthProvider { endpoint: String, provider: String },
 }
 
 fn store_err(e: StoreError) -> ExportError {
@@ -66,23 +69,6 @@ pub async fn export_endpoint(
         .map(|s| (s.script.slug.clone(), s))
         .collect();
     let all_services = stores.service().list(owner_id).await.map_err(store_err)?;
-
-    // A slug -> provider lookup scoped to `owner_id`. `EndpointDef::auth_providers` and an
-    // api_call's own `auth_provider_slug` both name a bare (service-less) slug, and
-    // `auth_providers.slug` is unique per owner (see `store::auth_provider::id_by_slug_for_owner`'s
-    // doc), so one scan over every service this owner has covers every provider this pack could
-    // possibly need.
-    let mut providers_by_slug: BTreeMap<Slug, AuthProvider> = BTreeMap::new();
-    for svc in &all_services {
-        for p in stores
-            .auth_provider()
-            .list_for_service(owner_id, &svc.slug)
-            .await
-            .map_err(store_err)?
-        {
-            providers_by_slug.insert(p.slug.clone(), p);
-        }
-    }
 
     let mut selected_calls: BTreeSet<Slug> = calls_by_slug
         .iter()
@@ -129,7 +115,6 @@ pub async fn export_endpoint(
 
     let mut api_calls = BTreeMap::new();
     let mut needed_services: BTreeSet<Slug> = BTreeSet::new();
-    let mut needed_providers: BTreeSet<Slug> = BTreeSet::new();
     for slug in &needed_calls {
         // Existence is already guaranteed here: a directly tag-selected slug is a key of
         // `calls_by_slug` by construction, and a script-declared one was just checked above.
@@ -137,32 +122,10 @@ pub async fn export_endpoint(
             continue;
         };
         needed_services.insert(tagged.api_call.service_slug.clone());
-        if let Some(p) = &tagged.api_call.auth_provider_slug {
-            needed_providers.insert(p.clone());
-        }
         api_calls.insert(
             slug.as_str().to_owned(),
             convert::api_call_to_pack(&tagged.api_call, &tagged.tags),
         );
-    }
-
-    for slug in &endpoint.auth_providers {
-        if !providers_by_slug.contains_key(slug) {
-            return Err(ExportError::MissingAuthProvider {
-                endpoint: endpoint.slug.as_str().to_owned(),
-                provider: slug.as_str().to_owned(),
-            });
-        }
-        needed_providers.insert(slug.clone());
-    }
-
-    let mut auth_providers = BTreeMap::new();
-    for slug in &needed_providers {
-        let Some(p) = providers_by_slug.get(slug) else {
-            continue;
-        };
-        needed_services.insert(p.service_slug.clone());
-        auth_providers.insert(slug.as_str().to_owned(), convert::auth_provider_to_pack(p));
     }
 
     let mut services = BTreeMap::new();
@@ -190,15 +153,18 @@ pub async fn export_endpoint(
         tags.extend(script.tags.iter().cloned());
     }
 
+    // A pack carries no auth providers at all — see this module's own doc — so the exported
+    // endpoint's own provider scope is always emptied, regardless of what it is set to live.
+    let mut portable_endpoint = endpoint;
+    portable_endpoint.auth_providers = BTreeSet::new();
     let endpoints = BTreeMap::from([(
-        endpoint.slug.as_str().to_owned(),
-        convert::endpoint_to_pack(&endpoint),
+        portable_endpoint.slug.as_str().to_owned(),
+        convert::endpoint_to_pack(&portable_endpoint),
     )]);
 
     Ok(Pack {
         version: super::PACK_VERSION,
         services,
-        auth_providers,
         api_calls,
         scripts,
         endpoints,
@@ -216,15 +182,13 @@ mod tests {
         s.parse().expect("valid slug")
     }
 
-    // `ExportError::MissingApiCall`/`MissingAuthProvider` have no test exercising them: both
-    // `script_api_calls.api_call_id` and `endpoint_auth_providers.auth_provider_id` are real
-    // foreign keys with `ON DELETE CASCADE` (`m0004_scripts_tags.rs`, `m0005_endpoints.rs`), so
-    // deleting an api_call or auth_provider also deletes the join row that named it — a script's
-    // `callable`/an endpoint's `auth_providers` scope can never observe a dangling reference
-    // through the store's own read path. Confirmed by trying exactly that scenario (create,
-    // reference, delete) during development: the join row disappeared with it, and the "missing"
-    // branch never ran. Both branches stay as defence-in-depth against a future schema change
-    // that weakens or removes the cascade, not because they're reachable today.
+    // `ExportError::MissingApiCall` has no test exercising it: `script_api_calls.api_call_id` is
+    // a real foreign key with `ON DELETE CASCADE` (`m0004_scripts_tags.rs`), so deleting an
+    // api_call also deletes the join row that named it — a script's `callable` can never observe
+    // a dangling reference through the store's own read path. Confirmed by trying exactly that
+    // scenario (create, reference, delete) during development: the join row disappeared with it,
+    // and the "missing" branch never ran. It stays as defence-in-depth against a future schema
+    // change that weakens or removes the cascade, not because it's reachable today.
 
     #[tokio::test]
     async fn selects_calls_by_tag_and_pulls_in_the_service() {
@@ -253,7 +217,6 @@ mod tests {
             owner_id,
             slug: slug("call-export-basic"),
             service_slug: service.slug.clone(),
-            auth_provider_slug: None,
             method: http::Method::GET,
             path_template: "/things".to_owned(),
             query_fixed: BTreeMap::new(),

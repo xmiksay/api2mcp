@@ -1,8 +1,8 @@
 # api2mcp — project brief
 
-**MCP Tool Factory.** Turns curated HTTP API calls into MCP tools. A human defines a service, an
-auth provider, api_calls and scripts; an endpoint selects a subset of them by tag expression; an
-agent connects over MCP and sees only that subset.
+**MCP Tool Factory.** Turns curated HTTP API calls into MCP tools. A human defines a service, at
+most one auth provider for it, api_calls and scripts; an endpoint selects a subset of them by tag
+expression; an agent connects over MCP and sees only that subset.
 
 The value is **persistence, determinism, narrowing and auditability** — not reach. An agent with a
 generic HTTP tool can already call any API; what it cannot do is call a *specific* one the same way
@@ -46,11 +46,35 @@ mutable, provider-side); an account with no identity bound yet (a password accou
 pre-provisioned with `api2mcp user add --oidc-only`) is claimed on first sign-in only when the
 provider asserts `email_verified: true` and the email matches exactly.
 
+**Auth belongs to the service, not the api_call.** `auth_providers.service_id` is `UNIQUE` — a
+service has at most one provider, and every api_call on that service uses it automatically; an
+api_call names no provider of its own (`model::ApiCall` has no such field at all). An api_call on
+a provider-less service simply sends no credential — a normal state (exactly what a freshly
+imported pack looks like), not a validation failure. `resolve::auth_bind` still enforces I5 (the
+provider's `bound_origin` must match the service's origin), once per service now rather than once
+per api_call.
+
+**A credential is either an env var name or a stored value.** `auth_providers` names exactly one
+source: `credential_env_key` (a variable the server reads at send time) or `credential_value` (the
+credential itself, in **plaintext**, for the per-owner case — each owner needs their own token for
+the same upstream, which a process-wide variable cannot express). The accepted trade is that a
+database dump carries every stored credential. I4 is unaffected: it forbids a credential reaching
+a model-visible surface, not persistence — the API returns only `has_stored_credential`, and the
+MCP control plane cannot see auth providers at all.
+
+**A pack carries no auth providers at all** — not the definitions, and not even a reference to one
+from an api_call (`PackApiCall` has no `auth_provider` field; `Pack` has no `auth_providers` map,
+and `#[serde(deny_unknown_fields)]` rejects one from an older pack outright rather than silently
+ignoring it). Importing a pack never creates or touches a credential; a provider is wired up
+afterwards, per service, directly through `/api/auth_providers` or the CLI.
+
 **Every definition is owned.** `owner_id` sits on `services`, `auth_providers`, `api_calls`,
 `scripts`, `endpoints`, `runs` and `service_tokens`. Slugs are unique **per owner**
 (`ux_*_owner_slug`), not globally — two different people's `demo` endpoints coexist fine.
-Sharing between owners is out-of-band, via YAML pack export/import (`pack::export`/`pack::import`),
-never a shared row.
+Sharing between owners is out-of-band, via a YAML pack, never a shared row — export/import is
+both a CLI pair (`api2mcp export`/`api2mcp import`) and an HTTP pair
+(`GET /api/endpoints/{slug}/pack`, `POST /api/packs/import`), both calling the identical
+`pack::{export_endpoint,validate,import}` functions: one format, several entry points.
 
 **Self-service tokens.** `service_tokens.scopes` is gone — a resolved, unrevoked, unexpired token
 may call tools, full stop. `POST/GET /api/tokens`, `DELETE /api/tokens/{id}` let a signed-in user

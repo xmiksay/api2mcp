@@ -10,7 +10,6 @@ pub struct Model {
     pub id: Uuid,
     pub owner_id: Uuid,
     pub service_id: Uuid,
-    pub auth_provider_id: Option<Uuid>,
     pub slug: String,
     /// `GET` | `POST` | `PUT` | `PATCH` | `DELETE`.
     pub method: String,
@@ -44,12 +43,6 @@ pub enum Relation {
         to = "super::services::Column::Id"
     )]
     Service,
-    #[sea_orm(
-        belongs_to = "super::auth_providers::Entity",
-        from = "Column::AuthProviderId",
-        to = "super::auth_providers::Column::Id"
-    )]
-    AuthProvider,
     #[sea_orm(has_many = "super::api_call_params::Entity")]
     Params,
 }
@@ -57,12 +50,6 @@ pub enum Relation {
 impl Related<super::services::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Service.def()
-    }
-}
-
-impl Related<super::auth_providers::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AuthProvider.def()
     }
 }
 

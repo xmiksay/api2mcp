@@ -2,9 +2,10 @@
 //! service; the definition that actually becomes an MCP tool once an endpoint's `tag_expr`
 //! selects it.
 //!
-//! **`auth_provider` never appears here** — not in the `inputSchema`, and not honored even if a
-//! caller sends it anyway. See `super`'s module doc for why and what this means for a freshly
-//! created api_call's first call.
+//! **No auth field appears here at all** — an api_call names no auth provider of its own in the
+//! first place (a service has at most one, and every api_call on it uses it — see
+//! `model::ApiCall`'s doc), so there is nothing this surface could expose, force or preserve.
+//! See `super`'s module doc for what this means for a freshly created api_call's first call.
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -172,29 +173,11 @@ pub(super) async fn dispatch(
             Err(o) => o,
         },
         "api_call.create" => match parse_args::<ApiCallCreate>(args) {
-            Ok(mut a) => {
-                // I5: an agent can never attach a credential, however it was asked to — a
-                // freshly created api_call always starts with none, full stop.
-                a.def.auth_provider = None;
-                outcome_of(api_calls::create_for_owner(state, owner_id, a.slug, a.def).await)
-            }
+            Ok(a) => outcome_of(api_calls::create_for_owner(state, owner_id, a.slug, a.def).await),
             Err(o) => o,
         },
         "api_call.update" => match parse_args::<ApiCallCreate>(args) {
-            Ok(mut a) => match api_calls::find(state, owner_id, &a.slug).await {
-                // I5: whatever a human already bound stays exactly as it was — this tool can
-                // neither read nor overwrite it, so the incoming value (if any) is discarded in
-                // favor of what is already on the row.
-                Ok(existing) => {
-                    a.def.auth_provider = existing
-                        .api_call
-                        .auth_provider_slug
-                        .as_ref()
-                        .map(|s| s.as_str().to_owned());
-                    outcome_of(api_calls::update_for_owner(state, owner_id, a.slug, a.def).await)
-                }
-                Err(err) => api_error_outcome(err),
-            },
+            Ok(a) => outcome_of(api_calls::update_for_owner(state, owner_id, a.slug, a.def).await),
             Err(o) => o,
         },
         "api_call.delete" => match parse_args::<SlugArgs>(args) {

@@ -1,13 +1,18 @@
 //! The pre-import gate, run **before any transaction opens** — this module never touches a
 //! database. Every check here is over the [`Pack`] value alone: slugs unique and well-formed,
-//! URL templates compile, projections compile, tag expressions parse, every api_call a script
-//! declares exists in the pack, and every auth provider's `bound_origin` is inside its service's
-//! origin allowlist. [`validate`] reports **every** failure it finds, not just the first —
-//! someone fixing a hand-written pack should not have to fix one error, re-run, and repeat.
+//! URL templates compile, projections compile, tag expressions parse, and every api_call a
+//! script declares exists in the pack. [`validate`] reports **every** failure it finds, not just
+//! the first — someone fixing a hand-written pack should not have to fix one error, re-run, and
+//! repeat.
 //!
-//! Split into this file (version, slugs, services, auth providers, the tag vocabulary) and
-//! [`items`] (api_calls, scripts, endpoints — the shapes that reference the former) to keep both
-//! under the workspace's 400-line cap.
+//! A pack carries no auth providers (see `pack`'s own module doc), so there is no
+//! `bound_origin`-inside-`origin_allowlist` check here any more — that liveness check now lives
+//! entirely in `resolve::auth_bind` (at plan-build time) and, for the read-write admin API's own
+//! pre-write UX, `server::api::auth_providers`' direct check against the live service.
+//!
+//! Split into this file (version, slugs, services, the tag vocabulary) and [`items`] (api_calls,
+//! scripts, endpoints — the shapes that reference the former) to keep both under the workspace's
+//! 400-line cap.
 
 mod items;
 
@@ -15,7 +20,7 @@ use std::collections::BTreeSet;
 
 use super::convert;
 use super::validate_credentials;
-use super::{Pack, PackAuthProvider, PackService};
+use super::{Pack, PackService};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ValidationError {
@@ -25,8 +30,6 @@ pub enum ValidationError {
     Slug { location: String, message: String },
     #[error("services.{slug}: {message}")]
     Service { slug: String, message: String },
-    #[error("auth_providers.{slug}: {message}")]
-    AuthProvider { slug: String, message: String },
     #[error("api_calls.{slug}: {message}")]
     ApiCall { slug: String, message: String },
     #[error("scripts.{slug}: {message}")]
@@ -54,10 +57,6 @@ pub fn validate(pack: &Pack) -> Result<(), Vec<ValidationError>> {
     for (slug, svc) in &pack.services {
         check_slug(&mut errors, "services", slug);
         validate_service(&mut errors, slug, svc);
-    }
-    for (slug, provider) in &pack.auth_providers {
-        check_slug(&mut errors, "auth_providers", slug);
-        validate_auth_provider(&mut errors, pack, slug, provider);
     }
     for (slug, call) in &pack.api_calls {
         check_slug(&mut errors, "api_calls", slug);
@@ -131,38 +130,6 @@ pub(super) fn contains_origin(allowlist: &BTreeSet<String>, origin: &crate::mode
     })
 }
 
-fn validate_auth_provider(
-    errors: &mut Vec<ValidationError>,
-    pack: &Pack,
-    slug: &str,
-    provider: &PackAuthProvider,
-) {
-    let Some(service) = pack.services.get(&provider.service) else {
-        errors.push(ValidationError::AuthProvider {
-            slug: slug.to_owned(),
-            message: format!(
-                "references service {:?}, which is not in this pack",
-                provider.service
-            ),
-        });
-        return;
-    };
-    match provider.bound_origin.parse::<crate::model::Origin>() {
-        Ok(origin) if contains_origin(&service.origin_allowlist, &origin) => {}
-        Ok(_) => errors.push(ValidationError::AuthProvider {
-            slug: slug.to_owned(),
-            message: format!(
-                "bound_origin {:?} is not in service {:?}'s origin_allowlist",
-                provider.bound_origin, provider.service
-            ),
-        }),
-        Err(e) => errors.push(ValidationError::AuthProvider {
-            slug: slug.to_owned(),
-            message: format!("bound_origin {:?}: {e}", provider.bound_origin),
-        }),
-    }
-}
-
 fn validate_tag_vocabulary(errors: &mut Vec<ValidationError>, pack: &Pack) {
     let mut union: BTreeSet<&String> = BTreeSet::new();
     for call in pack.api_calls.values() {
@@ -203,7 +170,6 @@ mod tests {
         Pack {
             version: super::super::PACK_VERSION,
             services: BTreeMap::new(),
-            auth_providers: BTreeMap::new(),
             api_calls: BTreeMap::new(),
             scripts: BTreeMap::new(),
             endpoints: BTreeMap::new(),
@@ -228,22 +194,34 @@ mod tests {
         );
     }
 
+    /// A pack carries no auth providers to smuggle a credential-shaped value through any more
+    /// (see this module's own doc), but the heuristic still has to catch one pasted into a field
+    /// a pack author fully controls, like an api_call's own fixed query parameters.
     #[test]
     fn credential_shaped_value_is_rejected() {
         let mut pack = empty_pack();
         pack.services.insert("svc".to_owned(), service());
-        pack.auth_providers.insert(
-            "prov".to_owned(),
-            PackAuthProvider {
+        pack.api_calls.insert(
+            "call".to_owned(),
+            crate::pack::PackApiCall {
                 service: "svc".to_owned(),
-                kind: super::super::PackAuthKind::StaticHeader,
-                // A live-looking token where an env var *name* belongs.
-                credential_env_key: "ghp_aBcDeFgHiJkLmNoPqRsT1234567890".to_owned(),
-                header_name: "Authorization".to_owned(),
-                value_template: "Bearer {token}".to_owned(),
-                scopes: Vec::new(),
-                token_url: None,
-                bound_origin: "https://svc.example.com".to_owned(),
+                method: "GET".to_owned(),
+                path_template: "/things".to_owned(),
+                // A live-looking token where a definer-fixed value belongs.
+                query_fixed: BTreeMap::from([(
+                    "token".to_owned(),
+                    "ghp_aBcDeFgHiJkLmNoPqRsT1234567890".to_owned(),
+                )]),
+                body_template: None,
+                access: "read".to_owned(),
+                idempotent: true,
+                projection: None,
+                pagination: crate::pack::PackPagination::None,
+                timeout_ms: None,
+                max_response_bytes: None,
+                params: Vec::new(),
+                tags: BTreeSet::new(),
+                description: None,
             },
         );
         let errors = validate(&pack).unwrap_err();

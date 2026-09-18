@@ -18,8 +18,8 @@ use std::collections::BTreeSet;
 use uuid::Uuid;
 
 use crate::model::{
-    Access, AuthKind, AuthProvider, Budgets, Cardinality, Origin, Pagination, Param, ParamLocation,
-    ParamType, Projection, ProjectionField, Service, Slug, Tag,
+    Access, AuthKind, AuthProvider, Budgets, Cardinality, CredentialSource, Origin, Pagination,
+    Param, ParamLocation, ParamType, Projection, ProjectionField, Service, Slug, Tag,
 };
 use crate::pack::{
     PackAuthKind, PackAuthProvider, PackBudgets, PackCardinality, PackPagination, PackParam,
@@ -265,7 +265,10 @@ pub fn auth_provider_to_pack(p: &AuthProvider) -> PackAuthProvider {
     PackAuthProvider {
         service: p.service_slug.as_str().to_owned(),
         kind: auth_kind_to_pack(&p.kind),
-        credential_env_key: p.credential_env_key.clone(),
+        credential_env_key: match &p.credential {
+            CredentialSource::Env(key) => Some(key.clone()),
+            CredentialSource::Stored(_) => None,
+        },
         header_name: p.header_name.clone(),
         value_template: p.value_template.clone(),
         scopes: p.scopes.clone(),
@@ -285,7 +288,12 @@ pub fn auth_provider_from_pack(
         slug,
         service_slug,
         kind: auth_kind_from_pack(p.kind),
-        credential_env_key: p.credential_env_key.clone(),
+        // A pack can only ever name an env var; a stored-source provider imports with no value
+        // set, and its owner supplies one afterwards.
+        credential: match &p.credential_env_key {
+            Some(key) => CredentialSource::Env(key.clone()),
+            None => CredentialSource::Stored(None),
+        },
         header_name: p.header_name.clone(),
         value_template: p.value_template.clone(),
         scopes: p.scopes.clone(),

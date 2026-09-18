@@ -43,8 +43,10 @@ pub struct ApiCall {
     /// (enforced at write time). See `model::Service::owner_id`.
     pub owner_id: Uuid,
     pub slug: Slug,
+    /// Which service this call targets — and, transitively, which auth provider (if any) it
+    /// uses: a service has at most one ([`crate::model::AuthProvider::service_slug`] is
+    /// `UNIQUE`), so an api_call names no provider of its own. See `resolve::auth_bind`.
     pub service_slug: Slug,
-    pub auth_provider_slug: Option<Slug>,
     pub method: http::Method,
     /// Raw template, e.g. `/users/{id}`; compiled by `http::url_template` at resolve time.
     pub path_template: String,

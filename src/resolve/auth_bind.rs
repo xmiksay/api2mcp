@@ -2,16 +2,21 @@
 //! agent. This module re-asserts that binding at plan-build time, the last point before an
 //! executor could otherwise trust it implicitly.
 //!
-//! Two checks, per selected api_call that declares an auth provider:
-//! 1. `provider.bound_origin` matches `PlannedApiCall::origin` (the api_call's own,
-//!    service-derived origin) — a provider bound to one origin can never be attached to an
-//!    api_call that sends its credential somewhere else.
+//! A service has at most one auth provider (`ux_auth_providers_service`), and every api_call on
+//! that service uses it, so this checks the binding **once per selected service** rather than
+//! once per api_call — every api_call sharing a service also shares its origin (I2:
+//! `PlannedApiCall::origin` is always `Origin::of(&service.base_url)`), so there is nothing a
+//! second check on a sibling api_call could catch that the first didn't already.
+//!
+//! Two checks, per service with a provider that at least one selected api_call targets:
+//! 1. `provider.bound_origin` matches the service's own origin — a provider bound to one origin
+//!    can never be attached to a service that sends its credential somewhere else.
 //! 2. The provider is within the endpoint's auth scope: an empty
 //!    `EndpointDef::auth_providers` means "every provider belonging to a selected service" —
-//!    which every api_call's provider already is, by construction
-//!    (`store::api_call::resolve_foreign_keys` looks a provider up scoped to the api_call's
-//!    own service, so a cross-service reference can't exist on a stored row) — and a
-//!    non-empty one restricts to exactly the listed providers.
+//!    and a non-empty one restricts to exactly the listed providers.
+//!
+//! A service with no provider at all is not a failure — its api_calls simply send no credential
+//! (a freshly imported pack looks exactly like this until a human wires one up).
 //!
 //! Either failure fails the whole plan: a half-valid endpoint must never serve.
 
@@ -31,22 +36,25 @@ pub async fn assert_bound(
     calls: &BTreeMap<Slug, PlannedApiCall>,
     endpoint_scope: &BTreeSet<Slug>,
 ) -> Result<(), ResolveError> {
+    // One representative planned call per service (the first encountered in `calls`'s own
+    // BTreeMap order, i.e. alphabetically-first api_call slug on that service) — deterministic,
+    // and every field this function reads off it (`service`, `origin`) is identical across every
+    // api_call sharing that service anyway.
+    let mut representative: BTreeMap<&Slug, &PlannedApiCall> = BTreeMap::new();
     for planned in calls.values() {
-        let Some(provider_slug) = &planned.api_call.auth_provider_slug else {
-            continue;
-        };
-        let provider = auth_providers
-            .get(owner_id, &planned.api_call.service_slug, provider_slug)
+        representative
+            .entry(&planned.service.slug)
+            .or_insert(planned);
+    }
+
+    for planned in representative.values() {
+        let Some(provider) = auth_providers
+            .get_for_service(owner_id, &planned.service.slug)
             .await
             .map_err(|e| ResolveError::Store(e.to_string()))?
-            .ok_or_else(|| {
-                ResolveError::Store(format!(
-                    "api_call {:?} names auth provider {:?}, which no longer exists on service {:?}",
-                    planned.api_call.slug.as_str(),
-                    provider_slug.as_str(),
-                    planned.api_call.service_slug.as_str()
-                ))
-            })?;
+        else {
+            continue;
+        };
 
         if provider.bound_origin != planned.origin {
             return Err(ResolveError::AuthOriginMismatch {
@@ -70,7 +78,9 @@ pub async fn assert_bound(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Access, ApiCall, AuthKind, AuthProvider, Origin, Pagination, Service};
+    use crate::model::{
+        Access, ApiCall, AuthKind, AuthProvider, CredentialSource, Origin, Pagination, Service,
+    };
     use crate::store::test_support::ScratchDb;
 
     fn service(owner_id: Uuid, slug: &str) -> Service {
@@ -88,17 +98,11 @@ mod tests {
         }
     }
 
-    fn api_call(
-        owner_id: Uuid,
-        service_slug: &Slug,
-        slug: &str,
-        provider: Option<&str>,
-    ) -> ApiCall {
+    fn api_call(owner_id: Uuid, service_slug: &Slug, slug: &str) -> ApiCall {
         ApiCall {
             owner_id,
             slug: slug.parse().unwrap(),
             service_slug: service_slug.clone(),
-            auth_provider_slug: provider.map(|p| p.parse().unwrap()),
             method: http::Method::GET,
             path_template: "/things".to_owned(),
             query_fixed: BTreeMap::new(),
@@ -125,7 +129,7 @@ mod tests {
             slug: slug.parse().unwrap(),
             service_slug: service_slug.clone(),
             kind: AuthKind::StaticHeader,
-            credential_env_key: "A2M_CRED_TEST_AUTH_BIND".into(),
+            credential: CredentialSource::Env("A2M_CRED_TEST_AUTH_BIND".into()),
             header_name: "Authorization".into(),
             value_template: "Bearer {token}".into(),
             scopes: vec![],
@@ -161,7 +165,7 @@ mod tests {
         let p = provider(owner_id, &svc.slug, "prov", "https://elsewhere.example.com");
         providers.create(&p).await.unwrap();
 
-        let call = api_call(owner_id, &svc.slug, "call-a", Some("prov"));
+        let call = api_call(owner_id, &svc.slug, "call-a");
         let mut calls = BTreeMap::new();
         calls.insert("call-a".parse().unwrap(), planned_call(svc, call));
 
@@ -193,7 +197,7 @@ mod tests {
         );
         providers.create(&p).await.unwrap();
 
-        let call = api_call(owner_id, &svc.slug, "call-a", Some("prov"));
+        let call = api_call(owner_id, &svc.slug, "call-a");
         let mut calls = BTreeMap::new();
         calls.insert("call-a".parse().unwrap(), planned_call(svc, call));
 
@@ -205,6 +209,74 @@ mod tests {
         assert!(matches!(err, ResolveError::AuthProviderOutOfScope { .. }));
 
         // An empty scope, by contrast, passes.
+        assert!(
+            assert_bound(&providers, owner_id, &calls, &BTreeSet::new())
+                .await
+                .is_ok()
+        );
+
+        db.teardown().await.unwrap();
+    }
+
+    /// A service with no provider at all is not a failure — its api_calls simply send no
+    /// credential (see this module's own doc).
+    #[tokio::test]
+    async fn a_provider_less_service_passes() {
+        let Some(db) = ScratchDb::create().await.expect("scratch db") else {
+            eprintln!("skipping: TEST_DATABASE_URL not set");
+            return;
+        };
+
+        let stores = crate::store::Stores::new(db.db.clone());
+        let owner_id = db.create_user().await.unwrap();
+        let svc = service(owner_id, "auth-bind-no-provider");
+        stores.service().create(&svc).await.unwrap();
+        let providers = AuthProviderStore::new(db.db.clone());
+
+        let call = api_call(owner_id, &svc.slug, "call-a");
+        let mut calls = BTreeMap::new();
+        calls.insert("call-a".parse().unwrap(), planned_call(svc, call));
+
+        assert!(
+            assert_bound(&providers, owner_id, &calls, &BTreeSet::new())
+                .await
+                .is_ok()
+        );
+
+        db.teardown().await.unwrap();
+    }
+
+    /// Change 1's headline behavior: two api_calls on the same service share its one provider
+    /// with no per-call wiring — the origin/scope check runs once (per service), not once per
+    /// api_call, and both calls pass or fail together.
+    #[tokio::test]
+    async fn two_api_calls_on_one_service_share_its_provider() {
+        let Some(db) = ScratchDb::create().await.expect("scratch db") else {
+            eprintln!("skipping: TEST_DATABASE_URL not set");
+            return;
+        };
+
+        let stores = crate::store::Stores::new(db.db.clone());
+        let owner_id = db.create_user().await.unwrap();
+        let svc = service(owner_id, "auth-bind-shared");
+        stores.service().create(&svc).await.unwrap();
+        let providers = AuthProviderStore::new(db.db.clone());
+        let p = provider(
+            owner_id,
+            &svc.slug,
+            "prov",
+            &Origin::of(&svc.base_url).unwrap().to_string(),
+        );
+        providers.create(&p).await.unwrap();
+
+        let call_a = api_call(owner_id, &svc.slug, "call-a");
+        let call_b = api_call(owner_id, &svc.slug, "call-b");
+        let mut calls = BTreeMap::new();
+        calls.insert("call-a".parse().unwrap(), planned_call(svc.clone(), call_a));
+        calls.insert("call-b".parse().unwrap(), planned_call(svc, call_b));
+
+        // Neither api_call names a provider of its own — both pass purely because their shared
+        // service has one whose origin matches.
         assert!(
             assert_bound(&providers, owner_id, &calls, &BTreeSet::new())
                 .await

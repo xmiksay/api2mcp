@@ -53,7 +53,6 @@ fn call_with_required_id(owner_id: uuid::Uuid, service_slug: &Slug) -> ApiCall {
         owner_id,
         slug: slug("thing"),
         service_slug: service_slug.clone(),
-        auth_provider_slug: None,
         method: http::Method::GET,
         path_template: "/things/{id}".to_owned(),
         query_fixed: BTreeMap::new(),

@@ -39,7 +39,6 @@ fn test_call(path_template: &str, params: Vec<Param>) -> ApiCall {
         owner_id: uuid::Uuid::nil(),
         slug: Slug::from_str("get-item").expect("valid slug"),
         service_slug: Slug::from_str("demo").expect("valid slug"),
-        auth_provider_slug: None,
         method: ::http::Method::GET,
         path_template: path_template.to_owned(),
         query_fixed: Default::default(),

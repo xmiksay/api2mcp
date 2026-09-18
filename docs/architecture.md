@@ -69,8 +69,8 @@ fast and the integration suite small, and it is worth defending against convenie
 | `script` | Rhai: sandboxed engine, the `api`/`api_many`/`api_try` bindings, the sync/async bridge, the date/JSON/YAML/regex/text standard library. See [`docs/scripting.md`](scripting.md) for the full script-callable reference. |
 | `store` | Per-aggregate façades over the database. |
 | `entity`, `migration` | SeaORM entities and in-crate migrations. |
-| `pack` | Portable YAML export/import. |
-| `server` | MCP data plane, OAuth 2.1 AS, the read-write admin JSON API (CRUD over every definition plus `POST /api/{api_calls,scripts}/{slug}/test`, `GET /api/endpoints/{slug}/plan`), embedded SPA. |
+| `pack` | Portable YAML export/import — carries no auth providers at all (an api_call names none of its own, and a pack has no `auth_providers` map either). |
+| `server` | MCP data plane, OAuth 2.1 AS, the read-write admin JSON API (CRUD over every definition plus `POST /api/{api_calls,scripts}/{slug}/test`, `GET /api/endpoints/{slug}/plan`, `GET /api/endpoints/{slug}/pack`, `POST /api/packs/import`), embedded SPA. |
 | `cli` | Local-process entry points, including everything an agent must never be able to do. |
 
 ## Auth model
@@ -127,7 +127,7 @@ Five definition entities, each independently owned, plus identity, tokens and au
 | Entity | Holds |
 |---|---|
 | `service` | Base URL, origin allowlist, rate limit, default headers, timeouts, concurrency. The thing that changes when a pack is shared. |
-| `auth_provider` | Kind (bearer / api key / OAuth), the env **key name** of the credential, declared scopes, and the origin it is bound to. |
+| `auth_provider` | Kind (bearer / api key / OAuth), the credential source — either the env **key name** or the value itself, held on the row for the per-owner case — declared scopes, and the origin it is bound to. `service_id` is `UNIQUE`: a service has at most one, and every api_call on it uses it — an api_call carries no auth reference of its own. |
 | `api_call` | One operation: method, path template, typed params, projection, read/write class, idempotency, tags. |
 | `script` | A Rhai composition, its declared api_calls, its budgets. |
 | `endpoint` | What an agent sees: a tag expression over api_calls and scripts, aliases, budgets, a read/write ceiling. |

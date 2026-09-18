@@ -16,6 +16,7 @@ mod m0005_endpoints;
 mod m0006_runs;
 mod m0007_seed_first_user;
 mod m0008_control_plane_tokens;
+mod m0009_stored_credentials;
 
 pub use sea_orm_migration::MigratorTrait;
 
@@ -33,6 +34,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0006_runs::Migration),
             Box::new(m0007_seed_first_user::Migration),
             Box::new(m0008_control_plane_tokens::Migration),
+            Box::new(m0009_stored_credentials::Migration),
         ]
     }
 }

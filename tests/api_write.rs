@@ -121,15 +121,14 @@ async fn invalid_api_call_reports_every_independent_failure_at_once() -> Result<
         return Ok(());
     };
 
-    // Two unrelated problems in one body: an unknown service, and an unknown auth_provider —
+    // Two unrelated problems in one body: an unknown service, and an invalid `access` value —
     // both are `validate_api_call` checks, so a single POST should surface both, not just one.
     let create_body = json!({
         "slug": "call-two-problems",
         "service": "does-not-exist",
-        "auth_provider": "also-does-not-exist",
         "method": "GET",
         "path_template": "/things",
-        "access": "read"
+        "access": "delete"
     });
     let (status, body) = admin(&h, Method::POST, "/api/api_calls", Some(create_body)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body:?}");
@@ -146,7 +145,7 @@ async fn invalid_api_call_reports_every_independent_failure_at_once() -> Result<
     assert!(
         errors
             .iter()
-            .any(|e| e.as_str().unwrap().contains("also-does-not-exist"))
+            .any(|e| e.as_str().unwrap().contains("delete"))
     );
 
     h.db.teardown().await
@@ -275,6 +274,74 @@ async fn a_credential_shaped_value_is_rejected_and_never_echoed() -> Result<()> 
         !keys
             .iter()
             .any(|&k| k == "value" || k == "credential_value" || k.contains("secret"))
+    );
+
+    h.db.teardown().await
+}
+
+/// The stored-credential path's whole contract in one test: a value can be *set* over this API
+/// (it is the only way an owner can set one at all), and it can never be *read back* — not on the
+/// create response, not on a later GET, not in a list. An update that omits the field keeps the
+/// stored value rather than silently clearing it, which is what lets an owner edit a provider's
+/// header or origin without re-entering their token.
+#[tokio::test]
+async fn a_stored_credential_can_be_set_but_never_read_back() -> Result<()> {
+    let Some(h) = setup().await? else {
+        return Ok(());
+    };
+    seed_service(&h, "svc-for-stored-cred").await;
+
+    let body = json!({
+        "slug": "provider-stored",
+        "service": "svc-for-stored-cred",
+        "kind": "static_header",
+        "credential_value": "a-per-owner-token",
+        "header_name": "Authorization",
+        "value_template": "Bearer {token}",
+        "bound_origin": "https://svc-for-stored-cred.example.com"
+    });
+    let (status, created) = admin(&h, Method::POST, "/api/auth_providers", Some(body)).await;
+    assert_eq!(status, StatusCode::CREATED, "body: {created:?}");
+    assert_eq!(created["has_stored_credential"], json!(true));
+
+    let serialized = created.to_string();
+    assert!(
+        !serialized.contains("a-per-owner-token"),
+        "the credential must never appear in a response: {serialized}"
+    );
+    assert!(
+        created.get("credential_env_key").is_none(),
+        "a stored-source provider names no env var: {created:?}"
+    );
+
+    // A read is the likelier leak than the create echo, so check it separately.
+    let (status, fetched) =
+        admin(&h, Method::GET, "/api/auth_providers/provider-stored", None).await;
+    assert_eq!(status, StatusCode::OK, "body: {fetched:?}");
+    assert_eq!(fetched["has_stored_credential"], json!(true));
+    assert!(!fetched.to_string().contains("a-per-owner-token"));
+
+    // An update with no `credential_value` must leave the stored one in place.
+    let edit = json!({
+        "service": "svc-for-stored-cred",
+        "kind": "static_header",
+        "header_name": "X-Api-Key",
+        "value_template": "{token}",
+        "bound_origin": "https://svc-for-stored-cred.example.com"
+    });
+    let (status, updated) = admin(
+        &h,
+        Method::PUT,
+        "/api/auth_providers/provider-stored",
+        Some(edit),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {updated:?}");
+    assert_eq!(updated["header_name"], json!("X-Api-Key"));
+    assert_eq!(
+        updated["has_stored_credential"],
+        json!(true),
+        "omitting credential_value must not clear the stored credential"
     );
 
     h.db.teardown().await

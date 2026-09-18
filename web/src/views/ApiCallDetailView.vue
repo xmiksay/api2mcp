@@ -85,11 +85,6 @@ async function remove(): Promise<void> {
             {{ call.service }}
           </RouterLink>
         </FieldRow>
-        <FieldRow v-if="call.auth_provider" label="auth provider">
-          <RouterLink :to="`/auth-providers/${call.auth_provider}`" class="text-read hover:underline">
-            {{ call.auth_provider }}
-          </RouterLink>
-        </FieldRow>
         <FieldRow label="url template" mono>{{ call.method }} {{ call.path_template }}</FieldRow>
         <FieldRow label="idempotent">{{ call.idempotent ? "yes" : "no" }}</FieldRow>
         <FieldRow label="tags"><TagChips :tags="call.tags" /></FieldRow>

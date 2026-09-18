@@ -24,7 +24,8 @@ use sea_orm::{
 use uuid::Uuid;
 
 use crate::entity::auth_providers;
-use crate::model::{AuthKind, AuthProvider, Slug};
+use crate::model::{AuthKind, AuthProvider, CredentialSource, Slug};
+use crate::secret::Secret;
 
 use super::meta::MetaStore;
 use super::{
@@ -59,6 +60,30 @@ impl AuthProviderStore {
             .one(&self.db)
             .await
             .map_err(db_err("auth_provider::get"))?;
+        row.map(|r| to_model(r, service_slug.clone())).transpose()
+    }
+
+    /// The one provider bound to `service_slug`, if any — `service_id` is `UNIQUE`
+    /// (`ux_auth_providers_service`), so this can never find more than one row. This is how an
+    /// api_call's auth is resolved now that it names no provider of its own: by its service,
+    /// not by a slug it carries (see `runtime::dispatch::AuthProviders::load`,
+    /// `resolve::auth_bind::assert_bound`).
+    pub async fn get_for_service(
+        &self,
+        owner_id: Uuid,
+        service_slug: &Slug,
+    ) -> Result<Option<AuthProvider>, StoreError> {
+        let service_id = match self.services().id_by_slug(owner_id, service_slug).await {
+            Ok(id) => id,
+            Err(StoreError::NotFound) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let row = auth_providers::Entity::find()
+            .filter(auth_providers::Column::OwnerId.eq(owner_id))
+            .filter(auth_providers::Column::ServiceId.eq(service_id))
+            .one(&self.db)
+            .await
+            .map_err(db_err("auth_provider::get_for_service"))?;
         row.map(|r| to_model(r, service_slug.clone())).transpose()
     }
 
@@ -111,6 +136,19 @@ impl AuthProviderStore {
             return Err(StoreError::Conflict(format!(
                 "auth provider {:?} already exists on service {:?}",
                 provider.slug.as_str(),
+                provider.service_slug.as_str()
+            )));
+        }
+        // A service has at most one auth provider (`ux_auth_providers_service`) — checked here
+        // for a friendly `Conflict` message; the unique index is the authoritative backstop
+        // against a race, not the primary way this is reported.
+        if self
+            .get_for_service(provider.owner_id, &provider.service_slug)
+            .await?
+            .is_some()
+        {
+            return Err(StoreError::Conflict(format!(
+                "service {:?} already has an auth provider; a service may have at most one",
                 provider.service_slug.as_str()
             )));
         }
@@ -208,9 +246,9 @@ impl AuthProviderStore {
             .ok_or(StoreError::NotFound)
     }
 
-    /// Resolves an auth provider's `(service_slug, slug)` from its primary key — used by
-    /// `store::api_call` to turn `api_calls.auth_provider_id` into the `Option<Slug>`
-    /// `model::ApiCall::auth_provider_slug` carries.
+    /// Resolves an auth provider's bare slug from its primary key — used by `store::endpoint` to
+    /// turn an `endpoint_auth_providers.auth_provider_id` foreign key into the `Slug`
+    /// `EndpointDef::auth_providers` carries.
     pub(crate) async fn slug_by_id(&self, id: Uuid) -> Result<Slug, StoreError> {
         let row = auth_providers::Entity::find_by_id(id)
             .one(&self.db)
@@ -241,7 +279,18 @@ fn to_active_model(
         service_id: Set(service_id),
         slug: Set(provider.slug.as_str().to_owned()),
         kind: Set(kind.to_owned()),
-        credential_env_key: Set(provider.credential_env_key.clone()),
+        credential_env_key: Set(match &provider.credential {
+            CredentialSource::Env(key) => Some(key.clone()),
+            CredentialSource::Stored(_) => None,
+        }),
+        // The one place a stored credential becomes a `String` again — it has to, to reach the
+        // column. See `secret::Secret::expose_for_storage`.
+        credential_value: Set(match &provider.credential {
+            CredentialSource::Env(_) => None,
+            CredentialSource::Stored(value) => {
+                value.as_ref().map(|v| v.expose_for_storage().to_owned())
+            }
+        }),
         header_name: Set(Some(provider.header_name.clone())),
         value_template: Set(Some(provider.value_template.clone())),
         scopes: Set(Some(strings_to_json(&provider.scopes))),
@@ -278,7 +327,13 @@ fn to_model(row: auth_providers::Model, service_slug: Slug) -> Result<AuthProvid
         slug: parse_slug(&row.slug)?,
         service_slug,
         kind,
-        credential_env_key: row.credential_env_key,
+        credential: match (row.credential_env_key, row.credential_value) {
+            // An env key wins if somehow both are present: it is the only one of the two that
+            // can't have been written by this store's own `to_active_model`, so a row carrying
+            // both predates or sidesteps it and the safer reading is "still env-backed".
+            (Some(key), _) => CredentialSource::Env(key),
+            (None, value) => CredentialSource::Stored(value.map(Secret::from_raw)),
+        },
         header_name,
         value_template,
         scopes,
@@ -319,7 +374,7 @@ mod tests {
             slug: slug.parse().unwrap(),
             service_slug: service_slug.clone(),
             kind: AuthKind::StaticHeader,
-            credential_env_key: "A2M_CRED_TEST".into(),
+            credential: CredentialSource::Env("A2M_CRED_TEST".into()),
             header_name: "Authorization".into(),
             value_template: "Bearer {token}".into(),
             scopes: vec!["read".into()],
@@ -372,6 +427,97 @@ mod tests {
                 .await
                 .expect("get after delete")
                 .is_none()
+        );
+
+        scratch.teardown().await.expect("teardown");
+    }
+
+    /// The stored-credential path end to end: a value written to the row comes back as the same
+    /// `Secret`, a provider with no value set round-trips as `Stored(None)` rather than
+    /// collapsing into an env source, and switching a provider from stored back to env clears
+    /// the value column instead of leaving a credential behind in the database.
+    #[tokio::test]
+    async fn a_stored_credential_roundtrips_and_is_cleared_when_the_source_changes() {
+        let Some(scratch) = ScratchDb::create().await.expect("scratch db") else {
+            eprintln!("skipping: TEST_DATABASE_URL not set");
+            return;
+        };
+        let owner_id = scratch.create_user().await.expect("create user");
+
+        let services = crate::store::ServiceStore::new(scratch.db.clone());
+        let service = sample_service(owner_id, "auth-provider-stored-svc");
+        services.create(&service).await.expect("create service");
+
+        let store = AuthProviderStore::new(scratch.db.clone());
+        let mut provider = sample_provider(owner_id, &service.slug, "stored");
+        provider.credential = CredentialSource::Stored(Some(Secret::from_raw("glpat-xyz".into())));
+        store.create(&provider).await.expect("create provider");
+
+        let fetched = store
+            .get(owner_id, &service.slug, &provider.slug)
+            .await
+            .expect("get provider")
+            .expect("provider exists");
+        assert_eq!(
+            fetched, provider,
+            "the stored value must survive a round-trip"
+        );
+
+        let mut unset = provider.clone();
+        unset.credential = CredentialSource::Stored(None);
+        store.update(&unset).await.expect("clear the value");
+        let refetched = store
+            .get(owner_id, &service.slug, &provider.slug)
+            .await
+            .expect("get provider")
+            .expect("provider still exists");
+        assert_eq!(
+            refetched.credential,
+            CredentialSource::Stored(None),
+            "a provider with no value set must not read back as env-backed"
+        );
+
+        let mut back_to_env = provider.clone();
+        back_to_env.credential = CredentialSource::Env("A2M_CRED_TEST".into());
+        store.update(&back_to_env).await.expect("switch to env");
+        let row = auth_providers::Entity::find()
+            .filter(auth_providers::Column::OwnerId.eq(owner_id))
+            .filter(auth_providers::Column::Slug.eq(provider.slug.as_str()))
+            .one(&scratch.db)
+            .await
+            .expect("query row")
+            .expect("row exists");
+        assert!(
+            row.credential_value.is_none(),
+            "switching to an env source must not leave the old credential in the database"
+        );
+
+        scratch.teardown().await.expect("teardown");
+    }
+
+    /// A service has at most one auth provider — enforced both by the friendly `Conflict` check
+    /// in `create` and, as a backstop against a race, by `ux_auth_providers_service` itself.
+    #[tokio::test]
+    async fn a_second_provider_for_the_same_service_is_rejected() {
+        let Some(scratch) = ScratchDb::create().await.expect("scratch db") else {
+            eprintln!("skipping: TEST_DATABASE_URL not set");
+            return;
+        };
+        let owner_id = scratch.create_user().await.expect("create user");
+
+        let services = crate::store::ServiceStore::new(scratch.db.clone());
+        let service = sample_service(owner_id, "auth-provider-one-per-service");
+        services.create(&service).await.expect("create service");
+
+        let store = AuthProviderStore::new(scratch.db.clone());
+        let first = sample_provider(owner_id, &service.slug, "first");
+        store.create(&first).await.expect("create first provider");
+
+        let second = sample_provider(owner_id, &service.slug, "second");
+        let err = store.create(&second).await.unwrap_err();
+        assert!(
+            matches!(err, StoreError::Conflict(_)),
+            "expected a Conflict, got {err:?}"
         );
 
         scratch.teardown().await.expect("teardown");

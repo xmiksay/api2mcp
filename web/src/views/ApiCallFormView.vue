@@ -8,7 +8,6 @@ import { ApiError } from "@/api";
 import type { PackApiCall, PackProjectionField } from "@/api";
 import { useApiCallsStore } from "@/stores/apiCalls";
 import { useServicesStore } from "@/stores/services";
-import { useAuthProvidersStore } from "@/stores/authProviders";
 import PageHeader from "@/components/PageHeader.vue";
 import DetailSection from "@/components/DetailSection.vue";
 import LoadingState from "@/components/LoadingState.vue";
@@ -27,14 +26,12 @@ const props = defineProps<{ mode: "create" | "edit"; slug?: string }>();
 const router = useRouter();
 const store = useApiCallsStore();
 const services = useServicesStore();
-const authProviders = useAuthProvidersStore();
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
 function blank(): PackApiCall {
   return {
     service: services.items[0]?.slug ?? "",
-    auth_provider: undefined,
     method: "GET",
     path_template: "/",
     query_fixed: {},
@@ -60,7 +57,7 @@ const errors = ref<string[]>([]);
 const loading = ref(props.mode === "edit");
 
 onMounted(async () => {
-  await Promise.all([services.fetchList(), authProviders.fetchList()]);
+  await services.fetchList();
   if (props.mode === "edit" && props.slug) {
     const existing = await store.fetchOne(props.slug);
     if (existing) {
@@ -76,7 +73,6 @@ onMounted(async () => {
 });
 
 const slugProblem = computed(() => (props.mode === "create" ? slugError(slugInput.value) : null));
-const availableAuthProviders = computed(() => authProviders.items.filter((p) => p.service === form.value.service));
 const hasProjection = computed({
   get: () => form.value.projection !== undefined,
   set: (on) => (form.value.projection = on ? { fields: [] } : undefined),
@@ -171,12 +167,6 @@ async function submit(): Promise<void> {
             <FormField label="service" required>
               <select v-model="form.service" :class="fieldClass">
                 <option v-for="s in services.items" :key="s.slug" :value="s.slug">{{ s.slug }}</option>
-              </select>
-            </FormField>
-            <FormField label="auth provider" help="Only providers bound to the selected service.">
-              <select v-model="form.auth_provider" :class="fieldClass">
-                <option :value="undefined">none</option>
-                <option v-for="p in availableAuthProviders" :key="p.slug" :value="p.slug">{{ p.slug }}</option>
               </select>
             </FormField>
             <FormField label="method" required>

@@ -17,10 +17,16 @@
 //! each aggregate is independently owned, so a direct column lets every store method filter on
 //! it without walking a foreign key first. Amended into this migration (not a new one) because
 //! the branch that added the skeleton is unmerged and nothing built on it is deployed yet.
+//!
+//! `auth_providers.service_id` is `UNIQUE`: a service has at most one auth provider, and every
+//! api_call on that service uses it — `api_calls` therefore carries no `auth_provider_id` of its
+//! own at all (amended in place here for the same unmerged-branch reason as above). An api_call
+//! on a service with no provider row simply sends no credential; that is a normal state (a
+//! freshly imported pack looks exactly like this), not a validation failure.
 
 use sea_orm_migration::prelude::*;
 
-use super::helpers::{timestamptz_now, uuid_col, uuid_col_null, uuid_pk};
+use super::helpers::{timestamptz_now, uuid_col, uuid_pk};
 
 /// Redeclared from `m0001_init`'s own table, not imported — see `migration`'s module doc for
 /// why every migration keeps its own copy of any `Iden` enum it needs.
@@ -79,7 +85,6 @@ enum ApiCalls {
     Id,
     OwnerId,
     ServiceId,
-    AuthProviderId,
     Slug,
     Method,
     PathTemplate,
@@ -231,6 +236,16 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
+        manager
+            .create_index(
+                Index::create()
+                    .name("ux_auth_providers_service")
+                    .table(AuthProviders::Table)
+                    .col(AuthProviders::ServiceId)
+                    .unique()
+                    .to_owned(),
+            )
+            .await?;
 
         manager
             .create_table(
@@ -240,7 +255,6 @@ impl MigrationTrait for Migration {
                     .col(uuid_pk(ApiCalls::Id))
                     .col(uuid_col(ApiCalls::OwnerId))
                     .col(uuid_col(ApiCalls::ServiceId))
-                    .col(uuid_col_null(ApiCalls::AuthProviderId))
                     .col(ColumnDef::new(ApiCalls::Slug).text().not_null())
                     .col(ColumnDef::new(ApiCalls::Method).text().not_null())
                     .col(ColumnDef::new(ApiCalls::PathTemplate).text().not_null())
@@ -292,13 +306,6 @@ impl MigrationTrait for Migration {
                             .from(ApiCalls::Table, ApiCalls::ServiceId)
                             .to(Services::Table, Services::Id)
                             .on_delete(ForeignKeyAction::Cascade),
-                    )
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("fk_api_calls_auth_provider")
-                            .from(ApiCalls::Table, ApiCalls::AuthProviderId)
-                            .to(AuthProviders::Table, AuthProviders::Id)
-                            .on_delete(ForeignKeyAction::SetNull),
                     )
                     .foreign_key(
                         ForeignKey::create()

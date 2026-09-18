@@ -34,7 +34,44 @@ macro_rules! slugged_dto {
 }
 
 slugged_dto!(ServiceCreate, ServiceView, PackService);
-slugged_dto!(AuthProviderCreate, AuthProviderView, PackAuthProvider);
 slugged_dto!(ApiCallCreate, ApiCallView, PackApiCall);
 slugged_dto!(ScriptCreate, ScriptView, PackScript);
 slugged_dto!(EndpointCreate, EndpointView, PackEndpoint);
+
+// Auth providers are the one resource that cannot use `slugged_dto!`: a `PackAuthProvider` is
+// deliberately credential-free (see `pack`'s module doc), but this API is exactly where an owner
+// sets the value for a stored-source provider. So the value rides *alongside* the pack body,
+// write-only, and the view reports only whether one is set.
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AuthProviderCreate {
+    pub slug: String,
+    #[serde(flatten)]
+    pub def: PackAuthProvider,
+    /// The credential value, for a provider with no `credential_env_key`. Write-only — no
+    /// response shape in this API ever echoes it back.
+    #[serde(default)]
+    pub credential_value: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AuthProviderUpdate {
+    #[serde(flatten)]
+    pub def: PackAuthProvider,
+    /// Absent leaves whatever value is already stored untouched, so an owner can edit a
+    /// provider's header or origin without re-entering the credential; `Some("")` clears it.
+    /// This is the ordinary password-field contract, stated because the difference between
+    /// "unchanged" and "cleared" is otherwise invisible to a client.
+    #[serde(default)]
+    pub credential_value: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AuthProviderView {
+    pub slug: String,
+    #[serde(flatten)]
+    pub def: PackAuthProvider,
+    /// Whether a stored credential is set. Never the value — this is the whole reason auth
+    /// providers don't reuse `slugged_dto!`.
+    pub has_stored_credential: bool,
+}

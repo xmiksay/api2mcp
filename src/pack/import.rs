@@ -1,11 +1,15 @@
 //! Imports a validated [`Pack`] into the database: upsert by slug, last write wins (this crate
 //! doesn't version definitions — see `lib.rs`'s invariant table). Writes happen in FK dependency
-//! order — services, auth_providers, api_calls, scripts, endpoints — because each step's upsert
-//! resolves the previous steps' rows by slug (a script's `callable` needs its api_calls already
-//! committed, an endpoint's `auth_providers` scope needs its providers already committed, ...).
-//! Child rows (params, tag membership, `script_api_calls`, `endpoint_aliases`,
-//! `endpoint_auth_providers`) are never patched incrementally: every aggregate's own `update()`
-//! always replaces its full child-row set from the value just written
+//! order — services, api_calls, scripts, endpoints — because each step's upsert resolves the
+//! previous steps' rows by slug (a script's `callable` needs its api_calls already committed,
+//! ...). A pack carries no auth providers at all (see `pack`'s own module doc), so an endpoint's
+//! `auth_providers` scope — if the caller set one on the live row already, since that field is
+//! still part of the wire shape the read-write admin API reuses — resolves against whatever
+//! providers already exist for `owner_id`, not against anything this import writes; a scope
+//! entry naming a provider that doesn't exist yet fails the whole import with a store error
+//! rather than silently dropping it. Child rows (params, tag membership, `script_api_calls`,
+//! `endpoint_aliases`, `endpoint_auth_providers`) are never patched incrementally: every
+//! aggregate's own `update()` always replaces its full child-row set from the value just written
 //! (`store::api_call::update`, `store::script::update`, `store::endpoint::update` all do this
 //! already), so an import can never leave a stale param or tag membership behind.
 //!
@@ -59,7 +63,6 @@ pub enum ImportChange {
 #[derive(Debug, Clone, Default)]
 pub struct ImportReport {
     pub services: Vec<(String, ImportChange)>,
-    pub auth_providers: Vec<(String, ImportChange)>,
     pub api_calls: Vec<(String, ImportChange)>,
     pub scripts: Vec<(String, ImportChange)>,
     pub endpoints: Vec<(String, ImportChange)>,
@@ -71,7 +74,6 @@ impl ImportReport {
     pub fn is_idempotent_no_op(&self) -> bool {
         [
             &self.services,
-            &self.auth_providers,
             &self.api_calls,
             &self.scripts,
             &self.endpoints,
@@ -115,48 +117,11 @@ pub async fn import(
         report.services.push((slug_str.clone(), change));
     }
 
-    for (slug_str, provider) in &pack.auth_providers {
-        let slug = convert::parse_slug(slug_str)?;
-        let service_slug = convert::parse_slug(&provider.service)?;
-        let model = convert::auth_provider_from_pack(
-            owner_id,
-            slug.clone(),
-            service_slug.clone(),
-            provider,
-        )?;
-        let existing = stores
-            .auth_provider()
-            .get(owner_id, &service_slug, &slug)
-            .await?;
-        let change = match &existing {
-            None => ImportChange::Created,
-            Some(row) if row == &model => ImportChange::Unchanged,
-            Some(_) => ImportChange::Updated,
-        };
-        if !dry_run {
-            match existing {
-                None => stores.auth_provider().create(&model).await?,
-                Some(_) => stores.auth_provider().update(&model).await?,
-            }
-        }
-        report.auth_providers.push((slug_str.clone(), change));
-    }
-
     for (slug_str, call) in &pack.api_calls {
         let slug = convert::parse_slug(slug_str)?;
         let service_slug = convert::parse_slug(&call.service)?;
-        let auth_provider_slug = call
-            .auth_provider
-            .as_deref()
-            .map(convert::parse_slug)
-            .transpose()?;
-        let model = convert::api_call_from_pack(
-            owner_id,
-            slug.clone(),
-            service_slug.clone(),
-            auth_provider_slug,
-            call,
-        )?;
+        let model =
+            convert::api_call_from_pack(owner_id, slug.clone(), service_slug.clone(), call)?;
         let tags = convert::tags_from_pack(&call.tags)?;
         let existing = stores
             .api_call()
@@ -240,12 +205,10 @@ mod tests {
         let mut pack = Pack {
             version: super::super::PACK_VERSION,
             services: BTreeMap::from([("svc-import".to_owned(), service("svc-import"))]),
-            auth_providers: BTreeMap::new(),
             api_calls: BTreeMap::from([(
                 "call-import".to_owned(),
                 PackApiCall {
                     service: "svc-import".to_owned(),
-                    auth_provider: None,
                     method: "GET".to_owned(),
                     path_template: "/things".to_owned(),
                     query_fixed: BTreeMap::new(),

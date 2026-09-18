@@ -57,7 +57,6 @@ fn api_call(owner_id: uuid::Uuid, service_slug: &Slug, name: &str, access: Acces
         owner_id,
         slug: slug(name),
         service_slug: service_slug.clone(),
-        auth_provider_slug: None,
         method: http::Method::GET,
         path_template: "/things".to_owned(),
         query_fixed: BTreeMap::new(),

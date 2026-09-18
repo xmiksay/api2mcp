@@ -125,7 +125,6 @@ mod tests {
                 owner_id: uuid::Uuid::nil(),
                 slug: "get-item".parse().unwrap(),
                 service_slug: "demo".parse().unwrap(),
-                auth_provider_slug: None,
                 method: http::Method::GET,
                 path_template: "/items/{id}".to_owned(),
                 query_fixed: BTreeMap::new(),
