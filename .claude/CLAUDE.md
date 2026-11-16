@@ -23,6 +23,7 @@ make dev          # vite on :5173 proxying /api, /mcp, /oauth, /login to :8080
 make db-create    # create the role and database (idempotent)
 make migrate      # apply migrations
 make seed         # import examples/demo.pack.yaml
+make image        # container image api2mcp:dev (same Dockerfile the release workflow pushes)
 ```
 
 `DATABASE_URL` is required; copy `.env.example` to `.env`. The database is a **Postgres you run
@@ -88,6 +89,11 @@ The read-write admin JSON API and its test-run routes (`POST /api/api_calls/{slu
 `POST /api/scripts/{slug}/test`) live under `server::api`; see
 [`docs/architecture.md`](../docs/architecture.md) for the full route table.
 
+**Releases** are a container image, `ghcr.io/xmiksay/api2mcp:X.Y.Z`, pushed by
+`.github/workflows/release.yml` on a `vX.Y.Z` tag — only after the `ci.yml` gate passes (reused via
+`workflow_call`) and only if the tag equals `Cargo.toml`'s version. F13 runs it via Argo CD from
+the f13 `deploy` repo (chart `charts/api2mcp`); nothing deployment-specific lives here.
+
 ## Gotchas
 
 - **The SPA is embedded by `rust-embed` from `web/dist`,** which is a *compile-time* dependency.
@@ -96,6 +102,12 @@ The read-write admin JSON API and its test-run routes (`POST /api/api_calls/{slu
   warning in debug.
 - **`SKIP_UI_BUILD=1` skips the npm step.** Every make target that does not need the bundle sets
   it. Use it whenever you run cargo by hand.
+- **The compiler is pinned in `rust-toolchain.toml`** — CI, `make verify` and the image all build
+  with it (trybuild's `tests/ui/*.stderr` snapshots change wording between releases). Bumping it
+  means `TRYBUILD=overwrite` for those snapshots and nothing else.
+- **The image build has no `.git`.** `build.rs` takes the commit from `A2M_COMMIT` when set (the
+  Dockerfile's `GIT_COMMIT` build arg), else `git rev-parse`, else `unknown`. The image runs as
+  UID 10001 on a read-only root FS — the server must never need to write outside `/tmp`.
 - **`rust-embed` reads from disk in debug builds**, so after `make ui` the new assets are served
   without recompiling.
 - **`serde_json` must never enable `preserve_order`.** `rhai::Map` is a `BTreeMap` and default
