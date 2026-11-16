@@ -1,0 +1,6 @@
+# Single source for the compiler: CI, `make verify`, and the image build (`make image` and
+# release.yml pass this channel as the Dockerfile's RUST_VERSION) all use it. trybuild
+# snapshots in tests/ui are compiler-version-sensitive, which is why this is not `stable`.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
