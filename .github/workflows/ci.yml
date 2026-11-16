@@ -4,9 +4,13 @@ on:
   push:
     branches: [master]
   pull_request:
+  # release.yml runs this same gate before it publishes an image.
+  workflow_call:
 
+# github.workflow is the *caller's* name inside a workflow_call, so a release run never shares a
+# group with (and cancels) a branch CI run.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -38,9 +42,9 @@ jobs:
       NVM_DIR: /nonexistent
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      # Installs exactly what rust-toolchain.toml pins (channel + rustfmt/clippy), so CI and a
+      # local `make verify` run the same compiler and a new stable cannot break the build.
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true

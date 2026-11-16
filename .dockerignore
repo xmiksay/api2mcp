@@ -1,0 +1,15 @@
+.git
+.github
+.claude
+.env
+.env.*
+target
+web/node_modules
+web/dist
+web/coverage
+web/*.tsbuildinfo
+docs
+tests
+*.md
+Dockerfile
+.dockerignore

@@ -13,6 +13,7 @@
 | Frontend | Vue 3 + TypeScript + Vite + Tailwind 4 + Pinia, embedded via `rust-embed` |
 | Errors | `anyhow` above the model boundary, `thiserror` below it |
 | Logging / CLI | `tracing` / `clap` |
+| Release | `Dockerfile` (Node → Rust → `debian:bookworm-slim`), pushed to GHCR by `release.yml` on a `vX.Y.Z` tag |
 
 ## The central idea
 

@@ -114,15 +114,22 @@ fn npm(args: &[&str]) -> Result<(), ()> {
 /// `DESIGN`-style version metadata without pulling in a date crate.
 fn emit_version_metadata() {
     println!("cargo:rerun-if-changed=.git/HEAD");
-    let commit = Command::new("git")
+    println!("cargo:rerun-if-env-changed=A2M_COMMIT");
+    // A container build has no .git in its context, so the Dockerfile passes the commit in.
+    let from_env = std::env::var("A2M_COMMIT").ok().filter(|c| !c.is_empty());
+    let commit = from_env.unwrap_or_else(git_commit);
+    println!("cargo:rustc-env=A2M_COMMIT={commit}");
+    let pkg = std::env::var("CARGO_PKG_VERSION").unwrap_or_default();
+    println!("cargo:rustc-env=A2M_LONG_VERSION={pkg} ({commit})");
+}
+
+fn git_commit() -> String {
+    Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
         .output()
         .ok()
         .filter(|o| o.status.success())
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "unknown".into());
-    println!("cargo:rustc-env=A2M_COMMIT={commit}");
-    let pkg = std::env::var("CARGO_PKG_VERSION").unwrap_or_default();
-    println!("cargo:rustc-env=A2M_LONG_VERSION={pkg} ({commit})");
+        .unwrap_or_else(|| "unknown".into())
 }

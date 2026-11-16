@@ -21,7 +21,7 @@ NOUI := SKIP_UI_BUILD=1
 
 .DEFAULT_GOAL := help
 .PHONY: help deps ui build run dev check fmt lint test test-unit test-int test-ui \
-        coverage db-create db-reset migrate migrate-status seed demo-upstream verify clean
+        coverage db-create db-reset migrate migrate-status seed demo-upstream verify image clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n",$$1,$$2}'
@@ -98,6 +98,15 @@ demo-upstream: ## Run the fake upstream the demo pack curates (port 8089)
 	$(NOUI) cargo run --example demo_upstream
 
 verify: lint test ## The pre-"done" gate
+
+# The release workflow builds the same Dockerfile with the same build args; this is the local
+# twin. .git is not in the build context, so the commit is passed in for `api2mcp --version`.
+image: ## Build the container image as api2mcp:dev
+	docker build \
+	  --build-arg NODE_VERSION=$$(sed 's/^v//' .nvmrc) \
+	  --build-arg RUST_VERSION=$$(sed -n 's/^channel = "\(.*\)"$$/\1/p' rust-toolchain.toml) \
+	  --build-arg GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+	  -t api2mcp:dev .
 
 clean: ## Remove build artifacts
 	cargo clean

@@ -74,6 +74,7 @@ claude mcp add --transport http api2mcp http://localhost:8080/mcp/demo
 | `make verify` | lint + all tests — the pre-"done" gate |
 | `make run` / `make dev` | server on :8080 / vite on :5173 proxying to it |
 | `make db-create` / `make migrate` / `make db-reset` | create the DB / apply the schema / recreate and migrate |
+| `make image` | build the container image `api2mcp:dev` |
 | `api2mcp user add <email>` | create another account (password from stdin, or `--oidc-only`) |
 | `api2mcp call <slug> --arg k=v --raw [--user <email>]` | run one api_call, raw and projected side by side |
 | `api2mcp token mint --label <l> [--endpoint <slug>] [--owner <email>]` | mint a bearer token, optionally restricted to specific endpoints |
@@ -81,6 +82,42 @@ claude mcp add --transport http api2mcp http://localhost:8080/mcp/demo
 
 `--user`/`--owner` are only needed once more than one account exists; every CLI command that reads
 or writes definitions falls back to the sole user account otherwise.
+
+## Container & release
+
+`make image` builds `api2mcp:dev` from the `Dockerfile`: a Node stage builds the SPA (version from
+`.nvmrc`), a Rust stage embeds it into the release binary, and the runtime stage is
+`debian:bookworm-slim` with only `ca-certificates`. The image runs as UID 10001, needs no writable
+path other than `/tmp` (a read-only root FS works), and defaults to `ENTRYPOINT ["api2mcp"]`,
+`CMD ["serve"]`, so any CLI subcommand runs in it too (`docker run … api2mcp:dev user add you@example.com`).
+
+```bash
+docker run --rm -p 8080:8080 --read-only --tmpfs /tmp \
+  -e DATABASE_URL=postgres://api2mcp:…@db:5432/api2mcp \
+  -e A2M_BASE_URL=https://api2mcp.example.com \
+  api2mcp:dev
+```
+
+`serve` applies pending migrations itself at startup; without a reachable database it exits
+non-zero after the pool's connect timeout (~30 s). Runtime configuration is all environment:
+
+| Variable | |
+|---|---|
+| `DATABASE_URL` | required |
+| `A2M_HOST` / `A2M_PORT` | preset to `0.0.0.0` / `8080` in the image |
+| `A2M_BASE_URL` | the public origin — the OAuth issuer; set it, the default is the bind address |
+| `A2M_OIDC_ISSUER` / `A2M_OIDC_CLIENT_ID` / `A2M_OIDC_CLIENT_SECRET` | optional external login, all three or none |
+| `A2M_SEED_EMAIL` / `A2M_SEED_PASSWORD` | optional first user, both or neither |
+| `A2M_RUN_RETENTION_DAYS`, `RUST_LOG`, `NO_COLOR` | optional |
+
+**Releasing:** bump `version` in `Cargo.toml`, merge, then push a tag `vX.Y.Z` matching it.
+`.github/workflows/release.yml` reruns the CI gate, refuses a tag that differs from `Cargo.toml`,
+and pushes `ghcr.io/xmiksay/api2mcp:X.Y.Z` — no `latest`, no sha tags. After the very first push,
+set the GHCR package's visibility to public once (package settings on GitHub), or the cluster
+needs a pull secret.
+
+The F13 deployment lives in the f13 `deploy` repo (Argo CD, chart `charts/api2mcp`); Argo CD
+Image Updater picks up new `X.Y.Z` tags from there.
 
 ## How it is built
 
