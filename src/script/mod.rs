@@ -59,13 +59,14 @@ pub use errors::{RunScriptError, ScriptFailure, ScriptFailureKind};
 /// Argument binding happens first, synchronously, against the script's own declared params
 /// ([`ScriptDef::params`]) — a caller-side mismatch is [`RunScriptError::Args`], distinct from
 /// the script itself misbehaving ([`RunScriptError::Script`]).
-/// A finished script run: what it returned, plus every upstream call it made along the way so
-/// the recorder can write a `run_calls` row for each. A script's calls are made inside the
-/// bridge rather than by the caller, so without collecting them here they would be invisible to
-/// the audit trail.
+/// A finished script run: what it returned (or why it failed), plus every upstream call it made
+/// along the way so the recorder can write a `run_calls` row for each. A script's calls are made
+/// inside the bridge rather than by the caller, so without collecting them here they would be
+/// invisible to the audit trail — and `calls` is kept on failure too, because an uncaught
+/// `api()` error is exactly the run whose calls someone needs to see.
 #[derive(Debug)]
 pub struct ScriptRun {
-    pub value: Value,
+    pub outcome: Result<Value, RunScriptError>,
     pub calls: Vec<BatchEntry>,
 }
 
@@ -77,8 +78,16 @@ pub async fn run_script(
     caller_script: &Slug,
     script: &ScriptDef,
     args: Value,
-) -> Result<ScriptRun, RunScriptError> {
-    let bound = schema::bind_args(&script.params, &args).map_err(RunScriptError::Args)?;
+) -> ScriptRun {
+    let bound = match schema::bind_args(&script.params, &args) {
+        Ok(bound) => bound,
+        Err(e) => {
+            return ScriptRun {
+                outcome: Err(RunScriptError::Args(e)),
+                calls: Vec::new(),
+            };
+        }
+    };
     let scope_vars: Vec<(String, Value)> = bound.into_iter().collect();
 
     let (tx, rx) = mpsc::unbounded_channel::<bridge::BindingCall>();
@@ -94,15 +103,16 @@ pub async fn run_script(
     bridge::service(rx, plan, ctx, limits, meter, caller_script, &audit).await;
     let calls = audit.into_inner().unwrap_or_default();
 
-    match handle.await {
-        Ok(Ok(value)) => Ok(ScriptRun { value, calls }),
+    let outcome = match handle.await {
+        Ok(Ok(value)) => Ok(value),
         Ok(Err(failure)) => Err(RunScriptError::Script(failure)),
         // The blocking closure panicked instead of returning — never allowed to take the process
         // down with it.
         Err(join_err) => Err(RunScriptError::Script(ScriptFailure::panic(
             join_err.to_string(),
         ))),
-    }
+    };
+    ScriptRun { outcome, calls }
 }
 
 /// The whole synchronous half, run entirely inside `spawn_blocking`: build the engine, bind the

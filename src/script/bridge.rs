@@ -17,6 +17,7 @@ use crate::model::Slug;
 use crate::resolve::EndpointPlan;
 use crate::runtime::budget::{BudgetAxis, BudgetMeter};
 use crate::runtime::dispatch::{self, DispatchContext};
+use crate::runtime::error_object;
 use crate::runtime::fanout::ConcurrencyLimits;
 use crate::runtime::partial::{BatchEntry, BatchStatus, ItemOutcome, run_batch};
 use std::sync::Mutex;
@@ -41,9 +42,10 @@ pub enum BridgeReply {
     /// present iff `ok`, `error` iff not. Never empty when `Entries` is returned.
     Entries(Vec<Value>),
     /// A script-authoring bug: a name outside I1's allowlist, an unknown api_call, or a batch
-    /// over [`MAX_BATCH`]. An ordinary, catchable error on the script side — these are bugs in
-    /// the script text, not properties of the upstream a `try`/`catch` idiom should paper over.
-    Refused(String),
+    /// over [`MAX_BATCH`]. Thrown (catchably) by all three bindings, even `api_try`/`api_many` —
+    /// these are bugs in the script text, not per-item properties of the upstream. Carries the
+    /// same tagged error object a per-item failure does ([`crate::runtime::error_object`]).
+    Refused(Value),
     /// The run's own wall-clock budget was already exhausted by the time this batch was
     /// serviced. `script::bindings` turns this into `EvalAltResult::ErrorTerminated` rather than
     /// a catchable error — see that module's docs for why a budget-driven refusal must not be
@@ -83,16 +85,19 @@ async fn service_one(
     audit: &Mutex<Vec<BatchEntry>>,
 ) -> BridgeReply {
     if call.batch.len() > MAX_BATCH {
-        return BridgeReply::Refused(format!(
-            "api_many: batch of {} exceeds the maximum of {MAX_BATCH}",
-            call.batch.len()
+        return BridgeReply::Refused(error_object::refusal(
+            "batch_too_large",
+            &format!(
+                "api_many: batch of {} exceeds the maximum of {MAX_BATCH}",
+                call.batch.len()
+            ),
         ));
     }
     // The pure, no-I/O half of I1: a name absent from `plan.callable_by[caller_script]` (never
     // declared, or declared but not exposed by this endpoint) or naming a script instead of an
     // api_call can never reach `run_batch` at all.
     if let Err(err) = dispatch::resolve(plan, Some(caller_script), &call.name) {
-        return BridgeReply::Refused(err.to_string());
+        return BridgeReply::Refused(error_object::of_dispatch_error(&err));
     }
 
     let items: Vec<(String, Value)> = call
@@ -154,7 +159,10 @@ fn entry_to_json(entry: &BatchEntry) -> Value {
             // `entry_to_json` only ever reaches a non-`Ok` arm here, so `error_object()` is
             // never `None` — but a stray `internal` tag is a far safer failure mode than a
             // panic if that invariant is ever violated.
-            "error": entry.outcome.error_object().unwrap_or_else(|| json!({"kind": "internal"})),
+            "error": entry
+                .outcome
+                .error_object()
+                .unwrap_or_else(|| error_object::refusal("internal", "api call failed")),
         }),
     }
 }
