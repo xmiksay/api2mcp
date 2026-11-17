@@ -20,7 +20,8 @@ use crate::fixture::harness::{service_for, slug};
 /// One api_call, `path_template: "/items/{id}"`, reachable by `script_slug` under the alias
 /// `"item"` — the shape every test in `tests/script.rs` shares. `id` is a `Path` param so each
 /// batch item's own args can steer it to a distinct fixture route, which is what lets a test
-/// control per-item timing/content despite `api_many` always naming the same alias.
+/// control per-item timing/content despite `api_many` always naming the same alias. `q` is an
+/// optional query param, for the tests that pass it `()`.
 pub fn plan_with_script(fixture: &Fixture, script_slug: &Slug) -> EndpointPlan {
     let service = service_for(fixture);
     let call = ApiCall {
@@ -37,17 +38,30 @@ pub fn plan_with_script(fixture: &Fixture, script_slug: &Slug) -> EndpointPlan {
         pagination: Pagination::None,
         timeout_ms: None,
         max_response_bytes: None,
-        params: vec![Param {
-            name: "id".to_owned(),
-            location: ParamLocation::Path,
-            ty: ParamType::String,
-            required: true,
-            default: None,
-            fixed: None,
-            enum_values: None,
-            description: None,
-            position: 0,
-        }],
+        params: vec![
+            Param {
+                name: "id".to_owned(),
+                location: ParamLocation::Path,
+                ty: ParamType::String,
+                required: true,
+                default: None,
+                fixed: None,
+                enum_values: None,
+                description: None,
+                position: 0,
+            },
+            Param {
+                name: "q".to_owned(),
+                location: ParamLocation::Query,
+                ty: ParamType::String,
+                required: false,
+                default: None,
+                fixed: None,
+                enum_values: None,
+                description: None,
+                position: 1,
+            },
+        ],
         description: None,
     };
     let planned = PlannedApiCall {

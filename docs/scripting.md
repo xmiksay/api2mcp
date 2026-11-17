@@ -20,6 +20,20 @@ A script is one Rhai expression (or statement sequence) stored as plain text
   scope as a plain variable and never placed into an HTTP request. This is why `script_params` (the
   DB table) has no `location`, `fixed_value` or `body_path` columns — those describe *where in a
   request* a value lands, which is meaningless for a script input.
+
+  **Every declared param is always in scope.** An optional param the caller omitted, with no
+  `default`, is bound as `()` (unit) — never left undefined. The engine runs with strict variables,
+  which resolve names at compile time, so an unbound name would be a compile error even inside an
+  `is_def_var(...)` guard. Test for "omitted" with `type_of`, which also keeps it distinct from
+  any sentinel value the caller could legitimately send (an empty list meaning "clear it"):
+
+  ```rhai
+  // params: project_id (required), labels (string_array, optional, no default)
+  let body = #{ "name": "x" };
+  if type_of(labels) != "()" { body.labels = labels; }   // omitted: leave labels untouched
+  ```
+
+  A typo is still caught: `labesl` is not a declared param, so it fails compilation.
 - **`callable`** — a map from the alias a script uses inside `api(alias, ...)` to the `api_call`
   slug it actually names. This is I1's declarative half: a script can only ever reach the api_calls
   it declared here, intersected with what the endpoint that exposes it actually selects
@@ -63,7 +77,13 @@ let item = api("get", #{ "id": "3" });
 ```
 
 - `name` — the alias declared in this script's `callable` map.
-- `args` — a Rhai object map (`#{...}`) of the target api_call's own parameters.
+- `args` — a Rhai object map (`#{...}`) of the target api_call's own parameters. A `()` value for
+  an **optional** param means "omitted" — the key is dropped before validation, so the param's
+  `default` (if any) applies and nothing is sent for it. That lets a script forward its own
+  possibly-omitted params, or fields copied from an upstream response, without a "drop unit
+  values" pass first: `api("update", #{ id: id, labels: labels })`. A `()` for a **required**
+  param is still an `args` error, and so is any key the api_call doesn't declare. The same holds
+  for every element of `api_many`'s list and for `api_try`.
 - Returns the api_call's projected value directly on success.
 - **Throws a catchable exception** (`try`/`catch`-able) on any per-item failure. The thrown value
   is the [error object](#the-per-item-result-shape) itself — a map with at least `kind`,

@@ -42,7 +42,7 @@ use rhai::{Dynamic, Scope};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::model::{ScriptDef, Slug};
+use crate::model::{Param, ScriptDef, Slug};
 use crate::resolve::EndpointPlan;
 use crate::runtime::budget::BudgetMeter;
 use crate::runtime::dispatch::DispatchContext;
@@ -79,8 +79,8 @@ pub async fn run_script(
     script: &ScriptDef,
     args: Value,
 ) -> ScriptRun {
-    let bound = match schema::bind_args(&script.params, &args) {
-        Ok(bound) => bound,
+    let scope_vars = match scope_args(&script.params, &args) {
+        Ok(scope_vars) => scope_vars,
         Err(e) => {
             return ScriptRun {
                 outcome: Err(RunScriptError::Args(e)),
@@ -88,7 +88,6 @@ pub async fn run_script(
             };
         }
     };
-    let scope_vars: Vec<(String, Value)> = bound.into_iter().collect();
 
     let (tx, rx) = mpsc::unbounded_channel::<bridge::BindingCall>();
     let deadline = wall_clock_deadline(meter);
@@ -113,6 +112,22 @@ pub async fn run_script(
         ))),
     };
     ScriptRun { outcome, calls }
+}
+
+/// Binds `args` against the script's own params, then gives **every** declared param a value:
+/// one the caller omitted with no `default` is bound as `null`, i.e. `()` once in scope. Strict
+/// variables resolve names at compile time, so leaving it unbound would make every reference to
+/// it a compile error — even inside an `is_def_var` guard — and a script could never tell
+/// "omitted" apart from an explicit sentinel value.
+fn scope_args(
+    params: &[Param],
+    args: &Value,
+) -> Result<Vec<(String, Value)>, schema::ValidationError> {
+    let mut bound = schema::bind_args(params, args)?;
+    for p in params {
+        bound.entry(p.name.clone()).or_insert(Value::Null);
+    }
+    Ok(bound.into_iter().collect())
 }
 
 /// The whole synchronous half, run entirely inside `spawn_blocking`: build the engine, bind the
@@ -161,5 +176,50 @@ fn wall_clock_deadline(meter: &BudgetMeter) -> Option<Instant> {
         // Already expired: an instant in the past trips `on_progress` on the very first
         // operation the engine performs.
         Err(_) => Some(Instant::now()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{ParamLocation, ParamType};
+    use serde_json::json;
+
+    fn local(name: &str, required: bool, default: Option<Value>) -> Param {
+        Param {
+            name: name.to_owned(),
+            location: ParamLocation::Local,
+            ty: ParamType::String,
+            required,
+            default,
+            fixed: None,
+            enum_values: None,
+            description: None,
+            position: 0,
+        }
+    }
+
+    #[test]
+    fn an_omitted_optional_param_without_default_is_bound_as_null() {
+        let params = [
+            local("given", false, None),
+            local("omitted", false, None),
+            local("defaulted", false, Some(json!("d"))),
+        ];
+        let vars = scope_args(&params, &json!({"given": "g"})).expect("binds");
+        assert_eq!(
+            vars,
+            vec![
+                ("defaulted".to_owned(), json!("d")),
+                ("given".to_owned(), json!("g")),
+                ("omitted".to_owned(), Value::Null),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_missing_required_param_is_still_refused() {
+        let params = [local("must", true, None)];
+        assert!(scope_args(&params, &json!({})).is_err());
     }
 }
