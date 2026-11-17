@@ -105,8 +105,8 @@ async function submit(): Promise<void> {
 
       <DetailSection title="transport">
         <div class="flex flex-col gap-4">
-          <FormField label="base url" required>
-            <input v-model="form.base_url" :class="fieldClass + ' font-mono'" placeholder="https://api.example.com" />
+          <FormField label="base url" required help="A path here is a prefix for every api_call path: /v1 + /items requests /v1/items. No query string or fragment.">
+            <input v-model="form.base_url" :class="fieldClass + ' font-mono'" placeholder="https://api.example.com/v1" />
           </FormField>
           <FormField label="origin allowlist" required help="Every origin a request built from this service may resolve to (I2). Must include the base url's own origin.">
             <StringListEditor v-model="form.origin_allowlist" mono placeholder="https://api.example.com" />

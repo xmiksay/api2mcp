@@ -278,6 +278,16 @@ fn an_encoded_dot_dot_literal_cannot_climb_out_of_the_base_path() {
 }
 
 #[test]
+fn a_backslash_dot_dot_literal_cannot_climb_out_of_the_base_path() {
+    // For a special scheme `Url::parse` reads `\` as `/`, so this literal segment becomes
+    // `items/../../admin` and normalises away — a different route to the same escape.
+    let call = test_call("/items/..\\..\\admin", vec![]);
+    let service = service_at("https://api.example.com/api/v1");
+    let err = bind(&call, &service, &BTreeMap::new()).unwrap_err();
+    assert_eq!(err, BindError::ContainmentViolation);
+}
+
+#[test]
 fn a_dot_dot_value_stays_an_opaque_segment_under_the_base_path() {
     let call = test_call("/items/{id}", vec![plain_param("id", 0)]);
     let service = service_at("https://api.example.com/api/v1");
