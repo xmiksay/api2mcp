@@ -66,7 +66,7 @@ fast and the integration suite small, and it is worth defending against convenie
 | `secret` | `Secret`: no `Debug`/`Display`/`Serialize`, one `pub(crate)` exit into a sensitive `HeaderValue`. |
 | `project` | Declarative JSONPath projection. |
 | `resolve` | Rows → validated `EndpointPlan`. The invariant chokepoint. |
-| `runtime` | Budgets, dispatch, fan-out, partial failure, the audit record. |
+| `runtime` | Budgets, dispatch, fan-out, partial failure, the tagged `{kind, message, status}` error object (`error_object`) every failed call is described by, the audit record. |
 | `script` | Rhai: sandboxed engine, the `api`/`api_many`/`api_try` bindings, the sync/async bridge, the date/JSON/YAML/regex/text standard library. See [`docs/scripting.md`](scripting.md) for the full script-callable reference. |
 | `store` | Per-aggregate façades over the database. |
 | `entity`, `migration` | SeaORM entities and in-crate migrations. |

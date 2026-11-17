@@ -80,7 +80,7 @@ fn send_batch(
 
     match wait.blocking_recv() {
         Ok(BridgeReply::Entries(entries)) => Ok(entries),
-        Ok(BridgeReply::Refused(msg)) => Err(runtime_err(ctx, &msg)),
+        Ok(BridgeReply::Refused(error)) => Err(throw_error_object(ctx, &error)),
         // The one class of error a script's own `try`/`catch` cannot swallow — see
         // `super::bridge`'s docs for the two paths that produce this.
         Ok(BridgeReply::Terminated(msg)) => Err(Box::new(EvalAltResult::ErrorTerminated(
@@ -153,21 +153,36 @@ fn first_entry(
     Ok(entries.remove(0))
 }
 
-/// `api`'s own error idiom: throw a catchable exception carrying the per-item error message. This
-/// is the one function of the three that *does* throw on a per-item failure — `api_try`/
-/// `api_many` never do, by design (see their own doc comments).
+/// `api`'s own error idiom: throw a catchable exception whose value is the per-item error
+/// **object** (`#{kind, message, status, ...}`), so `catch (e)` can branch on `e.kind` /
+/// `e.status` exactly like an `api_try` caller branches on `r.error`. This is the one function
+/// of the three that *does* throw on a per-item failure — `api_try`/`api_many` never do, by
+/// design (see their own doc comments).
 fn entry_to_value(ctx: &NativeCallContext, entry: Value) -> Result<Dynamic, Box<EvalAltResult>> {
     let ok = entry.get("ok").and_then(Value::as_bool).unwrap_or(false);
     if ok {
         let value = entry.get("value").cloned().unwrap_or(Value::Null);
         marshal::to_dynamic(&value).map_err(|e| runtime_err(ctx, &e.to_string()))
     } else {
-        let message = entry
-            .get("error")
-            .and_then(Value::as_str)
-            .unwrap_or("api call failed")
-            .to_owned();
-        Err(runtime_err(ctx, &message))
+        let error = entry.get("error").cloned().unwrap_or_else(|| {
+            crate::runtime::error_object::refusal("internal", "api call failed")
+        });
+        Err(throw_error_object(ctx, &error))
+    }
+}
+
+/// A catchable exception carrying `error` as a Rhai map. Falls back to the object's `message`
+/// (a plain string throw) only if the object somehow cannot be marshalled.
+fn throw_error_object(ctx: &NativeCallContext, error: &Value) -> Box<EvalAltResult> {
+    match marshal::to_dynamic(error) {
+        Ok(value) => Box::new(EvalAltResult::ErrorRuntime(value, ctx.call_position())),
+        Err(_) => runtime_err(
+            ctx,
+            error
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("api call failed"),
+        ),
     }
 }
 

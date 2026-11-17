@@ -128,5 +128,5 @@ pub async fn run(
         serde_json::json!({}),
     )
     .await
-    .map(|run| run.value)
+    .outcome
 }

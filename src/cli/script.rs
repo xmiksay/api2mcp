@@ -27,8 +27,8 @@ use super::call::{self, CALLER_ID, MAX_REDIRECTS};
 
 /// One script run, ready for a CLI to print: the recorded run's id and status, the returned
 /// value (on success), the per-call breakdown the script's own `api()`/`api_many()` calls made
-/// (in input order — empty when the script never got far enough to make any, or failed before
-/// any completed), and — on failure — the [`RunScriptError`] itself, so a caller can tell a bad
+/// (in input order, kept on failure too — empty only when the script never got far enough to
+/// make any), and — on failure — the [`RunScriptError`] itself, so a caller can tell a bad
 /// argument apart from a script that ran and threw.
 #[derive(Debug)]
 pub struct ScriptOutcome {
@@ -99,12 +99,10 @@ pub async fn execute(
     )
     .await;
 
-    // A caller-argument or in-script failure never produced a `ScriptRun` — and therefore no
-    // per-call breakdown to persist or print either (`script::run_script`'s own doc: the calls a
-    // failed script made before failing aren't surfaced through its return type).
-    let (status, value, calls, error) = match script_result {
-        Ok(run) => (RunStatus::Ok, Some(run.value), run.calls, None),
-        Err(e) => (RunStatus::Error, None, Vec::new(), Some(e)),
+    let calls = script_result.calls;
+    let (status, value, error) = match script_result.outcome {
+        Ok(value) => (RunStatus::Ok, Some(value), None),
+        Err(e) => (RunStatus::Error, None, Some(e)),
     };
 
     let request_id = Uuid::new_v4().to_string();

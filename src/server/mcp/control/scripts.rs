@@ -99,8 +99,10 @@ pub(super) fn descriptors() -> Vec<Value> {
             "description": "Run a script for real, through a named endpoint that exposes it, \
                 and return its result plus every upstream call it made along the way (raw \
                 response bodies included) or, on failure, a structured error with line/column \
-                and a source snippet when the engine has one. Use this before considering any \
-                script definition done.",
+                and a source snippet when the engine has one. A failed call carries the same \
+                {kind, message, status} error object the script saw — also for a call refused \
+                before any request (bad arguments, call budget). Use this before considering \
+                any script definition done.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

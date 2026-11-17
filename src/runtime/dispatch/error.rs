@@ -53,8 +53,8 @@ pub enum DispatchError {
     Bind(#[from] crate::http::BindError),
     #[error("sending request: {0}")]
     Send(#[from] PaginateError),
-    #[error("building the upstream client: {0}")]
-    Client(String),
+    #[error("building the upstream client: {message}")]
+    Client { message: String },
     #[error("upstream returned {status} {reason}: {detail}")]
     HttpStatus {
         status: u16,
