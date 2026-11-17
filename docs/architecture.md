@@ -162,9 +162,11 @@ secret).
 I4 forbids a credential reaching a model-visible surface, not persistence, and a stored value is
 write-only from every surface: the store reads it back only as a `secret::Secret` (no `Display`,
 `Serialize` or `Deref`; its only exits are a sensitive outgoing header and its own column), the
-`/api/auth_providers` reads return just `has_stored_credential`, the control-plane MCP tools
-cannot see auth providers at all, a pack carries no auth providers at all, and a run's definition
-snapshot holds none either. `script_api_calls` is I1's declarative half.
+`/api/auth_providers` reads return just `has_stored_credential`, no control-plane MCP tool can
+read, create or modify an auth provider or any credential (`endpoint.list`/`endpoint.get` expose
+only the slugs of the providers an endpoint is scoped to, and an `endpoint.plan` error can name a
+provider slug and its `bound_origin` — never a credential), a pack carries no auth providers at
+all, and a run's definition snapshot holds none either. `script_api_calls` is I1's declarative half.
 
 List-valued columns (`origin_allowlist`, `scopes`, `redirect_uris`) are **`JSONB`, not `TEXT[]`**.
 SeaORM's Postgres array support sits behind a feature flag, and the schema is already JSONB-heavy

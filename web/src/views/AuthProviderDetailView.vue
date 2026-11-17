@@ -88,8 +88,8 @@ async function remove(): Promise<void> {
         this database, and never reaches this screen (I4).
       </p>
       <p v-else class="mt-3 text-xs text-ink-faint">
-        The credential is stored on this provider and is write-only — no read, tool or pack ever
-        returns it, including this screen (I4).
+        The credential is stored on this provider once set, and is write-only — no read, tool or
+        pack ever returns it, including this screen (I4).
       </p>
     </DetailSection>
   </div>

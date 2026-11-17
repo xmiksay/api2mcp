@@ -60,8 +60,9 @@ source: `credential_env_key` (a variable the server reads at send time) or `cred
 credential itself, in **plaintext**, for the per-owner case — each owner needs their own token for
 the same upstream, which a process-wide variable cannot express). The accepted trade is that a
 database dump carries every stored credential. I4 is unaffected: it forbids a credential reaching
-a model-visible surface, not persistence — the API returns only `has_stored_credential`, and the
-MCP control plane cannot see auth providers at all.
+a model-visible surface, not persistence — the API returns only `has_stored_credential`, and no
+MCP control-plane tool can read, create or modify an auth provider or any credential (endpoint
+views expose only the slugs of the providers an endpoint is scoped to).
 
 **A pack carries no auth providers at all** — not the definitions, and not even a reference to one
 from an api_call (`PackApiCall` has no `auth_provider` field; `Pack` has no `auth_providers` map,
