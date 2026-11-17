@@ -207,7 +207,9 @@ fn assemble_url(service: &Service, path: &str, query: &str) -> Result<url::Url, 
         assembled.push_str(query);
     }
 
-    let parsed = url::Url::parse(&assembled).map_err(|e| BindError::UrlParse(e.to_string()))?;
+    let parsed = url::Url::parse(&assembled).map_err(|e| BindError::UrlParse {
+        message: e.to_string(),
+    })?;
 
     // `Url::parse` normalises `/a/../b` (and its percent-encoded `%2e%2e` spelling) to `/b`, so
     // comparing the re-parsed path back against the path we intended is what catches that case —

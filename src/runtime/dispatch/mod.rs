@@ -265,7 +265,8 @@ fn http_status_error(page: &CallResponse) -> DispatchError {
     let body = String::from_utf8_lossy(&page.body);
     let mut detail = crate::http::redact_message(body.trim());
     if detail.len() > DETAIL_CAP {
-        detail.truncate(DETAIL_CAP);
+        // `truncate` panics off a char boundary, and the body is arbitrary upstream bytes.
+        detail.truncate(detail.floor_char_boundary(DETAIL_CAP));
         detail.push('\u{2026}');
     }
     DispatchError::HttpStatus {

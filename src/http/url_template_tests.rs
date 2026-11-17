@@ -59,7 +59,7 @@ fn attack_table() {
 fn rejects_template_not_starting_with_slash() {
     assert!(matches!(
         UrlTemplate::parse("users/{id}"),
-        Err(TemplateError::NotAbsolute(_))
+        Err(TemplateError::NotAbsolute { .. })
     ));
 }
 
@@ -67,7 +67,7 @@ fn rejects_template_not_starting_with_slash() {
 fn rejects_template_starting_with_double_slash() {
     assert!(matches!(
         UrlTemplate::parse("//evil.example.com/x"),
-        Err(TemplateError::DoubleSlashStart(_))
+        Err(TemplateError::DoubleSlashStart { .. })
     ));
 }
 
@@ -75,7 +75,7 @@ fn rejects_template_starting_with_double_slash() {
 fn rejects_query_in_template() {
     assert!(matches!(
         UrlTemplate::parse("/search?q={q}"),
-        Err(TemplateError::ContainsQueryOrFragment(_))
+        Err(TemplateError::ContainsQueryOrFragment { .. })
     ));
 }
 
@@ -83,7 +83,7 @@ fn rejects_query_in_template() {
 fn rejects_fragment_in_template() {
     assert!(matches!(
         UrlTemplate::parse("/page#{frag}"),
-        Err(TemplateError::ContainsQueryOrFragment(_))
+        Err(TemplateError::ContainsQueryOrFragment { .. })
     ));
 }
 
@@ -91,7 +91,7 @@ fn rejects_fragment_in_template() {
 fn rejects_scheme_separator_in_template() {
     assert!(matches!(
         UrlTemplate::parse("/redirect/http://evil"),
-        Err(TemplateError::ContainsSchemeSeparator(_))
+        Err(TemplateError::ContainsSchemeSeparator { .. })
     ));
 }
 
@@ -99,7 +99,7 @@ fn rejects_scheme_separator_in_template() {
 fn rejects_mixed_literal_and_placeholder_prefix() {
     assert!(matches!(
         UrlTemplate::parse("/pre{x}"),
-        Err(TemplateError::MixedSegment(_))
+        Err(TemplateError::MixedSegment { .. })
     ));
 }
 
@@ -107,7 +107,7 @@ fn rejects_mixed_literal_and_placeholder_prefix() {
 fn rejects_two_placeholders_in_one_segment() {
     assert!(matches!(
         UrlTemplate::parse("/{a}{b}"),
-        Err(TemplateError::MixedSegment(_))
+        Err(TemplateError::MixedSegment { .. })
     ));
 }
 
@@ -115,7 +115,7 @@ fn rejects_two_placeholders_in_one_segment() {
 fn rejects_placeholder_with_trailing_literal() {
     assert!(matches!(
         UrlTemplate::parse("/{x}post"),
-        Err(TemplateError::MixedSegment(_))
+        Err(TemplateError::MixedSegment { .. })
     ));
 }
 
@@ -123,7 +123,7 @@ fn rejects_placeholder_with_trailing_literal() {
 fn rejects_empty_placeholder_name() {
     assert!(matches!(
         UrlTemplate::parse("/{}"),
-        Err(TemplateError::MixedSegment(_))
+        Err(TemplateError::MixedSegment { .. })
     ));
 }
 
@@ -131,7 +131,7 @@ fn rejects_empty_placeholder_name() {
 fn rejects_dot_segment() {
     assert!(matches!(
         UrlTemplate::parse("/a/./b"),
-        Err(TemplateError::DotSegment(_))
+        Err(TemplateError::DotSegment { .. })
     ));
 }
 
@@ -139,7 +139,7 @@ fn rejects_dot_segment() {
 fn rejects_dot_dot_segment() {
     assert!(matches!(
         UrlTemplate::parse("/a/../b"),
-        Err(TemplateError::DotSegment(_))
+        Err(TemplateError::DotSegment { .. })
     ));
 }
 
@@ -163,7 +163,7 @@ fn rejects_trailing_slash_as_an_empty_segment() {
 fn rejects_duplicate_placeholder() {
     assert!(matches!(
         UrlTemplate::parse("/{id}/nested/{id}"),
-        Err(TemplateError::DuplicatePlaceholder(_))
+        Err(TemplateError::DuplicatePlaceholder { .. })
     ));
 }
 
@@ -171,7 +171,7 @@ fn rejects_duplicate_placeholder() {
 fn rejects_malformed_percent_encoding() {
     assert!(matches!(
         UrlTemplate::parse("/a%2gb"),
-        Err(TemplateError::MalformedPercentEncoding(_))
+        Err(TemplateError::MalformedPercentEncoding { .. })
     ));
 }
 
@@ -179,7 +179,7 @@ fn rejects_malformed_percent_encoding() {
 fn rejects_percent_at_end_of_segment() {
     assert!(matches!(
         UrlTemplate::parse("/a%2"),
-        Err(TemplateError::MalformedPercentEncoding(_))
+        Err(TemplateError::MalformedPercentEncoding { .. })
     ));
 }
 
@@ -193,7 +193,7 @@ fn missing_value_is_an_error() {
     let t = single_placeholder_template();
     assert!(matches!(
         t.render(&BTreeMap::new()),
-        Err(TemplateError::MissingValue(_))
+        Err(TemplateError::MissingValue { .. })
     ));
 }
 

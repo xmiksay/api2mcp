@@ -18,7 +18,7 @@ use api2mcp::model::{
     ScriptDef, Service, Slug, Tag, TagExpr,
 };
 
-use api_support::{Harness, admin, setup};
+use api_support::{Harness, admin, bearer, setup};
 use fixture::{Behavior, Fixture};
 
 fn slug(s: &str) -> Slug {
@@ -255,6 +255,76 @@ async fn an_uncaught_api_error_keeps_its_call_and_names_the_kind() -> Result<()>
     assert_eq!(calls.len(), 1, "body: {body:?}");
     assert_eq!(calls[0]["status_code"], json!(404));
     assert_eq!(calls[0]["error"]["status"], json!(404));
+
+    h.db.teardown().await
+}
+
+/// The same failure through a real MCP `tools/call` (`Executor::run_tool`): the failed script's
+/// calls must still be persisted — a `run_calls` row for the request that went out, and the
+/// typed error in the run's `errors[]`.
+#[tokio::test]
+async fn a_failed_script_over_mcp_still_records_its_calls() -> Result<()> {
+    let Some(h) = setup().await? else {
+        return Ok(());
+    };
+    let fixture = Fixture::start().await;
+    fixture.set("/items/1", Behavior::Status(404));
+    seed(
+        &h,
+        &fixture,
+        r#"api("get", #{ "id": "1" })"#,
+        Budgets::default(),
+    )
+    .await?;
+    let token = h
+        .stores
+        .service_token()
+        .mint(
+            h.admin_id,
+            "issue-5".to_owned(),
+            None,
+            BTreeSet::new(),
+            false,
+        )
+        .await?;
+
+    let (status, resp) = bearer(
+        &h,
+        Method::POST,
+        "/mcp/ep",
+        &token.plaintext,
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "probe", "arguments": {}},
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "resp: {resp:?}");
+    assert_eq!(resp["result"]["isError"], json!(true), "resp: {resp:?}");
+
+    let runs = h
+        .stores
+        .run()
+        .list_for_endpoint(h.admin_id, &slug("ep"), 10)
+        .await?;
+    assert_eq!(runs.len(), 1);
+    let (detail, calls) = h
+        .stores
+        .run()
+        .get(h.admin_id, runs[0].id)
+        .await?
+        .expect("run row exists");
+    assert_eq!(
+        calls.len(),
+        1,
+        "the 404 request is kept despite the failure"
+    );
+    assert_eq!(calls[0].status_code, Some(404));
+    let errors = detail.errors.as_ref().expect("errors present");
+    assert_eq!(errors[0]["error"]["kind"], json!("http_status"));
+    assert_eq!(errors[0]["error"]["status"], json!(404));
 
     h.db.teardown().await
 }
