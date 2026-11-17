@@ -79,5 +79,9 @@ fn budget(axis: BudgetAxis, attempted: bool, status: Option<u16>) -> Value {
 }
 
 #[cfg(test)]
+#[path = "error_object_leaves.rs"]
+mod leaves;
+
+#[cfg(test)]
 #[path = "error_object_tests.rs"]
 mod tests;
