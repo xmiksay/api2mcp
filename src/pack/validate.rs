@@ -109,6 +109,18 @@ fn validate_service(errors: &mut Vec<ValidationError>, slug: &str, svc: &PackSer
             });
         }
     }
+    // `http::bind` prepends base_url's path to every api_call but never inherits its query or
+    // fragment, so accepting one here would only store something that silently has no effect.
+    if let Some(base_url) = &base_url
+        && (base_url.query().is_some() || base_url.fragment().is_some())
+    {
+        errors.push(ValidationError::Service {
+            slug: slug.to_owned(),
+            message: "base_url must not carry a query string or fragment; put fixed query \
+                      parameters in each api_call's query_fixed"
+                .to_owned(),
+        });
+    }
     // Design correction #7: a service's own origin must be a member of its allowlist, or the
     // allowlist is trivially inconsistent with what it's supposed to bound. Compared as parsed
     // `Origin`s, not raw strings — "https://x" and "https://x:443" name the same origin.
@@ -180,6 +192,37 @@ mod tests {
     #[test]
     fn empty_pack_is_valid() {
         assert!(validate(&empty_pack()).is_ok());
+    }
+
+    #[test]
+    fn base_url_with_a_path_is_accepted() {
+        let mut pack = empty_pack();
+        let mut svc = service();
+        svc.base_url = "https://svc.example.com/api/v1".to_owned();
+        pack.services.insert("svc".to_owned(), svc);
+        assert!(validate(&pack).is_ok());
+    }
+
+    #[test]
+    fn base_url_with_a_query_or_fragment_is_rejected() {
+        for base_url in [
+            "https://svc.example.com/api?key=1",
+            "https://svc.example.com/api?",
+            "https://svc.example.com/api#top",
+        ] {
+            let mut pack = empty_pack();
+            let mut svc = service();
+            svc.base_url = base_url.to_owned();
+            pack.services.insert("svc".to_owned(), svc);
+            let errors = validate(&pack).unwrap_err();
+            assert!(
+                errors.iter().any(|e| matches!(
+                    e,
+                    ValidationError::Service { message, .. } if message.contains("query string")
+                )),
+                "{base_url}: {errors:?}"
+            );
+        }
     }
 
     #[test]

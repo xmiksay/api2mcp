@@ -34,9 +34,10 @@ fn pack_api_call_schema() -> Value {
             },
             "path_template": {
                 "type": "string",
-                "description": "URL path, relative to the service's base_url. \"{name}\" \
-                    placeholders bind to this api_call's own `path`-location params, e.g. \
-                    \"/items/{id}\"."
+                "description": "URL path, appended to the service's base_url path (base_url \
+                    \"https://host/api/v1\" + \"/items/{id}\" requests \
+                    \"https://host/api/v1/items/{id}\"). \"{name}\" placeholders bind to this \
+                    api_call's own `path`-location params."
             },
             "query_fixed": {
                 "type": "object",

@@ -85,4 +85,28 @@ proptest! {
             prop_assert_eq!(bound_origin, base_origin);
         }
     }
+
+    /// The same property under a base path: the bound URL keeps the `/api/v1` prefix and gains
+    /// exactly the template's two segments beneath it.
+    #[test]
+    fn bind_never_escapes_the_base_path(value in attack_biased_string()) {
+        let service = Service {
+            base_url: url::Url::parse("https://api.example.com/api/v1/").expect("valid url"),
+            ..service()
+        };
+        let call = call();
+        let mut args = BTreeMap::new();
+        args.insert("id".to_owned(), Value::String(value));
+
+        if let Ok(bound) = bind(&call, &service, &args) {
+            let segments: Vec<&str> = bound
+                .url
+                .path_segments()
+                .map(|segments| segments.collect())
+                .unwrap_or_default();
+            prop_assert_eq!(segments.len(), 4);
+            prop_assert_eq!(&segments[..3], &["api", "v1", "items"][..]);
+            prop_assert_eq!(bound.url.host_str(), Some("api.example.com"));
+        }
+    }
 }

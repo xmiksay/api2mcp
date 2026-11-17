@@ -68,11 +68,14 @@ pub enum BindError {
     #[error("service base_url has no host")]
     NoHost,
 
+    #[error("service base_url carries a query string or fragment, which no request inherits")]
+    BaseUrlHasQueryOrFragment,
+
     #[error("assembled URL failed to parse: {0}")]
     UrlParse(String),
 
     #[error(
-        "assembled request would not stay within the service's origin (I3 containment check failed)"
+        "assembled request would not stay within the service's origin and base path (I3 containment check failed)"
     )]
     ContainmentViolation,
 }

@@ -127,7 +127,7 @@ Five definition entities, each independently owned, plus identity, tokens and au
 
 | Entity | Holds |
 |---|---|
-| `service` | Base URL, origin allowlist, rate limit, default headers, timeouts, concurrency. The thing that changes when a pack is shared. |
+| `service` | Base URL, origin allowlist, rate limit, default headers, timeouts, concurrency. The thing that changes when a pack is shared. A path on the base URL (`https://host/api/v1`) is a prefix every api_call's `path_template` is appended to; a query string or fragment is rejected at write time. |
 | `auth_provider` | Kind (bearer / api key / OAuth), the credential source — either the env **key name** or the value itself, held on the row for the per-owner case — declared scopes, and the origin it is bound to. `service_id` is `UNIQUE`: a service has at most one, and every api_call on it uses it — an api_call carries no auth reference of its own. |
 | `api_call` | One operation: method, path template, typed params, projection, read/write class, idempotency, tags. |
 | `script` | A Rhai composition, its declared api_calls, its budgets. |
@@ -176,6 +176,15 @@ fan-out, never the completion index — invariant I7 made durable.
 
 The seven invariants and the exact function enforcing each are in the crate-level doc comment in
 `src/lib.rs`. Read it before touching `http/`, `resolve/`, `runtime/` or `script/`.
+
+**I3's containment boundary is the service's base path, not just its origin.** `http::bind`
+prepends `base_url`'s path to the rendered `path_template` (exactly one `/` at the join; a bare or
+`/` base path changes nothing), builds the URL as a string, re-parses it, and requires the parsed
+path to equal the intended one and to start with the base path. `Url::parse` normalises a
+dot-segment — including the percent-encoded `%2e%2e` a template literal may legally contain — so
+any attempt to climb out of `/api/v1` shows up as a mismatch and fails the call. A `base_url` with a
+query or fragment is refused by `pack::validate` at write time and by `bind` at call time, rather
+than silently dropped.
 
 **I7 is no longer absolute.** Ordering and budget attribution are unconditionally deterministic —
 input-order fan-out assembly, whole-batch call reservation, index-order byte commit — and that half
