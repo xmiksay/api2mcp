@@ -71,7 +71,7 @@ fast and the integration suite small, and it is worth defending against convenie
 | `store` | Per-aggregate façades over the database. |
 | `entity`, `migration` | SeaORM entities and in-crate migrations. |
 | `pack` | Portable YAML export/import — carries no auth providers at all (an api_call names none of its own, and a pack has no `auth_providers` map either). |
-| `server` | MCP data plane, OAuth 2.1 AS, the read-write admin JSON API (CRUD over every definition plus `POST /api/{api_calls,scripts}/{slug}/test`, `GET /api/endpoints/{slug}/plan`, `GET /api/endpoints/{slug}/pack`, `POST /api/packs/import`), embedded SPA. |
+| `server` | MCP data plane, OAuth 2.1 AS, the read-write admin JSON API (CRUD over every definition plus `POST /api/{api_calls,scripts}/{slug}/test` (raw upstream bodies only with `include_raw: true`, see `server::api::test_run`), `GET /api/endpoints/{slug}/plan`, `GET /api/endpoints/{slug}/pack`, `POST /api/packs/import`), embedded SPA. |
 | `cli` | Local-process entry points, including everything an agent must never be able to do. |
 
 ## Auth model

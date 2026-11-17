@@ -169,6 +169,17 @@ pub(super) fn tags_schema() -> Value {
     })
 }
 
+/// The `include_raw` flag shared by `api_call.test` and `script.test`.
+pub(super) fn include_raw_schema() -> Value {
+    json!({
+        "type": "boolean",
+        "default": false,
+        "description": "Include each call's raw upstream response body as `raw`. Off by \
+            default: raw bodies can be megabytes for a small result. Each call's `status_code` \
+            and `response_bytes` are returned either way."
+    })
+}
+
 pub(super) fn slug_schema(what: &str) -> Value {
     json!({
         "type": "string",

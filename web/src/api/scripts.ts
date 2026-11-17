@@ -13,6 +13,6 @@ export const scriptsApi = {
     api.put(`/api/scripts/${encodeURIComponent(slug)}`, def),
   remove: (slug: string): Promise<void> => api.delete(`/api/scripts/${encodeURIComponent(slug)}`),
   // Seam for the next agent's test panel.
-  test: (slug: string, endpoint: string, args: unknown): Promise<ScriptTestResult> =>
-    api.post(`/api/scripts/${encodeURIComponent(slug)}/test`, { endpoint, args }),
+  test: (slug: string, endpoint: string, args: unknown, includeRaw = false): Promise<ScriptTestResult> =>
+    api.post(`/api/scripts/${encodeURIComponent(slug)}/test`, { endpoint, args, include_raw: includeRaw }),
 };

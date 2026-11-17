@@ -181,6 +181,8 @@ async fn remove(
 struct TestBody {
     args: Value,
     endpoint: String,
+    #[serde(default)]
+    include_raw: bool,
 }
 
 async fn test(
@@ -191,6 +193,14 @@ async fn test(
 ) -> Result<Json<ScriptTestResult>, ApiError> {
     let script_slug = parse_slug(&slug).map_err(ApiError::BadRequest)?;
     let endpoint_slug = parse_slug(&body.endpoint).map_err(ApiError::BadRequest)?;
-    let result = run_script_test(&state, &endpoint_slug, &script_slug, body.args, &caller).await?;
+    let result = run_script_test(
+        &state,
+        &endpoint_slug,
+        &script_slug,
+        body.args,
+        body.include_raw,
+        &caller,
+    )
+    .await?;
     Ok(Json(result))
 }

@@ -13,7 +13,9 @@ use crate::server::identity::{Caller, CallerKind};
 use crate::server::state::AppState;
 
 use super::ToolOutcome;
-use super::schema::{budgets_schema, params_array_schema, slug_schema, tags_schema, with_slug};
+use super::schema::{
+    budgets_schema, include_raw_schema, params_array_schema, slug_schema, tags_schema, with_slug,
+};
 use super::support::{SlugArgs, api_error_outcome, outcome_of, parse_args};
 
 fn pack_script_schema() -> Value {
@@ -53,6 +55,8 @@ struct TestArgs {
     endpoint: String,
     #[serde(default)]
     args: Value,
+    #[serde(default)]
+    include_raw: bool,
 }
 
 pub(super) fn descriptors() -> Vec<Value> {
@@ -97,8 +101,8 @@ pub(super) fn descriptors() -> Vec<Value> {
         json!({
             "name": "script.test",
             "description": "Run a script for real, through a named endpoint that exposes it, \
-                and return its result plus every upstream call it made along the way (raw \
-                response bodies included) or, on failure, a structured error with line/column \
+                and return its result plus every upstream call it made along the way (status \
+                code and response size; raw response bodies only with include_raw) or, on failure, a structured error with line/column \
                 and a source snippet when the engine has one. A failed call carries the same \
                 {kind, message, status} error object the script saw — also for a call refused \
                 before any request (bad arguments, call budget). Use this before considering \
@@ -115,7 +119,8 @@ pub(super) fn descriptors() -> Vec<Value> {
                     "args": {
                         "type": "object",
                         "description": "Arguments for the script's own model-visible params."
-                    }
+                    },
+                    "include_raw": include_raw_schema()
                 },
                 "required": ["slug", "endpoint"]
             }
@@ -174,7 +179,16 @@ async fn test(state: &AppState, owner_id: Uuid, a: TestArgs) -> ToolOutcome {
         return ToolOutcome::error(format!("invalid script slug {:?}", a.slug));
     };
     let caller = synthetic_caller(owner_id);
-    match run_script_test(state, &endpoint_slug, &script_slug, a.args, &caller).await {
+    match run_script_test(
+        state,
+        &endpoint_slug,
+        &script_slug,
+        a.args,
+        a.include_raw,
+        &caller,
+    )
+    .await
+    {
         Ok(result) => super::support::ok_value(result),
         Err(err) => api_error_outcome(err),
     }

@@ -6,7 +6,13 @@
 //! the SSRF guard, redaction and the audit record all apply exactly as they do for a real MCP
 //! `tools/call`. Its return value only ever carries the *projected* result, though, so
 //! [`run_api_call_test`] re-reads the run's own persisted `run_calls` row afterwards to recover
-//! the raw upstream response body — see that function's doc.
+//! the upstream status, size and raw response body — see that function's doc.
+//!
+//! Both routes take an `include_raw` flag, default `false`: a script paging through a month of
+//! events can return megabytes of raw bodies for a kilobyte-sized result, more than an MCP client
+//! can usefully show. Off, every `raw` field is *absent* from the JSON (not `null`) while each
+//! call's `status_code`/`response_bytes` stay; on, `raw` is present, `null` only when the run
+//! recorded no body. The persisted run is identical either way — this only shapes the response.
 //!
 //! The script path cannot go through `Executor::run_tool` unmodified: a script failure's line,
 //! column and source snippet ([`ScriptFailure`], `script::errors`) are exactly what
@@ -108,9 +114,13 @@ pub struct ApiCallTestResult {
     /// The value after the api_call's own projection (if any) was applied — what a real MCP
     /// caller would see.
     pub projected: Option<Value>,
+    pub status_code: Option<u16>,
+    pub response_bytes: Option<u64>,
     /// The upstream's own response body for this call, straight from the audit row —
-    /// unprojected, so an author can see exactly what a projection kept or dropped.
-    pub raw: Option<Value>,
+    /// unprojected, so an author can see exactly what a projection kept or dropped. Outer
+    /// `None` (field absent) when `include_raw` was off; see this module's doc.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw: Option<Option<Value>>,
     pub error: Option<String>,
 }
 
@@ -122,6 +132,7 @@ pub async fn run_api_call_test(
     endpoint_slug: &Slug,
     api_call_slug: &Slug,
     args: Value,
+    include_raw: bool,
     caller: &Caller,
 ) -> Result<ApiCallTestResult, ApiError> {
     let plan = resolve_plan(state, caller.id, endpoint_slug).await?;
@@ -145,15 +156,15 @@ pub async fn run_api_call_test(
         .await
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
-    let raw = last_run_call(&state.stores(), caller.id, result.run_id)
-        .await?
-        .and_then(|c| c.response_body);
+    let call = last_run_call(&state.stores(), caller.id, result.run_id).await?;
 
     Ok(ApiCallTestResult {
         run_id: result.run_id,
         status: result.status,
         projected: result.value,
-        raw,
+        status_code: call.as_ref().and_then(|c| c.status_code),
+        response_bytes: call.as_ref().and_then(|c| c.response_bytes),
+        raw: include_raw.then(|| call.and_then(|c| c.response_body)),
         error: result.error,
     })
 }
@@ -174,7 +185,7 @@ async fn last_run_call(
 /// One `api()`/`api_many()`/`api_try()` item the script made. A call refused before any HTTP
 /// request (argument validation, the run's call budget) has no `run_calls` row, so it is listed
 /// from the run's in-memory entries instead — `status_code`/`response_bytes`/`raw` all `None`,
-/// `error` set.
+/// `error` set. `raw` is absent altogether when `include_raw` was off (see this module's doc).
 #[derive(Debug, Serialize)]
 pub struct ScriptCallView {
     pub seq: i32,
@@ -182,7 +193,8 @@ pub struct ScriptCallView {
     pub service_slug: String,
     pub status_code: Option<u16>,
     pub response_bytes: Option<u64>,
-    pub raw: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw: Option<Option<Value>>,
     /// The same tagged `{kind, message, status, ...}` object the script itself saw
     /// (`runtime::error_object`); `None` for a successful call.
     pub error: Option<Value>,
@@ -211,6 +223,7 @@ pub async fn run_script_test(
     endpoint_slug: &Slug,
     script_slug: &Slug,
     args: Value,
+    include_raw: bool,
     caller: &Caller,
 ) -> Result<ScriptTestResult, ApiError> {
     let plan = resolve_plan(state, caller.id, endpoint_slug).await?;
@@ -275,8 +288,11 @@ pub async fn run_script_test(
     .await
     .map_err(ApiError::from_store)?;
 
-    let calls =
+    let mut calls =
         script_call_views(&stores, &plan, script_slug, caller.id, run_id, &run.calls).await?;
+    if !include_raw {
+        strip_raw(&mut calls);
+    }
     let status_view = to_status_view(status);
 
     Ok(match run.outcome {
@@ -337,7 +353,7 @@ async fn script_call_views(
                     service_slug: c.service_slug.as_str().to_owned(),
                     status_code: c.status_code,
                     response_bytes: c.response_bytes,
-                    raw: c.response_body,
+                    raw: Some(c.response_body),
                     error,
                 },
                 None => {
@@ -355,7 +371,7 @@ async fn script_call_views(
                             .unwrap_or_default(),
                         status_code: None,
                         response_bytes: None,
-                        raw: None,
+                        raw: Some(None),
                         error,
                     }
                 }
@@ -363,3 +379,13 @@ async fn script_call_views(
         })
         .collect())
 }
+
+fn strip_raw(calls: &mut [ScriptCallView]) {
+    for call in calls {
+        call.raw = None;
+    }
+}
+
+#[cfg(test)]
+#[path = "test_run_tests.rs"]
+mod tests;

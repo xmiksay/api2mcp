@@ -400,9 +400,12 @@ run` prints this to stderr; `POST /api/scripts/{slug}/test` returns it in the re
 `failure`.
 
 The same response's `calls` lists every `api`/`api_many`/`api_try` item the script made, in input
-order, **even when the script then failed**. Each carries `status_code`, `response_bytes` and the
-redacted `raw` body when a response came back, and `error` (the error object above) when the item
-failed. An item refused before any HTTP request — bad arguments, or the run's `max_calls` budget —
-is listed too, with its `error` and `status_code`/`response_bytes`/`raw` all `null`. (A thrown
+order, **even when the script then failed**. Each carries `status_code` and `response_bytes` when
+a response came back, and `error` (the error object above) when the item failed. The redacted
+`raw` upstream body is **opt-in**: send `"include_raw": true` in the request body (or as the
+`script.test` control-plane tool argument) to get it; by default the field is absent, since a
+script paging through many responses can return megabytes of raw bodies for a small result. An
+item refused before any HTTP request — bad arguments, or the run's `max_calls` budget — is listed
+too, with its `error` set and `status_code`/`response_bytes` (and `raw`, when included) `null`. (A thrown
 `not_declared`/`batch_too_large` is not a call and is not listed; it is the `failure` or the
 caught exception.)

@@ -311,7 +311,10 @@ export interface ApiCallTestResult {
   run_id: string;
   status: RunStatusView;
   projected: unknown | null;
-  raw: unknown | null;
+  status_code: number | null;
+  response_bytes: number | null;
+  /** Absent unless the test was run with `include_raw`; `null` when no body was recorded. */
+  raw?: unknown | null;
   error: string | null;
 }
 
@@ -321,7 +324,8 @@ export interface ScriptCallView {
   service_slug: string;
   status_code: number | null;
   response_bytes: number | null;
-  raw: unknown | null;
+  /** Absent unless the test was run with `include_raw`; `null` when no body was recorded. */
+  raw?: unknown | null;
   /** The tagged error the script saw for this call; set for a call refused before any HTTP request too. */
   error: ScriptCallError | null;
 }
