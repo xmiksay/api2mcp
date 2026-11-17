@@ -1,12 +1,14 @@
 //! Integration tests for how `()` crosses the script boundary in both directions: an optional
 //! script param the caller omitted is bound as `()` (issue #8), and a `()` a script passes to an
-//! optional api_call param means "omitted".
+//! omittable api_call param means "omitted" — for a script only, never a direct caller's `null`.
 
 use api2mcp::model::{Budgets, Param, ParamLocation, ParamType};
+use api2mcp::runtime::dispatch::DispatchError;
+use api2mcp::schema::ValidationError;
 use api2mcp::script::{RunScriptError, ScriptFailureKind};
 
 use crate::fixture::{Behavior, Fixture, harness::slug};
-use crate::support::{plan_with_script, run, script_def};
+use crate::support::{dispatch_direct, plan_with_script, run, script_def};
 
 fn optional_param(name: &str) -> Param {
     Param {
@@ -75,8 +77,44 @@ async fn unit_for_an_optional_api_call_param_is_omitted_from_the_request() {
     let seen = f.seen();
     assert_eq!(seen.len(), 3);
     for req in seen {
-        assert_eq!(req.raw_path_and_query, "/items/1", "q must not be sent");
+        // `limit`'s default is always sent; `q` (no default) must not be.
+        assert_eq!(req.raw_path_and_query, "/items/1?limit=10");
     }
+}
+
+#[tokio::test]
+async fn unit_for_an_optional_api_call_param_with_a_default_sends_the_default() {
+    let f = Fixture::start().await;
+    f.set("/items/1", Behavior::Json(serde_json::json!({"n": 1})));
+    let script_slug = slug("demo-script");
+    let plan = plan_with_script(&f, &script_slug);
+    let script = script_def(r#"api("item", #{id: "1", limit: ()})"#);
+
+    run(&plan, Budgets::default(), &script_slug, &script)
+        .await
+        .expect("() for a defaulted param reads as omission");
+    let seen = f.seen();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].raw_path_and_query, "/items/1?limit=10");
+}
+
+#[tokio::test]
+async fn a_direct_callers_null_for_an_optional_param_is_still_a_type_error() {
+    let f = Fixture::start().await;
+    f.set("/items/1", Behavior::Json(serde_json::json!({"n": 1})));
+    let plan = plan_with_script(&f, &slug("demo-script"));
+
+    let err = dispatch_direct(plan, serde_json::json!({"id": "1", "q": null}))
+        .await
+        .expect_err("only a script's () reads as omission");
+    assert!(
+        matches!(
+            err,
+            DispatchError::Args(ValidationError::WrongType { ref param, .. }) if param == "q"
+        ),
+        "{err:?}"
+    );
+    assert!(f.seen().is_empty(), "a refused call must never dispatch");
 }
 
 #[tokio::test]
