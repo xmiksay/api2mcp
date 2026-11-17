@@ -70,9 +70,17 @@ pub async fn export_endpoint(
         .collect();
     let all_services = stores.service().list(owner_id).await.map_err(store_err)?;
 
+    // `internal_tag_expr`'s selection travels too, so the imported endpoint resolves to the
+    // same plan — including internal api_calls no exported script happens to declare.
     let mut selected_calls: BTreeSet<Slug> = calls_by_slug
         .iter()
-        .filter(|(_, c)| eval_tag_expr(&endpoint.tag_expr, &c.tags))
+        .filter(|(_, c)| {
+            eval_tag_expr(&endpoint.tag_expr, &c.tags)
+                || endpoint
+                    .internal_tag_expr
+                    .as_ref()
+                    .is_some_and(|e| eval_tag_expr(e, &c.tags))
+        })
         .map(|(s, _)| s.clone())
         .collect();
     let mut selected_scripts: BTreeSet<Slug> = scripts_by_slug
@@ -240,6 +248,7 @@ mod tests {
             owner_id,
             slug: slug("ep-export-basic"),
             tag_expr: crate::model::TagExpr::Has(Tag(slug("expose"))),
+            internal_tag_expr: None,
             write_ceiling: Access::Read,
             budgets: crate::model::Budgets::default(),
             instructions: None,

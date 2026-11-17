@@ -134,6 +134,11 @@ export type PackEndpointTarget = { api_call: string } | { script: string };
 
 export interface PackEndpoint {
   tag_expr: string;
+  /**
+   * Selects api_calls this endpoint's scripts may call (via their `callable`) without exposing
+   * them as tools. Absent/null means none.
+   */
+  internal_tag_expr?: string | null;
   write_ceiling: Access;
   budgets: PackBudgets;
   instructions?: string;
@@ -173,6 +178,8 @@ export interface PlanView {
   origins: string[];
   budgets: BudgetsView;
   tools: ToolView[];
+  /** api_calls `internal_tag_expr` selected — script-callable, never tools. */
+  internal_calls: string[];
 }
 
 /** A generated JSON Schema document — rendered, not interpreted, so it stays untyped beyond this. */

@@ -1,7 +1,8 @@
 //! An endpoint is an MCP surface: a tag expression selecting which api_calls/scripts are exposed
-//! as tools, plus a write ceiling and a folded budget. `resolve::build_plan` is what actually
-//! evaluates `tag_expr` against every candidate's tags and enforces `write_ceiling` — this type
-//! only holds the compiled-from-row shape.
+//! as tools, an optional second one selecting script-only api_calls, plus a write ceiling and a
+//! folded budget. `resolve::build_plan` is what actually evaluates both expressions against every
+//! candidate's tags and enforces `write_ceiling` — this type only holds the compiled-from-row
+//! shape.
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -29,6 +30,11 @@ pub struct EndpointDef {
     pub owner_id: Uuid,
     pub slug: Slug,
     pub tag_expr: TagExpr,
+    /// api_calls this selects are reachable from this endpoint's scripts through their
+    /// `callable` allowlist (I1) but are never tools themselves — absent from `tools/list` and
+    /// refused by `tools/call` — even when `tag_expr` also selects them. Scripts are never
+    /// selected by it. Still bounded by `write_ceiling`. `None` selects nothing.
+    pub internal_tag_expr: Option<TagExpr>,
     /// The highest `Access` any api_call/script selected by this endpoint may declare.
     pub write_ceiling: Access,
     pub budgets: Budgets,

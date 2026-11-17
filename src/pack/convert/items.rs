@@ -127,6 +127,7 @@ fn endpoint_target_from_pack(t: &PackEndpointTarget) -> Result<EndpointTarget, C
 pub(crate) fn endpoint_to_pack(e: &EndpointDef) -> PackEndpoint {
     PackEndpoint {
         tag_expr: tag_expr::to_string(&e.tag_expr),
+        internal_tag_expr: e.internal_tag_expr.as_ref().map(tag_expr::to_string),
         write_ceiling: access_to_str(e.write_ceiling).to_owned(),
         budgets: budgets_to_pack(&e.budgets),
         instructions: e.instructions.clone(),
@@ -149,8 +150,15 @@ pub(crate) fn endpoint_from_pack(
     slug: Slug,
     e: &PackEndpoint,
 ) -> Result<EndpointDef, ConvertError> {
-    let tag_expr = tag_expr::parse(&e.tag_expr)
-        .map_err(|err| ConvertError::TagExprParse(e.tag_expr.clone(), err.to_string()))?;
+    let parse = |field: &'static str, s: &str| {
+        tag_expr::parse(s).map_err(|err| ConvertError::TagExprParse(field, err.to_string()))
+    };
+    let tag_expr = parse("tag_expr", &e.tag_expr)?;
+    let internal_tag_expr = e
+        .internal_tag_expr
+        .as_deref()
+        .map(|s| parse("internal_tag_expr", s))
+        .transpose()?;
     let aliases = e
         .aliases
         .iter()
@@ -165,6 +173,7 @@ pub(crate) fn endpoint_from_pack(
         owner_id,
         slug,
         tag_expr,
+        internal_tag_expr,
         write_ceiling: access_from_str(&e.write_ceiling)?,
         budgets: budgets_from_pack(&e.budgets),
         instructions: e.instructions.clone(),

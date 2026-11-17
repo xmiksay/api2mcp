@@ -97,15 +97,9 @@ fn endpoint(
     budgets: Budgets,
 ) -> EndpointDef {
     EndpointDef {
-        owner_id,
-        slug: slug(name),
-        tag_expr: expr,
         write_ceiling,
         budgets,
-        instructions: None,
-        enabled: true,
-        aliases: BTreeMap::new(),
-        auth_providers: BTreeSet::new(),
+        ..common::endpoint_def(owner_id, name, expr)
     }
 }
 

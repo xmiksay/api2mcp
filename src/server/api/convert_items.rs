@@ -124,6 +124,7 @@ fn endpoint_target_from_pack(t: &PackEndpointTarget) -> Result<EndpointTarget, S
 pub fn endpoint_to_pack(e: &EndpointDef) -> PackEndpoint {
     PackEndpoint {
         tag_expr: tag_expr::to_string(&e.tag_expr),
+        internal_tag_expr: e.internal_tag_expr.as_ref().map(tag_expr::to_string),
         write_ceiling: access_to_str(e.write_ceiling).to_owned(),
         budgets: budgets_to_pack(&e.budgets),
         instructions: e.instructions.clone(),
@@ -147,6 +148,12 @@ pub fn endpoint_from_pack(
     e: &PackEndpoint,
 ) -> Result<EndpointDef, String> {
     let tag_expr = tag_expr::parse(&e.tag_expr).map_err(|err| format!("tag_expr: {err}"))?;
+    let internal_tag_expr = e
+        .internal_tag_expr
+        .as_deref()
+        .map(tag_expr::parse)
+        .transpose()
+        .map_err(|err| format!("internal_tag_expr: {err}"))?;
     let aliases = e
         .aliases
         .iter()
@@ -161,6 +168,7 @@ pub fn endpoint_from_pack(
         owner_id,
         slug,
         tag_expr,
+        internal_tag_expr,
         write_ceiling: access_from_str(&e.write_ceiling)?,
         budgets: budgets_from_pack(&e.budgets),
         instructions: e.instructions.clone(),
@@ -227,6 +235,7 @@ mod tests {
             owner_id,
             slug: "ep".parse().unwrap(),
             tag_expr: crate::model::TagExpr::Has(Tag("demo".parse().unwrap())),
+            internal_tag_expr: None,
             write_ceiling: crate::model::Access::Read,
             budgets: crate::model::Budgets::default(),
             instructions: Some("hi".to_owned()),

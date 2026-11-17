@@ -330,16 +330,14 @@ async fn endpoint_round_trips_tag_expr_and_budgets() -> Result<()> {
     let stores = Stores::new(db.conn.clone());
 
     let owner_id = db.create_user().await?;
+    let selection = TagExpr::And(
+        Box::new(TagExpr::Has(api2mcp::model::Tag(slug("read")))),
+        Box::new(TagExpr::Not(Box::new(TagExpr::Has(api2mcp::model::Tag(
+            slug("deprecated"),
+        ))))),
+    );
     let endpoint = EndpointDef {
-        owner_id,
-        slug: slug("demo"),
-        tag_expr: TagExpr::And(
-            Box::new(TagExpr::Has(api2mcp::model::Tag(slug("read")))),
-            Box::new(TagExpr::Not(Box::new(TagExpr::Has(api2mcp::model::Tag(
-                slug("deprecated"),
-            ))))),
-        ),
-        write_ceiling: Access::Read,
+        internal_tag_expr: Some(TagExpr::Has(api2mcp::model::Tag(slug("raw")))),
         budgets: Budgets {
             max_calls: Some(10),
             max_bytes: Some(1_000_000),
@@ -348,9 +346,7 @@ async fn endpoint_round_trips_tag_expr_and_budgets() -> Result<()> {
             max_concurrency: Some(2),
         },
         instructions: Some("demo endpoint".to_owned()),
-        enabled: true,
-        aliases: BTreeMap::new(),
-        auth_providers: BTreeSet::new(),
+        ..common::endpoint_def(owner_id, "demo", selection)
     };
     stores.endpoint().create(&endpoint).await?;
 

@@ -98,6 +98,13 @@ async function submit(): Promise<void> {
             <input v-model="form.tag_expr" :class="fieldClass + ' font-mono'" placeholder="has(demo)" />
           </FormField>
 
+          <FormField
+            label="internal tag expression"
+            help="Optional. api_calls it selects are callable by this endpoint's scripts (through their callable list) but are not exposed as tools. Takes precedence: an api_call it selects is never a tool, even if the tag expression above also selects it. Still bounded by the write ceiling. Leave empty for none."
+          >
+            <input v-model="form.internal_tag_expr" :class="fieldClass + ' font-mono'" placeholder="has(raw)" />
+          </FormField>
+
           <div class="grid grid-cols-2 gap-4">
             <FormField label="write ceiling" required>
               <select v-model="form.write_ceiling" :class="fieldClass">

@@ -220,6 +220,9 @@ pub(crate) struct PlanView {
     /// it shows something no YAML/DB row can, by itself, tell a human.
     origins: Vec<String>,
     tools: Vec<ToolView>,
+    /// api_calls `internal_tag_expr` selected: reachable from this endpoint's scripts,
+    /// never listed or callable as tools.
+    internal_calls: Vec<String>,
 }
 
 /// The real logic behind `plan`, reused by `server::mcp::control::endpoints`'s `endpoint.plan`
@@ -258,6 +261,11 @@ pub(crate) async fn plan_for_owner(
         budgets: budgets_view(&plan.budgets),
         origins: plan.origins.iter().map(|o| o.to_string()).collect(),
         tools,
+        internal_calls: plan
+            .internal_calls()
+            .into_iter()
+            .map(|s| s.as_str().to_owned())
+            .collect(),
     })
 }
 

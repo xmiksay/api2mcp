@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use serde_json_path::JsonPath;
 
 use crate::http::UrlTemplate;
-use crate::model::is_header_param_name_allowed;
+use crate::model::{Tag, eval_tag_expr, is_header_param_name_allowed};
 
 use super::ValidationError;
 use crate::pack::{
@@ -173,14 +173,21 @@ pub(super) fn validate_endpoint(
     slug: &str,
     endpoint: &PackEndpoint,
 ) {
-    if let Err(e) = crate::resolve::tag_expr::parse(&endpoint.tag_expr) {
-        // `TagExprError`'s own `Display` already reads "endpoints.tag_expr {input:?}: ...", so
-        // this doesn't re-wrap it with a second "tag_expr {:?}:" prefix.
-        errors.push(ValidationError::Endpoint {
-            slug: slug.to_owned(),
-            message: e.to_string(),
-        });
-    }
+    let mut parse = |field: &str, expr: &str| {
+        crate::resolve::tag_expr::parse(expr)
+            .map_err(|e| {
+                errors.push(ValidationError::Endpoint {
+                    slug: slug.to_owned(),
+                    message: format!("{field}: {e}"),
+                });
+            })
+            .ok()
+    };
+    parse("tag_expr", &endpoint.tag_expr);
+    let internal = endpoint
+        .internal_tag_expr
+        .as_deref()
+        .and_then(|e| parse("internal_tag_expr", e));
     if endpoint.write_ceiling != "read" && endpoint.write_ceiling != "write" {
         errors.push(ValidationError::Endpoint {
             slug: slug.to_owned(),
@@ -190,7 +197,27 @@ pub(super) fn validate_endpoint(
             ),
         });
     }
-    for target in endpoint.aliases.values() {
+    for (alias, target) in &endpoint.aliases {
+        // Mirrors `resolve::ResolveError::AliasOfInternalCall`, caught here so a write that
+        // would leave the endpoint unresolvable is refused up front.
+        if let (Some(internal), PackEndpointTarget::ApiCall(s)) = (&internal, target)
+            && let Some(call) = pack.api_calls.get(s)
+        {
+            let tags: BTreeSet<Tag> = call
+                .tags
+                .iter()
+                .filter_map(|t| t.parse().ok().map(Tag))
+                .collect();
+            if eval_tag_expr(internal, &tags) {
+                errors.push(ValidationError::Endpoint {
+                    slug: slug.to_owned(),
+                    message: format!(
+                        "alias {alias:?} names api_call {s:?}, which internal_tag_expr selects — \
+                         an internal api_call is never a tool, so it cannot be aliased"
+                    ),
+                });
+            }
+        }
         let missing = match target {
             PackEndpointTarget::ApiCall(s) => !pack.api_calls.contains_key(s),
             PackEndpointTarget::Script(s) => !pack.scripts.contains_key(s),

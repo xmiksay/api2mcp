@@ -13,8 +13,7 @@ use axum::http::{Method, StatusCode};
 use serde_json::json;
 
 use api2mcp::model::{
-    Access, ApiCall, Budgets, EndpointDef, Pagination, Param, ParamLocation, ParamType, Slug, Tag,
-    TagExpr,
+    Access, ApiCall, Pagination, Param, ParamLocation, ParamType, Slug, Tag, TagExpr,
 };
 
 use api_support::{admin, setup};
@@ -89,17 +88,11 @@ async fn an_api_call_on_a_base_url_with_a_path_requests_the_prefixed_path() -> R
         .await?;
     h.stores
         .endpoint()
-        .create(&EndpointDef {
-            owner_id: h.admin_id,
-            slug: slug("ep-prefixed"),
-            tag_expr: TagExpr::Has(tag),
-            write_ceiling: Access::Read,
-            budgets: Budgets::default(),
-            instructions: None,
-            enabled: true,
-            aliases: BTreeMap::new(),
-            auth_providers: BTreeSet::new(),
-        })
+        .create(&common::endpoint_def(
+            h.admin_id,
+            "ep-prefixed",
+            TagExpr::Has(tag),
+        ))
         .await?;
 
     let (status, body) = admin(

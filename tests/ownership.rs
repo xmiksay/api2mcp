@@ -79,17 +79,7 @@ fn api_call(owner_id: Uuid, service_slug: &Slug, name: &str, path_template: &str
 }
 
 fn minimal_endpoint(owner_id: Uuid, name: &str) -> EndpointDef {
-    EndpointDef {
-        owner_id,
-        slug: slug(name),
-        tag_expr: TagExpr::Has(tag("unused")),
-        write_ceiling: Access::Read,
-        budgets: Budgets::default(),
-        instructions: None,
-        enabled: true,
-        aliases: BTreeMap::new(),
-        auth_providers: BTreeSet::new(),
-    }
+    common::endpoint_def(owner_id, name, TagExpr::Has(tag("unused")))
 }
 
 async fn router_for(db: &ScratchDb) -> Router {

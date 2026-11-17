@@ -271,6 +271,17 @@ pub enum PackEndpointTarget {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PackEndpoint {
     pub tag_expr: String,
+    /// Selects api_calls this endpoint's scripts may call (through their own `callable`) that
+    /// are *not* published as tools. Optional so a pack written before it existed still
+    /// imports, and omitted on export when unset so such a pack round-trips byte-identically.
+    /// A blank value reads as `None`: a cleared form field means "no internal selection", not
+    /// an empty expression that fails to parse.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "blank_as_none"
+    )]
+    pub internal_tag_expr: Option<String>,
     #[serde(default = "default_write_ceiling")]
     pub write_ceiling: String,
     #[serde(default)]
@@ -300,6 +311,11 @@ fn default_write_ceiling() -> String {
 
 fn default_true() -> bool {
     true
+}
+
+fn blank_as_none<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    let raw: Option<String> = Option::deserialize(d)?;
+    Ok(raw.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()))
 }
 
 #[cfg(test)]

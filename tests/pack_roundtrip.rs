@@ -19,9 +19,7 @@ use common::ScratchDb;
 use serde_json::json;
 
 use api2mcp::http::{SsrfPolicy, UpstreamPool};
-use api2mcp::model::{
-    Access, ApiCall, Budgets, EndpointDef, Origin, Pagination, Service, Slug, Tag, TagExpr,
-};
+use api2mcp::model::{Access, ApiCall, Origin, Pagination, Service, Slug, Tag, TagExpr};
 use api2mcp::pack::{self, Pack};
 use api2mcp::resolve::build_plan;
 use api2mcp::store::Stores;
@@ -78,17 +76,11 @@ async fn seed_minimal(stores: &Stores, owner_id: Uuid, suffix: &str) -> Result<S
         .api_call()
         .create(&call, &BTreeSet::from([tag("expose")]))
         .await?;
-    let ep = EndpointDef {
+    let ep = common::endpoint_def(
         owner_id,
-        slug: slug(&format!("ep-{suffix}")),
-        tag_expr: TagExpr::Has(tag("expose")),
-        write_ceiling: Access::Read,
-        budgets: Budgets::default(),
-        instructions: None,
-        enabled: true,
-        aliases: BTreeMap::new(),
-        auth_providers: BTreeSet::new(),
-    };
+        &format!("ep-{suffix}"),
+        TagExpr::Has(tag("expose")),
+    );
     stores.endpoint().create(&ep).await?;
     Ok(ep.slug)
 }
@@ -271,17 +263,12 @@ fn validation_reports_multiple_independent_failures_at_once() {
         endpoints: BTreeMap::from([(
             "ep-bad".to_owned(),
             api2mcp::pack::PackEndpoint {
-                tag_expr: "has(".to_owned(), // failure #2: malformed tag_expr
-                write_ceiling: "read".to_owned(),
-                budgets: Default::default(),
-                instructions: None,
-                enabled: true,
                 // failure #3: alias target this pack never declares
                 aliases: BTreeMap::from([(
                     "renamed".to_owned(),
                     api2mcp::pack::PackEndpointTarget::ApiCall("ghost-call".to_owned()),
                 )]),
-                auth_providers: BTreeSet::new(),
+                ..common::pack_endpoint("has(") // failure #2: malformed tag_expr
             },
         )]),
         tags: BTreeSet::from(["orphaned-tag".to_owned()]), // failure #4: tag vocabulary mismatch

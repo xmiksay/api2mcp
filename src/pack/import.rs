@@ -234,6 +234,7 @@ mod tests {
                 "ep-import".to_owned(),
                 PackEndpoint {
                     tag_expr: "has(expose)".to_owned(),
+                    internal_tag_expr: None,
                     write_ceiling: "read".to_owned(),
                     budgets: Default::default(),
                     instructions: None,

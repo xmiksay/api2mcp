@@ -97,6 +97,11 @@ pub enum ResolveError {
     #[error("api_call {api_call:?} has access=write, above this endpoint's read write_ceiling")]
     WriteCeilingViolation { api_call: String },
 
+    #[error(
+        "endpoint_aliases: alias {alias:?} names api_call {api_call:?}, which this endpoint's internal_tag_expr selects — an internal api_call is never a tool, so it cannot be renamed as one"
+    )]
+    AliasOfInternalCall { alias: String, api_call: String },
+
     #[error("tool name {name:?} is claimed by more than one selected api_call/script")]
     DuplicateToolName { name: String },
 
@@ -142,12 +147,24 @@ pub async fn build_plan(
         .await
         .map_err(|e| ResolveError::Store(e.to_string()))?;
 
+    // Internal api_calls join `calls` like any other — so origins (I2), auth binding (I5) and
+    // the write ceiling all cover them — and are only kept out of `tools` below. Internal wins
+    // over `tag_expr`: a call the internal expression selects is never a tool, so a broad
+    // `tag_expr` can't accidentally re-expose a building block (fails closed).
     let mut calls = BTreeMap::new();
+    let mut internal: BTreeSet<Slug> = BTreeSet::new();
     for tagged in &all_api_calls {
-        if !eval_tag_expr(&endpoint.tag_expr, &tagged.tags) {
+        let is_internal = endpoint
+            .internal_tag_expr
+            .as_ref()
+            .is_some_and(|e| eval_tag_expr(e, &tagged.tags));
+        if !is_internal && !eval_tag_expr(&endpoint.tag_expr, &tagged.tags) {
             continue;
         }
         let planned = compile::compile_api_call(stores, owner_id, &tagged.api_call).await?;
+        if is_internal {
+            internal.insert(tagged.api_call.slug.clone());
+        }
         calls.insert(tagged.api_call.slug.clone(), planned);
     }
 
@@ -181,7 +198,13 @@ pub async fn build_plan(
     .await?;
     budgets::assert_write_ceiling(&calls, endpoint.write_ceiling)?;
 
-    let tools = tools::build_tools(&endpoint.aliases, &endpoint.budgets, &calls, &scripts)?;
+    let tools = tools::build_tools(
+        &endpoint.aliases,
+        &endpoint.budgets,
+        &calls,
+        &internal,
+        &scripts,
+    )?;
 
     let digest = digest::compute(
         &endpoint.slug,
@@ -298,6 +321,7 @@ mod tests {
             owner_id,
             slug: "ep-i5-e2e".parse().unwrap(),
             tag_expr: crate::model::TagExpr::Has(Tag("expose".parse().unwrap())),
+            internal_tag_expr: None,
             write_ceiling: crate::model::Access::Read,
             budgets: crate::model::Budgets::default(),
             instructions: None,

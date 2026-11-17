@@ -31,6 +31,15 @@ fn pack_endpoint_schema() -> Value {
                     this endpoint exposes, e.g. \"has(read) and not has(deprecated)\". Grammar: \
                     has(tag) | not EXPR | EXPR and EXPR | EXPR or EXPR | (EXPR)."
             },
+            "internal_tag_expr": {
+                "type": ["string", "null"],
+                "description": "Optional second expression, same grammar, selecting api_calls \
+                    this endpoint's scripts may call (each still only through its own \
+                    `callable`) without exposing them as tools: they never appear in tools/list \
+                    and tools/call refuses them. Still bounded by write_ceiling. Selects no \
+                    scripts. It takes precedence over tag_expr: an api_call it selects is never a \
+                    tool, even if tag_expr also selects it. Omit or null for none."
+            },
             "write_ceiling": {
                 "enum": ["read", "write"],
                 "default": "read",
@@ -90,7 +99,9 @@ pub(super) fn descriptors() -> Vec<Value> {
         json!({
             "name": "endpoint.update",
             "description": "Replace an existing endpoint's definition. Takes effect immediately \
-                for every consumer of /mcp/{slug}.",
+                for every consumer of /mcp/{slug}. This is a full replace, not a patch: any \
+                field you omit (internal_tag_expr included) is reset to its default, so \
+                omitting internal_tag_expr clears it.",
             "inputSchema": create_schema
         }),
         json!({

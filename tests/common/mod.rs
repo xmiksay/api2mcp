@@ -4,8 +4,12 @@
 //! unused item here would otherwise warn per binary that doesn't need it yet.
 #![allow(dead_code)]
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use anyhow::{Context, Result};
 use api2mcp::db;
+use api2mcp::model::{Access, Budgets, EndpointDef, TagExpr};
+use api2mcp::pack::PackEndpoint;
 use sea_orm::{ConnectionTrait, DatabaseConnection, Statement};
 use uuid::Uuid;
 
@@ -120,6 +124,31 @@ impl ScratchDb {
         );
         Ok(())
     }
+}
+
+/// The plainest endpoint selecting `tag_expr`: read ceiling, no budgets, aliases, auth scope or
+/// internal selection. Tests override what they care about with struct-update syntax, so a new
+/// `EndpointDef` field is added here once instead of at every literal.
+pub fn endpoint_def(owner_id: Uuid, slug: &str, tag_expr: TagExpr) -> EndpointDef {
+    EndpointDef {
+        owner_id,
+        slug: slug.parse().expect("valid slug"),
+        tag_expr,
+        internal_tag_expr: None,
+        write_ceiling: Access::Read,
+        budgets: Budgets::default(),
+        instructions: None,
+        enabled: true,
+        aliases: BTreeMap::new(),
+        auth_providers: BTreeSet::new(),
+    }
+}
+
+/// [`endpoint_def`]'s pack-shaped twin, built through serde so every optional field takes the
+/// same default a hand-written pack would get.
+pub fn pack_endpoint(tag_expr: &str) -> PackEndpoint {
+    serde_json::from_value(serde_json::json!({ "tag_expr": tag_expr }))
+        .expect("a bare tag_expr is a complete PackEndpoint")
 }
 
 /// Replace the trailing `/<database>` path of a Postgres URL, keeping the rest

@@ -81,10 +81,13 @@ pub struct EndpointPlan {
     /// tool-name resolution (alias-or-slug) and the uniqueness check.
     pub tools: Vec<PlannedTool>,
 
-    /// The endpoint's own tag-expression selection of api_calls, keyed by their own slug —
-    /// not by tool name. This is also the full set of api_calls reachable through any
-    /// selected script, since [`Self::callable_by`] is defined as an intersection with this
-    /// map's keys (I1) and can therefore never name an api_call outside it.
+    /// The endpoint's own tag-expression selection of api_calls — `tag_expr`'s plus
+    /// `internal_tag_expr`'s — keyed by their own slug, not by tool name. This is also the
+    /// full set of api_calls reachable through any selected script, since
+    /// [`Self::callable_by`] is defined as an intersection with this map's keys (I1) and can
+    /// therefore never name an api_call outside it. Every entry is covered by I2, I5 and the
+    /// write ceiling; only the ones some [`PlannedTool`] targets are callable directly — see
+    /// [`Self::internal_calls`].
     pub calls: BTreeMap<Slug, PlannedApiCall>,
 
     /// The endpoint's selected scripts, keyed by their own slug.
@@ -118,5 +121,19 @@ impl EndpointPlan {
     /// needs before it can dispatch.
     pub fn tool(&self, name: &str) -> Option<&PlannedTool> {
         self.tools.iter().find(|t| t.name == name)
+    }
+
+    /// The api_calls on [`Self::calls`] that no tool targets — the ones
+    /// `internal_tag_expr` selected, reachable solely through a script's [`Self::callable_by`].
+    pub fn internal_calls(&self) -> BTreeSet<&Slug> {
+        let exposed: BTreeSet<&Slug> = self
+            .tools
+            .iter()
+            .filter_map(|t| match &t.target {
+                ToolTarget::ApiCall(slug) => Some(slug),
+                ToolTarget::Script(_) => None,
+            })
+            .collect();
+        self.calls.keys().filter(|s| !exposed.contains(s)).collect()
     }
 }
