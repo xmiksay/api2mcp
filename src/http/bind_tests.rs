@@ -206,3 +206,96 @@ fn missing_required_path_value_surfaces_as_template_error() {
     let err = bind(&call, &service, &BTreeMap::new()).unwrap_err();
     assert!(matches!(err, BindError::Template(_)));
 }
+
+fn service_at(base_url: &str) -> Service {
+    Service {
+        base_url: url::Url::parse(base_url).expect("valid url"),
+        ..test_service()
+    }
+}
+
+#[test]
+fn base_path_is_prepended_with_exactly_one_slash_at_the_join() {
+    let call = test_call("/items/{id}", vec![plain_param("id", 0)]);
+    let mut args = BTreeMap::new();
+    args.insert("id".to_owned(), json!("42"));
+
+    for base in [
+        "https://api.example.com/api/v1",
+        "https://api.example.com/api/v1/",
+    ] {
+        let bound = bind(&call, &service_at(base), &args).expect("binds");
+        assert_eq!(
+            bound.url.as_str(),
+            "https://api.example.com/api/v1/items/42",
+            "base {base}"
+        );
+    }
+}
+
+#[test]
+fn a_bare_or_slash_base_path_behaves_exactly_as_an_origin() {
+    let call = test_call("/items", vec![]);
+    for base in ["https://api.example.com", "https://api.example.com/"] {
+        let bound = bind(&call, &service_at(base), &BTreeMap::new()).expect("binds");
+        assert_eq!(bound.url.as_str(), "https://api.example.com/items");
+    }
+}
+
+#[test]
+fn root_template_under_a_base_path_binds_to_the_base_directory() {
+    let call = test_call("/", vec![]);
+    let service = service_at("https://api.example.com/api/v1");
+    let bound = bind(&call, &service, &BTreeMap::new()).expect("binds");
+    assert_eq!(bound.url.as_str(), "https://api.example.com/api/v1/");
+}
+
+#[test]
+fn port_and_percent_encoded_base_path_survive_the_join() {
+    let call = test_call("/items", vec![]);
+    let service = service_at("http://127.0.0.1:8081/my%20api/v1/");
+    let bound = bind(&call, &service, &BTreeMap::new()).expect("binds");
+    assert_eq!(
+        bound.url.as_str(),
+        "http://127.0.0.1:8081/my%20api/v1/items"
+    );
+}
+
+#[test]
+fn an_encoded_dot_dot_literal_cannot_climb_out_of_the_base_path() {
+    // `UrlTemplate::parse` accepts `%2e%2e` as a well-formed percent-encoded literal, but
+    // `Url::parse` treats it as `..` — the containment check is what has to catch it.
+    for template in [
+        "/%2e%2e/admin",
+        "/%2E%2e/admin",
+        "/items/%2e%2e/%2e%2e/admin",
+    ] {
+        let call = test_call(template, vec![]);
+        let service = service_at("https://api.example.com/api/v1");
+        let err = bind(&call, &service, &BTreeMap::new()).unwrap_err();
+        assert_eq!(err, BindError::ContainmentViolation, "template {template}");
+    }
+}
+
+#[test]
+fn a_dot_dot_value_stays_an_opaque_segment_under_the_base_path() {
+    let call = test_call("/items/{id}", vec![plain_param("id", 0)]);
+    let service = service_at("https://api.example.com/api/v1");
+    let mut args = BTreeMap::new();
+    args.insert("id".to_owned(), json!("../../admin"));
+
+    let bound = bind(&call, &service, &args).expect("binds");
+    assert_eq!(bound.url.path(), "/api/v1/items/..%2F..%2Fadmin");
+}
+
+#[test]
+fn a_base_url_with_a_query_or_fragment_is_refused_rather_than_dropped() {
+    let call = test_call("/items", vec![]);
+    for base in [
+        "https://api.example.com/api?key=1",
+        "https://api.example.com/api#frag",
+    ] {
+        let err = bind(&call, &service_at(base), &BTreeMap::new()).unwrap_err();
+        assert_eq!(err, BindError::BaseUrlHasQueryOrFragment, "base {base}");
+    }
+}

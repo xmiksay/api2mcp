@@ -19,7 +19,10 @@ fn pack_service_schema() -> Value {
         "properties": {
             "base_url": {
                 "type": "string",
-                "description": "The service's own base URL, e.g. \"https://api.example.com\"."
+                "description": "The service's own base URL, e.g. \"https://api.example.com\" \
+                    or \"https://api.example.com/api/v1\". Its path is a prefix every api_call's \
+                    path_template is appended to, and no request can leave it. Must not carry \
+                    a query string or fragment."
             },
             "origin_allowlist": {
                 "type": "array",

@@ -16,6 +16,9 @@ pub struct Service {
     /// their own — `slug` is unique per owner (`UNIQUE(owner_id, slug)`), not globally.
     pub owner_id: Uuid,
     pub slug: Slug,
+    /// Its path (`/api/v1`) is a prefix [`crate::http::bind`] prepends to every api_call's
+    /// rendered path and contains the request within; it never carries a query or fragment
+    /// (`pack::validate` refuses one at write time).
     pub base_url: url::Url,
     /// Origins any of this service's api_calls may resolve to. Design correction #7: publish-time
     /// validation (not this type) must ensure `base_url`'s own origin is a member — an allowlist

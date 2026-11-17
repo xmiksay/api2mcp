@@ -175,11 +175,12 @@ fn encode_query(query_values: &BTreeMap<String, Vec<String>>) -> String {
     serializer.finish()
 }
 
-/// Builds the full URL as a string from `service`'s scheme/host/port plus the rendered path and
-/// query, then re-parses it and asserts nothing moved. Deliberately does **not** use `Url::join`
-/// (relative resolution can replace the authority) or `set_path` (it skips `Url::parse`'s
-/// dot-segment normalisation, so a smuggled `/a/../b` would go undetected instead of being
-/// caught by the comparison below) — this is the containment post-condition I3 depends on.
+/// Builds the full URL as a string from `service`'s scheme/host/port, its base path, the rendered
+/// path and the query, then re-parses it and asserts nothing moved. Deliberately does **not** use
+/// `Url::join` (relative resolution can replace the authority, and drops the base's last segment
+/// unless it ends in `/`) or `set_path` (it skips `Url::parse`'s dot-segment normalisation, so a
+/// smuggled `/a/../b` would go undetected instead of being caught by the comparison below) —
+/// this is the containment post-condition I3 depends on.
 fn assemble_url(service: &Service, path: &str, query: &str) -> Result<url::Url, BindError> {
     let base = &service.base_url;
     let host_part = match base.host() {
@@ -188,12 +189,19 @@ fn assemble_url(service: &Service, path: &str, query: &str) -> Result<url::Url, 
         Some(Host::Ipv6(ip)) => format!("[{ip}]"),
         None => return Err(BindError::NoHost),
     };
+    // Write-time validation (`pack::validate`) already refuses these; a row that predates it
+    // fails loudly here instead of having its query or fragment silently dropped.
+    if base.query().is_some() || base.fragment().is_some() {
+        return Err(BindError::BaseUrlHasQueryOrFragment);
+    }
 
+    let prefix = base_path_prefix(base);
+    let full_path = format!("{prefix}{path}");
     let mut assembled = format!("{}://{host_part}", base.scheme());
     if let Some(port) = base.port() {
         assembled.push_str(&format!(":{port}"));
     }
-    assembled.push_str(path);
+    assembled.push_str(&full_path);
     if !query.is_empty() {
         assembled.push('?');
         assembled.push_str(query);
@@ -201,12 +209,18 @@ fn assemble_url(service: &Service, path: &str, query: &str) -> Result<url::Url, 
 
     let parsed = url::Url::parse(&assembled).map_err(|e| BindError::UrlParse(e.to_string()))?;
 
-    // `Url::parse` normalises `/a/../b` to `/b`, so comparing the re-parsed path back against
-    // the path we intended is what catches that case — the normalisation itself IS the signal.
+    // `Url::parse` normalises `/a/../b` (and its percent-encoded `%2e%2e` spelling) to `/b`, so
+    // comparing the re-parsed path back against the path we intended is what catches that case —
+    // the normalisation itself IS the signal. The prefix check is implied by that equality; it is
+    // spelled out so "never escapes the base path" doesn't rest on an inference.
     let contained = parsed.scheme() == base.scheme()
         && parsed.host_str() == base.host_str()
         && parsed.port_or_known_default() == base.port_or_known_default()
-        && parsed.path() == path
+        && parsed.path() == full_path
+        && parsed
+            .path()
+            .strip_prefix(prefix)
+            .is_some_and(|rest| rest.starts_with('/'))
         && parsed.username().is_empty()
         && parsed.password().is_none()
         && parsed.fragment().is_none();
@@ -216,6 +230,15 @@ fn assemble_url(service: &Service, path: &str, query: &str) -> Result<url::Url, 
     }
 
     Ok(parsed)
+}
+
+/// `base_url`'s path with its one trailing `/` removed, so prepending it to a rendered path
+/// (which always starts with `/`) leaves exactly one `/` at the join: `/api/v1` and `/api/v1/`
+/// both become `/api/v1`, and a bare `/` becomes the empty prefix — exactly the pre-prefix
+/// behaviour.
+fn base_path_prefix(base: &url::Url) -> &str {
+    let path = base.path();
+    path.strip_suffix('/').unwrap_or(path)
 }
 
 #[cfg(test)]
