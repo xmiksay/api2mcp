@@ -184,7 +184,9 @@ path to equal the intended one and to start with the base path. `Url::parse` nor
 dot-segment — including the percent-encoded `%2e%2e` a template literal may legally contain — so
 any attempt to climb out of `/api/v1` shows up as a mismatch and fails the call. A `base_url` with a
 query or fragment is refused by `pack::validate` at write time and by `bind` at call time, rather
-than silently dropped.
+than silently dropped. Data migration `m0010_base_url_path` brought rows written before this
+behaviour in line: it stripped the query and fragment from stored base URLs, and stripped the base
+path from any `path_template` that already spelled it out, so it is not prepended twice.
 
 **I7 is no longer absolute.** Ordering and budget attribution are unconditionally deterministic —
 input-order fan-out assembly, whole-batch call reservation, index-order byte commit — and that half
