@@ -30,6 +30,11 @@
 //!   is no outer rollback. [`super::validate::validate`] runs first, pure and DB-free, and catches
 //!   every structural problem a pack can name before any of these per-row transactions opens —
 //!   which is what keeps a partial import a rare failure mode, not a routine one.
+//!
+//! A pack's `path_template`s are imported verbatim and appended to its service's `base_url` path
+//! by `http::bind`. A pack exported before that prepending existed (issue #6, migration `m0010`)
+//! may spell the base path out in its templates; importing it doubles the prefix, because
+//! `m0010` rewrote only rows already in the database. Re-export such a pack after upgrading.
 
 use uuid::Uuid;
 

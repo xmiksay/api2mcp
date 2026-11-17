@@ -186,7 +186,15 @@ any attempt to climb out of `/api/v1` shows up as a mismatch and fails the call.
 query or fragment is refused by `pack::validate` at write time and by `bind` at call time, rather
 than silently dropped. Data migration `m0010_base_url_path` brought rows written before this
 behaviour in line: it stripped the query and fragment from stored base URLs, and stripped the base
-path from any `path_template` that already spelled it out, so it is not prepended twice.
+path from any `path_template` that already spelled it out, so it is not prepended twice. Three
+things it could not preserve:
+
+- A template equal to the base path (`/api/v1`) became `/`, which now requests `/api/v1/` with a
+  trailing slash. The migration logs each such api_call at `warn`.
+- Only a byte-for-byte prefix was matched. A template spelling it differently (a placeholder like
+  `/api/{ver}/x`, other percent-encoding or case) was left alone and now gets the prefix twice.
+- Packs live outside the database. Importing one exported before this change, whose templates
+  spell out the base path, doubles the prefix; re-export packs after upgrading.
 
 **I7 is no longer absolute.** Ordering and budget attribution are unconditionally deterministic —
 input-order fan-out assembly, whole-batch call reservation, index-order byte commit — and that half
