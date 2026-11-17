@@ -131,7 +131,7 @@ Five definition entities, each independently owned, plus identity, tokens and au
 | `auth_provider` | Kind (bearer / api key / OAuth), the credential source — either the env **key name** or the value itself, held on the row for the per-owner case — declared scopes, and the origin it is bound to. `service_id` is `UNIQUE`: a service has at most one, and every api_call on it uses it — an api_call carries no auth reference of its own. |
 | `api_call` | One operation: method, path template, typed params, projection, read/write class, idempotency, tags. |
 | `script` | A Rhai composition, its declared api_calls, its budgets. |
-| `endpoint` | What an agent sees: a tag expression over api_calls and scripts, aliases, budgets, a read/write ceiling. |
+| `endpoint` | What an agent sees: a tag expression over api_calls and scripts, aliases, budgets, a read/write ceiling — plus an optional `internal_tag_expr` selecting api_calls its scripts may call without exposing them as tools. |
 
 Grouping is by **tags, many-to-many** — not a tree. A tag comes from the service, the domain and
 the read/write class; an endpoint selects with an expression over them.
@@ -196,6 +196,14 @@ write path, and pushes the entire audit burden onto the run log.
   first-class entity; a single fixed path would give it no transport.
 - **Login and OAuth consent are server-rendered**, not SPA views, so the auth flow does not depend
   on `web/dist` holding a real bundle — which it does not on a fresh clone or in CI.
+- **Script-only api_calls are a second tag expression, not an api_call flag.** An endpoint's
+  optional `internal_tag_expr` selects api_calls that join the plan's `calls` — so origins (I2),
+  auth binding (I5) and `write_ceiling` all cover them, and a script's `callable` can reach them
+  (I1) — but get no `PlannedTool`: they are absent from `tools/list` and `tools/call`/`invoke`
+  answer them like an unknown tool. A call both expressions select stays a tool. Per endpoint
+  rather than per api_call, because the same building block can be a raw tool on one endpoint and
+  hidden behind a script on another. `GET /api/endpoints/{slug}/plan` lists them as
+  `internal_calls`.
 - **Plans are cached, registries are not.** A client calls `tools/list` on every session start;
   rebuilding a plan each time means re-querying, re-compiling every template and re-generating
   every schema. The cache is keyed on a `meta.definitions_generation` counter.

@@ -271,6 +271,11 @@ pub enum PackEndpointTarget {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PackEndpoint {
     pub tag_expr: String,
+    /// Selects api_calls this endpoint's scripts may call (through their own `callable`) that
+    /// are *not* published as tools. Optional so a pack written before it existed still
+    /// imports, and omitted on export when unset so such a pack round-trips byte-identically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub internal_tag_expr: Option<String>,
     #[serde(default = "default_write_ceiling")]
     pub write_ceiling: String,
     #[serde(default)]

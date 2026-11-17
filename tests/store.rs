@@ -339,6 +339,7 @@ async fn endpoint_round_trips_tag_expr_and_budgets() -> Result<()> {
                 slug("deprecated"),
             ))))),
         ),
+        internal_tag_expr: None,
         write_ceiling: Access::Read,
         budgets: Budgets {
             max_calls: Some(10),

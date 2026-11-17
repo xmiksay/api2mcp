@@ -68,6 +68,7 @@ async fn seed(stores: &Stores, owner_id: Uuid) -> Result<Slug> {
         owner_id,
         slug: slug("ep-desc"),
         tag_expr: TagExpr::Has(tag("expose")),
+        internal_tag_expr: None,
         write_ceiling: Access::Read,
         budgets: Budgets::default(),
         instructions: None,

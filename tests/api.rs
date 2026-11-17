@@ -67,6 +67,7 @@ async fn seed_minimal(stores: &Stores, owner_id: Uuid) -> Result<()> {
         owner_id,
         slug: slug("ep-api-read"),
         tag_expr: TagExpr::Has(Tag(slug("read-tag"))),
+        internal_tag_expr: None,
         write_ceiling: Access::Read,
         budgets: Default::default(),
         instructions: Some("read-only demo endpoint".to_owned()),

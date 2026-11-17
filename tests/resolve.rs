@@ -100,6 +100,7 @@ fn endpoint(
         owner_id,
         slug: slug(name),
         tag_expr: expr,
+        internal_tag_expr: None,
         write_ceiling,
         budgets,
         instructions: None,

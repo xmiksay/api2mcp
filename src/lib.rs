@@ -21,7 +21,7 @@
 //!
 //! | # | Invariant | Enforced in |
 //! |---|---|---|
-//! | I1 | A script never performs HTTP. It can reach only the api_calls it declared, intersected with what its endpoint exposes. | [`runtime::dispatch`] |
+//! | I1 | A script never performs HTTP. It can reach only the api_calls it declared, intersected with what its endpoint selects (`tag_expr` or `internal_tag_expr`). | [`runtime::dispatch`] |
 //! | I2 | The set of origins an endpoint can reach is computable statically, before execution. | [`resolve::origins`] |
 //! | I3 | A param value is always a leaf: it can never alter the request's origin, path structure, method, or any header outside the parameterisable-header allowlist. | [`http::url_template`], [`http::bind`] |
 //! | I4 | A credential has no path to a `String` that reaches a model-visible surface. | [`secret::Secret`] (no `Display`/`Serialize`), [`http::redact`] |

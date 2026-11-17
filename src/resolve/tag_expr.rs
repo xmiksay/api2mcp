@@ -1,4 +1,5 @@
-//! Parser and printer for the `endpoints.tag_expr` grammar.
+//! Parser and printer for the tag-expression grammar shared by `endpoints.tag_expr` and
+//! `endpoints.internal_tag_expr`.
 //!
 //! Promoted verbatim from `store::endpoint::tag_expr_parse` (a pre-C6 stopgap) per this
 //! chunk's brief — see that module's original doc comment for why it lived there first.
@@ -26,11 +27,12 @@ use thiserror::Error;
 
 use crate::model::{Tag, TagExpr};
 
-/// A `tag_expr` string that doesn't parse. Kept independent of [`crate::store::StoreError`]
-/// so this module stays a plain grammar (no store dependency); `store::endpoint` maps this
-/// into `StoreError::Malformed` at its one call site.
+/// A tag-expression string that doesn't parse. Kept independent of
+/// [`crate::store::StoreError`] so this module stays a plain grammar (no store dependency);
+/// `store::endpoint` maps this into `StoreError::Malformed`. Its `Display` names no field —
+/// the same grammar backs two columns, so each caller prefixes the one it parsed.
 #[derive(Debug, Clone, PartialEq, Eq, Error, Serialize)]
-#[error("endpoints.tag_expr {input:?}: {message}")]
+#[error("tag expression {input:?}: {message}")]
 pub struct TagExprError {
     input: String,
     message: String,
