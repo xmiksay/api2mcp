@@ -44,7 +44,15 @@ async fn m0010_strips_a_spelled_out_base_path_and_the_base_url_query() -> Result
             "/api/v1/tenants/{id}",
             "/tenants/{id}",
         ),
+        // The one lossy rewrite: `/` now requests `/api/v1/`, where `/api/v1` requested
+        // `/api/v1` before. Closest expressible; m0010 logs a warning for it.
         (&prefixed, "exactly-base", "/api/v1", "/"),
+        (
+            &prefixed,
+            "parameterised-prefix",
+            "/api/{ver}/x",
+            "/api/{ver}/x",
+        ),
         (&prefixed, "issue-6-broken", "/tenants", "/tenants"),
         (&prefixed, "not-a-boundary", "/api/v10/x", "/api/v10/x"),
         (&bare, "bare-base", "/api/v1/tenants", "/api/v1/tenants"),

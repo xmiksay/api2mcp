@@ -1,15 +1,24 @@
 //! m0010 — a data migration for issue #6, when `http::bind` began prepending `services.base_url`'s
 //! path to every api_call's `path_template` instead of silently discarding it. Rows written
-//! before then are rewritten so each one requests exactly what it requested before:
+//! before then are rewritten so each one keeps requesting what it requested before, with one
+//! inexpressible exception noted below:
 //!
 //! - **The query string and fragment are stripped from `base_url`.** `bind` never sent either,
 //!   and `pack::validate` now refuses both, so an existing row that kept one would fail
 //!   whole-owner revalidation on every unrelated write and break re-import of its own export.
 //! - **An api_call that already spelled out the base path loses it.** With base
 //!   `https://host/api/v1`, the template `/api/v1/tenants` worked around the old behaviour and
-//!   would now request `/api/v1/api/v1/tenants`; it becomes `/tenants` (and `/api/v1` itself
-//!   becomes `/`). A template that does *not* start with the base path is exactly the case
-//!   issue #6 reported as broken, and the new behaviour fixes it, so it is left alone.
+//!   would now request `/api/v1/api/v1/tenants`; it becomes `/tenants`, an unchanged request.
+//!   A template that does *not* start with the base path is exactly the case issue #6 reported
+//!   as broken, and the new behaviour fixes it, so it is left alone.
+//! - **The exception: a template equal to the base path** (`/api/v1`) becomes `/`, which now
+//!   requests `/api/v1/` — the new model has no way to say "the base path, no trailing slash".
+//!   It is the closest expressible rewrite, and each such api_call is logged at `warn` (owner id
+//!   and slug) so an operator can check the upstream still answers it.
+//!
+//! Only a template that spells the prefix byte-for-byte as the stored base path is matched. One
+//! that spells it differently — through a placeholder (`/api/{ver}/x`), a different
+//! percent-encoding, or different case — is not rewritten and now gets the prefix twice.
 //!
 //! Raw SQL, not an entity `ActiveModel`, for the reason `m0007` gives. `down` is a no-op: the
 //! stripped query/fragment is gone, and re-adding a prefix would only reproduce the bug.
@@ -74,7 +83,7 @@ async fn strip_prefix_from_api_calls(
     let calls = conn
         .query_all(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT id, path_template FROM api_calls WHERE service_id = $1",
+            "SELECT id, owner_id, slug, path_template FROM api_calls WHERE service_id = $1",
             [service_id.into()],
         ))
         .await?;
@@ -82,6 +91,17 @@ async fn strip_prefix_from_api_calls(
         let id: Uuid = row.try_get("", "id")?;
         let template: String = row.try_get("", "path_template")?;
         if let Some(stripped) = strip_base_prefix(prefix, &template) {
+            if template == prefix {
+                let owner_id: Uuid = row.try_get("", "owner_id")?;
+                let slug: String = row.try_get("", "slug")?;
+                tracing::warn!(
+                    %owner_id,
+                    api_call = %slug,
+                    "m0010: path_template equal to its service's base path rewritten to \"/\"; \
+                     it now requests the base path with a trailing slash — check the upstream \
+                     still answers it"
+                );
+            }
             conn.execute(Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 "UPDATE api_calls SET path_template = $1 WHERE id = $2",
@@ -123,6 +143,7 @@ mod tests {
             strip_base_prefix("/api/v1", "/api/v1/tenants/{id}").as_deref(),
             Some("/tenants/{id}")
         );
+        // Not behaviour-preserving: `/` now requests `/api/v1/`, not `/api/v1` (see module doc).
         assert_eq!(
             strip_base_prefix("/api/v1", "/api/v1").as_deref(),
             Some("/")
