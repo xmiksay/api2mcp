@@ -13,6 +13,7 @@
 //!   A `Script`-target tool can't be dispatched directly — running a script is
 //!   [`crate::script::run_script`]'s job, not this function's.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -23,7 +24,7 @@ use crate::model::{AuthProvider, Slug};
 use crate::project::CompiledProjection;
 use crate::resolve::EndpointPlan;
 use crate::resolve::plan::{PlannedApiCall, ToolTarget};
-use crate::schema::bind_args;
+use crate::schema::{bind_args, omit_null_optionals};
 use crate::store::{AuthProviderStore, StoreError};
 
 mod error;
@@ -158,7 +159,14 @@ pub async fn dispatch(
 ) -> Result<DispatchOutcome, DispatchError> {
     let planned = resolve(plan, caller_script, name)?;
 
-    let bound_args = bind_args(&planned.api_call.params, args)?;
+    // Only a script's args: an omitted optional script param is `()` in scope, so forwarding it
+    // (or a field copied from an upstream response) must read as "omitted", not as a type error.
+    // A direct MCP caller simply leaves the key out, and its `null` stays the error it always was.
+    let args = match caller_script {
+        Some(_) => Cow::Owned(omit_null_optionals(&planned.api_call.params, args)),
+        None => Cow::Borrowed(args),
+    };
+    let bound_args = bind_args(&planned.api_call.params, &args)?;
     let request = crate::http::bind(&planned.api_call, &planned.service, &bound_args)?;
     let request_headers = request.headers.clone();
     let request_body = request.body.clone();

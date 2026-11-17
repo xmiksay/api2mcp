@@ -24,7 +24,10 @@ fn pack_script_schema() -> Value {
                 "type": "string",
                 "description": "Rhai source. Call another api_call from inside it with \
                     `api(\"alias\", args)` (single call) or `api_many(\"alias\", [args, ...])` \
-                    (a fan-out batch) — \"alias\" must be a key of `callable`, below."
+                    (a fan-out batch) — \"alias\" must be a key of `callable`, below. Every \
+                    declared param is in scope; an optional one the caller omitted (with no \
+                    default) is `()`, so test it with `type_of(x) == \"()\"`. Passing `()` for \
+                    an optional api_call param omits it."
             },
             "params": params_array_schema(),
             "callable": {

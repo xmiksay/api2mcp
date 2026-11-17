@@ -7,7 +7,7 @@
 pub(crate) mod coerce;
 mod validate;
 
-pub use validate::{ValidationError, bind_args};
+pub use validate::{ValidationError, bind_args, omit_null_optionals};
 
 use serde_json::{Map, Value};
 

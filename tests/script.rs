@@ -15,6 +15,8 @@ mod dates_tests;
 mod fixture;
 #[path = "script/json_yaml_tests.rs"]
 mod json_yaml_tests;
+#[path = "script/params_tests.rs"]
+mod params_tests;
 #[path = "script/regex_tests.rs"]
 mod regex_tests;
 #[path = "script/support.rs"]

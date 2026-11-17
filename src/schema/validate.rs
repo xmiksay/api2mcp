@@ -100,6 +100,25 @@ pub fn bind_args(
     Ok(bound)
 }
 
+/// Drops every top-level `null` naming an *optional* declared param, so a script's `()` (which
+/// marshals to `null`) reads as "omitted" rather than failing coercion — without this, a script
+/// building an args map from an upstream response needs its own "drop unit values" pass before
+/// every `api()`. A `null` for a required param, or under a name no param declares, is kept for
+/// [`bind_args`] to reject exactly as before.
+pub fn omit_null_optionals(params: &[Param], args: &Value) -> Value {
+    let Some(obj) = args.as_object() else {
+        return args.clone();
+    };
+    let kept = obj
+        .iter()
+        .filter(|(name, value)| {
+            !(value.is_null() && params.iter().any(|p| &p.name == *name && !p.required))
+        })
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    Value::Object(kept)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,5 +224,49 @@ mod tests {
         let params = vec![param("q", ParamType::String, false, 0)];
         let bound = bind_args(&params, &json!({})).unwrap();
         assert!(!bound.contains_key("q"));
+    }
+
+    #[test]
+    fn omit_null_optionals_drops_null_only_for_an_optional_param() {
+        let mut with_default = param("limit", ParamType::Integer, false, 1);
+        with_default.default = Some(json!(20));
+        let params = vec![
+            param("id", ParamType::String, true, 0),
+            with_default,
+            param("q", ParamType::String, false, 2),
+        ];
+
+        let cleaned = omit_null_optionals(&params, &json!({"id": "7", "limit": null, "q": null}));
+        assert_eq!(cleaned, json!({"id": "7"}));
+        // Omitted, so the default applies exactly as if the key had never been sent.
+        let bound = bind_args(&params, &cleaned).unwrap();
+        assert_eq!(bound.get("limit"), Some(&json!(20)));
+        assert!(!bound.contains_key("q"));
+    }
+
+    #[test]
+    fn omit_null_optionals_leaves_a_required_null_to_fail_validation() {
+        let params = vec![param("id", ParamType::String, true, 0)];
+        let cleaned = omit_null_optionals(&params, &json!({"id": null}));
+        assert_eq!(
+            bind_args(&params, &cleaned).unwrap_err(),
+            ValidationError::WrongType {
+                param: "id".into(),
+                expected: "string",
+                got: "null"
+            }
+        );
+    }
+
+    #[test]
+    fn omit_null_optionals_keeps_an_undeclared_null_key_so_it_is_still_rejected() {
+        let params = vec![param("q", ParamType::String, false, 0)];
+        let cleaned = omit_null_optionals(&params, &json!({"tpyo": null}));
+        assert_eq!(
+            bind_args(&params, &cleaned).unwrap_err(),
+            ValidationError::UnknownParam {
+                param: "tpyo".into()
+            }
+        );
     }
 }
