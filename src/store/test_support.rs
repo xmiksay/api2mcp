@@ -75,6 +75,10 @@ impl ScratchDb {
         Ok(user.id)
     }
 
+    /// Same soft landing as `tests/common::ScratchDb::teardown`, and for the same reason:
+    /// `WITH (FORCE)` intermittently trips "permission denied to terminate process" on a backend
+    /// our role doesn't own (an autovacuum worker), and failing an already-green test over a
+    /// disposable database is pure noise.
     pub(crate) async fn teardown(self) -> Result<()> {
         self.db
             .close()
@@ -83,13 +87,26 @@ impl ScratchDb {
         let admin = db::connect(&self.admin_url)
             .await
             .context("reconnecting to the admin (postgres) database to drop the scratch db")?;
-        admin
-            .execute(Statement::from_string(
-                admin.get_database_backend(),
-                format!(r#"DROP DATABASE IF EXISTS "{}" WITH (FORCE)"#, self.name),
-            ))
-            .await
-            .with_context(|| format!("dropping scratch database {}", self.name))?;
+        let stmt = format!(r#"DROP DATABASE IF EXISTS "{}" WITH (FORCE)"#, self.name);
+        let mut last_err = None;
+        for attempt in 0..3 {
+            match admin
+                .execute(Statement::from_string(admin.get_database_backend(), &stmt))
+                .await
+            {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    last_err = Some(e);
+                    tokio::time::sleep(std::time::Duration::from_millis(50 * (attempt + 1))).await;
+                }
+            }
+        }
+        eprintln!(
+            "warning: could not drop scratch database {} ({}); it is disposable and safe to \
+             remove by hand",
+            self.name,
+            last_err.map(|e| e.to_string()).unwrap_or_default()
+        );
         Ok(())
     }
 }
