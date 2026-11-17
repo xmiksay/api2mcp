@@ -322,6 +322,16 @@ export interface ScriptCallView {
   status_code: number | null;
   response_bytes: number | null;
   raw: unknown | null;
+  /** The tagged error the script saw for this call; set for a call refused before any HTTP request too. */
+  error: ScriptCallError | null;
+}
+
+/** `{kind, message, status, ...}` — `status` is the upstream HTTP status, `null` when there was none. */
+export interface ScriptCallError {
+  kind: string;
+  message: string;
+  status: number | null;
+  [extra: string]: unknown;
 }
 
 /** Present on failure: kind, message, and — when available — line/column/source snippet. */

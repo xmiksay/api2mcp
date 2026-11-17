@@ -24,6 +24,7 @@
 
 pub mod budget;
 pub mod dispatch;
+pub mod error_object;
 pub mod fanout;
 pub mod partial;
 pub mod recorder;
@@ -179,7 +180,7 @@ impl Executor {
                         name: tool_name.to_owned(),
                     }
                 })?;
-                match crate::script::run_script(
+                let run = crate::script::run_script(
                     plan,
                     &ctx,
                     &limits,
@@ -188,10 +189,10 @@ impl Executor {
                     script,
                     args.clone(),
                 )
-                .await
-                {
-                    Ok(run) => (RunStatus::Ok, Some(run.value), None, run.calls),
-                    Err(e) => (RunStatus::Error, None, Some(e.to_string()), Vec::new()),
+                .await;
+                match run.outcome {
+                    Ok(value) => (RunStatus::Ok, Some(value), None, run.calls),
+                    Err(e) => (RunStatus::Error, None, Some(e.to_string()), run.calls),
                 }
             }
             ToolTarget::ApiCall(_) => {
