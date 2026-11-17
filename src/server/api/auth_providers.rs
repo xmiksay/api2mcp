@@ -125,9 +125,9 @@ fn apply_credential_value(
     });
 }
 
-/// `pub(crate)`, not private: `server::mcp::control::auth_providers` (the MCP control-plane's
-/// read-only auth-provider tools — I5 forbids write access, never read) calls this and
-/// [`list_for_owner`] directly rather than duplicating the lookup.
+/// The owner-scoped lookup `AuthProviderStore` doesn't expose directly; only this module's
+/// handlers call it. No MCP control-plane tool reads auth providers at all (see
+/// `server::mcp::control`'s module doc).
 pub(crate) async fn find(
     state: &AppState,
     owner_id: Uuid,

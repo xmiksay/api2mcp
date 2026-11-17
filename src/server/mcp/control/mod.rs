@@ -24,15 +24,19 @@
 //! `store::endpoint`'s module doc) empty on create / preserves it on update, since that scope is
 //! independent of Change 1. I5's whole point is that the credential-to-origin binding is set by
 //! a human, never proposed, read or moved by an agent, and a read-only list would still leak
-//! which credentials exist and what they're bound to — so there is no read surface either.
+//! which credentials exist and what they're bound to — so there is no auth-provider read surface
+//! either. The one thing that does surface is a *name*: `endpoint.list`/`endpoint.get` return
+//! the endpoint's `auth_providers` slug set as stored, and an `endpoint.plan` error can name a
+//! provider slug and its `bound_origin`. Never a credential, and never a way to change either.
 //!
 //! **The consequence, handled deliberately, not left to fall out as a bug:** an api_call created
 //! through this surface starts on a service with whatever auth provider (if any) that service
 //! already has — there is no per-call wiring for an agent to set or fail to set. That is the
 //! intended workflow, not a gap — an agent defines the *shape* of a capability, and a human wires
-//! a service's credential up afterwards through `/api` or the CLI, which is exactly what I5
-//! reserves for a person. [`INSTRUCTIONS`] and [`api_calls::descriptors`]/
-//! [`endpoints::descriptors`]'s own tool descriptions say this plainly, so an agent is told *who*
+//! a service's credential up afterwards through `/api` (a signed-in session; there is no CLI
+//! command for it), which is exactly what I5 reserves for a person. [`INSTRUCTIONS`] and
+//! [`api_calls::descriptors`]/[`endpoints::descriptors`]'s own tool descriptions say this
+//! plainly, so an agent is told *who*
 //! attaches a credential and *why it isn't this tool*, rather than discovering a silent gap or
 //! mistaking a resulting 401 for its own error. Calling an api_call on a service with no provider
 //! is not a special case at the HTTP layer either — `dispatch` (`runtime::dispatch::AuthProviders`)

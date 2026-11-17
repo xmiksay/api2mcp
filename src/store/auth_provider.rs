@@ -120,9 +120,10 @@ impl AuthProviderStore {
 
     /// I5: a human (a signed-in session request handled by `server::api::auth_providers`) is the
     /// only caller that may bind a credential to an origin — see this module's own doc for why
-    /// that's true structurally, not just by convention. `provider.owner_id` must already equal the owner of `provider.service_slug`'s
-    /// service — resolving the service scoped to that same owner is what enforces "cannot attach
-    /// a credential to someone else's service" rather than merely documenting it.
+    /// that's true structurally, not just by convention. `provider.owner_id` must already equal
+    /// the owner of `provider.service_slug`'s service — resolving the service scoped to that same
+    /// owner is what enforces "cannot attach a credential to someone else's service" rather than
+    /// merely documenting it.
     pub(crate) async fn create(&self, provider: &AuthProvider) -> Result<(), StoreError> {
         let service_id = self
             .services()

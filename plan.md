@@ -208,8 +208,10 @@ míst, kde se implementace vědomě rozešla s tím, co je napsáno výše, a pr
   credential je buď env var *jméno* na `auth_providers` řádku (hodnota žije jen v procesním
   prostředí serveru), nebo hodnota uložená přímo na řádku v `credential_value` (plaintext, pro
   per-owner tokeny — migrace m0009). Uložená hodnota je write-only: API vrací jen
-  `has_stored_credential`, control-plane MCP auth providery nevidí a pack je nenese vůbec. I4
-  tedy zakazuje únik credentialu k modelu, ne jeho perzistenci.
+  `has_stored_credential`, žádný control-plane MCP tool nemůže auth provider ani credential
+  číst, vytvořit ani změnit (pohled na endpoint ukazuje jen slugy providerů, na které je
+  endpoint omezen) a pack je nenese vůbec. I4 tedy zakazuje únik credentialu k modelu, ne jeho
+  perzistenci.
 - **Admin/non-admin rozlišení bylo zavedeno a pak zase zrušeno.** Fáze 5 plánu předpokládala
   odlišný "control plane" endpoint pro agenta, který si sám vytváří tooly (`discover` → `draft` →
   `test` → `promote`), s schvalováním nad úrovní session člověkem. To se nerealizovalo; místo toho

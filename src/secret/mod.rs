@@ -4,11 +4,13 @@
 //! [`Secret`] makes that a compile-time property rather than a discipline to remember: it has no
 //! `Debug` (a hand-written one prints only `Secret(<redacted>)`), no `Display`, no `Serialize`,
 //! and no `Deref<Target = str>` — there is no expression that turns a `Secret` into a `String`
-//! or `&str` by accident. The one deliberate exit toward the network is
-//! [`Secret::into_header_value`], which writes straight into an `http::HeaderValue` marked
-//! `set_sensitive(true)`, so even `http`'s own `Debug` for a `HeaderMap` redacts it downstream
-//! (see `http::redact` for the rest of I4). The only other is `Secret::expose_for_storage`, the
-//! `pub(crate)` read-back [`crate::store::auth_provider`] uses to write a stored credential into
+//! or `&str` by accident. There are three deliberate, `pub(crate)` exits. Two go toward the
+//! network and write straight into an `http::HeaderValue` marked `set_sensitive(true)`, so even
+//! `http`'s own `Debug` for a `HeaderMap` redacts it downstream (see `http::redact` for the rest
+//! of I4): [`Secret::into_header_value`] for an upstream auth provider's credential, and
+//! [`Secret::into_basic_auth_header`] for the OIDC client secret (`server::oidc`'s token
+//! exchange). The third is `Secret::expose_for_storage`, the read-back
+//! [`crate::store::auth_provider`] uses to write a stored credential into
 //! `auth_providers.credential_value` — persistence, which I4 does not forbid.
 //!
 //! `tests/ui/` holds the `trybuild` compile-fail cases that pin this down:

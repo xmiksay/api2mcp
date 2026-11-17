@@ -32,14 +32,16 @@
 //! I4 is about *leaking*, not about *persistence*. Exactly one column holds a usable credential:
 //! `auth_providers.credential_value` ([`model::CredentialSource::Stored`], the per-owner case an
 //! environment variable cannot express), in plaintext — so a database dump carries every stored
-//! upstream credential, an accepted trade (see [`model::CredentialSource`]). The server's own
+//! upstream credential, an accepted trade (see `model::auth`'s module doc). The server's own
 //! tokens, sessions and passwords are stored only as hashes, and the OIDC client secret is
 //! environment-only. What I4 guarantees is that a stored value is write-only from every surface:
 //! [`store`] hands it back only as a [`secret::Secret`] (no `Display`, `Serialize` or `Deref`; it
-//! leaves only into an outgoing request header, or back into its own column on a write), the
-//! read/write API reports only `has_stored_credential`, the control-plane MCP surface cannot see
-//! auth providers at all, a [`pack`] carries no auth providers at all, and a run's definition
-//! snapshot holds no auth provider either (no service, api_call or script has a credential field).
+//! leaves only into a sensitive outgoing header, or back into its own column on a write), the
+//! read/write API reports only `has_stored_credential`, no control-plane MCP tool can read,
+//! create or modify an auth provider or any credential (endpoint views expose only the slugs of
+//! the providers an endpoint is scoped to), a [`pack`] carries no auth providers at all, and a
+//! run's definition snapshot holds no auth provider either (no service, api_call or script has a
+//! credential field).
 //!
 //! I7 was once absolute — no clock at all, and `BasicTimePackage` is still excluded for that
 //! reason. Scripts now need real date logic to be useful for transformation, so time enters

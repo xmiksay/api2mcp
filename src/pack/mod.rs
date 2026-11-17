@@ -111,10 +111,9 @@ pub struct PackAuthProvider {
     pub service: String,
     pub kind: PackAuthKind,
     /// An environment variable *name* — never a value. Absent means the provider's credential
-    /// is stored on its own row instead, and a pack deliberately carries no way to express what
-    /// that value is: importing such a provider creates it with no value set, for the importing
-    /// owner to fill in themselves. See this module's doc for why no sibling field here could
-    /// ever hold a value instead.
+    /// is stored on its own row instead. A pack carries no auth providers at all, so this type
+    /// is only the `/api/auth_providers` DTO's body; a stored value travels solely on that
+    /// route's write-only `credential_value` and is never part of this struct.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential_env_key: Option<String>,
     pub header_name: String,

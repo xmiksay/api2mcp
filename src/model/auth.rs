@@ -14,11 +14,12 @@
 //! **I4 is unchanged by this.** I4 is "a credential has no path to a `String` that reaches a
 //! model-visible surface", not "a credential is never persisted": a [`crate::secret::Secret`]
 //! loaded from a column has exactly the same shape as one loaded from the environment — no
-//! `Display`, no `Serialize`, no `Deref` — and the one route toward the network is still
+//! `Display`, no `Serialize`, no `Deref` — and the one route toward an upstream is still
 //! `Secret::into_header_value`. The read/write API never returns a stored value (it reports only
-//! `has_stored_credential`), the control-plane MCP surface cannot see auth providers at all, and
-//! a pack carries no auth providers at all, so sharing a pack never shares a credential nor even
-//! the shape of one.
+//! `has_stored_credential`), no control-plane MCP tool can read, create or modify an auth
+//! provider or any credential (endpoint views expose only the provider slugs an endpoint is
+//! scoped to), and a pack carries no auth providers at all, so sharing a pack never shares a
+//! credential nor even the shape of one.
 
 use uuid::Uuid;
 

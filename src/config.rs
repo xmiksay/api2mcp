@@ -9,8 +9,9 @@ use std::time::Duration;
 
 use crate::secret::Secret;
 
-/// Prefix for upstream credential env vars. An `auth_provider` row stores the *name* of one of
-/// these, never a value; see [`crate::secret`].
+/// Prefix for upstream credential env vars. An `auth_provider` row either names one of these
+/// (`credential_env_key`) or stores its own value instead (`credential_value`, the per-owner
+/// case); see [`crate::model::CredentialSource`] and [`crate::secret`].
 pub const CREDENTIAL_PREFIX: &str = "A2M_CRED_";
 
 /// External OIDC provider configuration for human login (`server::oidc`). This crate is the
