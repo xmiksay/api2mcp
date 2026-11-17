@@ -146,3 +146,26 @@ async fn invoke_dispatches_to_the_same_tool_as_a_direct_call() -> Result<()> {
 
     h.db.teardown().await
 }
+
+#[tokio::test]
+async fn tools_call_without_arguments_binds_as_an_empty_object() -> Result<()> {
+    let Some(h) = setup().await? else {
+        return Ok(());
+    };
+
+    // `arguments` is optional in MCP `tools/call`: a param-less script and an api_call whose
+    // only param is optional must both run without it.
+    for (id, name) in [(1, "list-items"), (2, "item-summary")] {
+        let resp = rpc(
+            &h.router,
+            &h.token,
+            "/mcp/demo",
+            req(id, "tools/call", Some(json!({"name": name}))),
+        )
+        .await;
+        assert!(resp["error"].is_null(), "{name}: {resp:?}");
+        assert!(resp["result"]["isError"].is_null(), "{name}: {resp:?}");
+    }
+
+    h.db.teardown().await
+}

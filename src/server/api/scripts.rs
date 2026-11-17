@@ -179,6 +179,8 @@ async fn remove(
 
 #[derive(Debug, Deserialize)]
 struct TestBody {
+    /// Optional, like `tools/call`'s `arguments` — `test_run` turns a missing one into `{}`.
+    #[serde(default)]
     args: Value,
     endpoint: String,
 }

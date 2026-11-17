@@ -258,3 +258,78 @@ async fn control_plane_access_does_not_grant_data_plane_access_not_separately_gr
 
     h.db.teardown().await
 }
+
+#[tokio::test]
+async fn control_plane_test_tools_default_a_missing_args_to_an_empty_object() -> Result<()> {
+    let Some(h) = setup().await? else {
+        return Ok(());
+    };
+    h.fixture.set(
+        "/items/1",
+        Behavior::Json(json!({"id": "1", "title": "One"})),
+    );
+    let defs = [
+        (
+            "service.create",
+            service_body("svc-t", &h.fixture.base_url()),
+        ),
+        (
+            "api_call.create",
+            api_call_body("get-one", "svc-t", "/items/1", &["t"]),
+        ),
+        (
+            "script.create",
+            json!({"slug": "hello", "source": "#{ \"hello\": \"world\" }", "tags": ["t"]}),
+        ),
+        ("endpoint.create", endpoint_body("ep-t", "has(t)")),
+    ];
+    for (id, (tool, body)) in (1..).zip(defs) {
+        let created = rpc(
+            &h.router,
+            &h.control_token,
+            "/mcp",
+            call_tool(id, tool, body),
+        )
+        .await;
+        assert!(!is_error(&created), "{tool}: {created:?}");
+    }
+
+    // Neither `args` key is sent at all — issue #10.
+    let api_call = rpc(
+        &h.router,
+        &h.control_token,
+        "/mcp",
+        call_tool(
+            10,
+            "api_call.test",
+            json!({"slug": "get-one", "endpoint": "ep-t"}),
+        ),
+    )
+    .await;
+    assert!(!is_error(&api_call), "got {api_call:?}");
+    assert_eq!(
+        tool_json(&api_call)["status"],
+        json!("ok"),
+        "got {api_call:?}"
+    );
+
+    let script = rpc(
+        &h.router,
+        &h.control_token,
+        "/mcp",
+        call_tool(
+            11,
+            "script.test",
+            json!({"slug": "hello", "endpoint": "ep-t"}),
+        ),
+    )
+    .await;
+    assert!(!is_error(&script), "got {script:?}");
+    assert_eq!(
+        tool_json(&script)["value"],
+        json!({"hello": "world"}),
+        "got {script:?}"
+    );
+
+    h.db.teardown().await
+}

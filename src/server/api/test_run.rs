@@ -72,6 +72,17 @@ fn to_status_view(status: RunStatus) -> RunStatusView {
     }
 }
 
+/// A missing `args` — absent from the request (deserialized as `null`) or an explicit `null` —
+/// means "no arguments", exactly as an omitted `arguments` does on MCP `tools/call`. Anything else
+/// is passed through untouched, so a present non-object is still rejected by `schema::bind_args`.
+fn args_or_empty(args: Value) -> Value {
+    if args.is_null() {
+        Value::Object(Default::default())
+    } else {
+        args
+    }
+}
+
 pub async fn resolve_plan(
     state: &AppState,
     owner_id: Uuid,
@@ -138,7 +149,7 @@ pub async fn run_api_call_test(
         .run_tool(
             &plan,
             &tool.name,
-            args,
+            args_or_empty(args),
             test_caller_kind(caller),
             test_caller_id(caller),
         )
@@ -222,6 +233,7 @@ pub async fn run_script_test(
         ))
     })?;
     let script = plan.scripts.get(script_slug).ok_or(ApiError::Internal)?;
+    let args = args_or_empty(args);
 
     let stores = state.stores();
     let started = Instant::now();
@@ -362,4 +374,19 @@ async fn script_call_views(
             }
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{Value, args_or_empty};
+
+    #[test]
+    fn a_missing_args_defaults_to_an_empty_object_and_anything_else_passes_through() {
+        assert_eq!(args_or_empty(Value::Null), json!({}));
+        assert_eq!(args_or_empty(json!({"id": "1"})), json!({"id": "1"}));
+        assert_eq!(args_or_empty(json!("nope")), json!("nope"));
+        assert_eq!(args_or_empty(json!([])), json!([]));
+    }
 }
