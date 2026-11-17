@@ -1,8 +1,8 @@
 //! m0003 — the first half of the tool-definition schema: `services` (one upstream +
-//! its allowlist and limits), `auth_providers` (credential *name*, never a value — I4's
-//! structural half), `api_calls` (one HTTP call) and `api_call_params` (its typed
-//! inputs). `scripts`/`script_api_calls`/`tags` follow in [`super::m0004_scripts_tags`]
-//! — split out to keep both files under the line cap.
+//! its allowlist and limits), `auth_providers` (credential env var *name* only; the stored
+//! value column came later, in m0009), `api_calls` (one HTTP call) and `api_call_params`
+//! (its typed inputs). `scripts`/`script_api_calls`/`tags` follow in
+//! [`super::m0004_scripts_tags`] — split out to keep both files under the line cap.
 //!
 //! `services.origin_allowlist` and `auth_providers.scopes` are `JSONB` rather than the
 //! plan's literal `TEXT[]`, for the same `postgres-array`-feature reason as m0001's

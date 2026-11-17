@@ -151,8 +151,20 @@ token's per-endpoint grants — see [Deliberate non-obvious choices](#deliberate
 and the OAuth AS's own `oauth_clients`/`oauth_codes`/`oauth_tokens`/`oauth_consents`/
 `oauth_consent_requests`.
 
-**No column anywhere can hold a credential value** — only `credential_env_key`, an env var name.
-That is invariant I4's structural half. `script_api_calls` is I1's declarative half.
+**Exactly one column can hold a usable credential: `auth_providers.credential_value`** (migration
+`m0009_stored_credentials`), the alternative to `credential_env_key` for the per-owner case — each
+owner needs their own token for the same upstream, which a process-wide env var cannot express.
+It is plaintext, so a database dump carries every stored upstream credential; that is an accepted
+trade. Everything else credential-shaped is a hash (`users`, `sessions`, `service_tokens`,
+`oauth_clients`, `oauth_codes`, `oauth_tokens`) or never touches the database (the OIDC client
+secret).
+
+I4 forbids a credential reaching a model-visible surface, not persistence, and a stored value is
+write-only from every surface: the store reads it back only as a `secret::Secret` (no `Display`,
+`Serialize` or `Deref`; its only exits are a sensitive outgoing header and its own column), the
+`/api/auth_providers` reads return just `has_stored_credential`, the control-plane MCP tools
+cannot see auth providers at all, a pack carries no auth providers at all, and a run's definition
+snapshot holds none either. `script_api_calls` is I1's declarative half.
 
 List-valued columns (`origin_allowlist`, `scopes`, `redirect_uris`) are **`JSONB`, not `TEXT[]`**.
 SeaORM's Postgres array support sits behind a feature flag, and the schema is already JSONB-heavy

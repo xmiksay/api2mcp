@@ -151,7 +151,7 @@ fn api_call_json(c: &ApiCall) -> Value {
     })
 }
 
-/// `Service` structurally can't carry a credential (I4) — `credential_env_key` lives on
+/// `Service` structurally can't carry a credential (I4) — the credential source lives on
 /// `AuthProvider`, not here — so serializing every field verbatim is safe.
 fn service_json(s: &Service) -> Value {
     json!({

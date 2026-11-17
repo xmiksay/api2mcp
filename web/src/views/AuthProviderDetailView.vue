@@ -83,9 +83,13 @@ async function remove(): Promise<void> {
           {{ provider.has_stored_credential ? "stored on this provider" : "stored on this provider — not set yet" }}
         </FieldRow>
       </dl>
-      <p class="mt-3 text-xs text-ink-faint">
+      <p v-if="provider.credential_env_key" class="mt-3 text-xs text-ink-faint">
         Only the env var <em>name</em> above is stored — the credential value itself never enters
         this database, and never reaches this screen (I4).
+      </p>
+      <p v-else class="mt-3 text-xs text-ink-faint">
+        The credential is stored on this provider and is write-only — no read, tool or pack ever
+        returns it, including this screen (I4).
       </p>
     </DetailSection>
   </div>

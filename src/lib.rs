@@ -25,17 +25,21 @@
 //! | I2 | The set of origins an endpoint can reach is computable statically, before execution. | [`resolve::origins`] |
 //! | I3 | A param value is always a leaf: it can never alter the request's origin, path structure (nor leave the service's `base_url` path prefix), method, or any header outside the parameterisable-header allowlist. | [`http::url_template`], [`http::bind`] |
 //! | I4 | A credential has no path to a `String` that reaches a model-visible surface. | [`secret::Secret`] (no `Display`/`Serialize`), [`http::redact`] |
-//!
-//! I4 is about *leaking*, not about *persistence*: a credential may be stored on an
-//! [`model::AuthProvider`] row ([`model::CredentialSource::Stored`], the per-owner case an
-//! environment variable cannot express) and is still a [`secret::Secret`] with no `Display`,
-//! `Serialize` or `Deref` the moment it is read back. The read/write API reports only whether a
-//! value is set, the control-plane MCP surface cannot see auth providers at all, and
-//! [`pack::export`] emits no value — see [`model::auth`]'s module doc for the trade that storage
-//! accepts.
 //! | I5 | The auth-provider-to-origin binding is set by a human. An agent can neither propose nor change it. | [`resolve::auth_bind`], `pub(crate)` writes in [`store`] |
 //! | I6 | Budgets (calls, bytes, wall clock, pages) are enforced by the runtime, never by the script. | [`runtime::budget`] |
 //! | I7 | Ordering and budget attribution are always deterministic: stable iteration order, fan-out results in input order, budgets committed in index order. A script's *output* is reproducible given the same upstream responses and the same recorded `execution_start` — unless it calls `now()`. | [`runtime::fanout`], [`runtime::budget`], [`script::dates`] |
+//!
+//! I4 is about *leaking*, not about *persistence*. Exactly one column holds a usable credential:
+//! `auth_providers.credential_value` ([`model::CredentialSource::Stored`], the per-owner case an
+//! environment variable cannot express), in plaintext — so a database dump carries every stored
+//! upstream credential, an accepted trade (see [`model::CredentialSource`]). The server's own
+//! tokens, sessions and passwords are stored only as hashes, and the OIDC client secret is
+//! environment-only. What I4 guarantees is that a stored value is write-only from every surface:
+//! [`store`] hands it back only as a [`secret::Secret`] (no `Display`, `Serialize` or `Deref`; it
+//! leaves only into an outgoing request header, or back into its own column on a write), the
+//! read/write API reports only `has_stored_credential`, the control-plane MCP surface cannot see
+//! auth providers at all, a [`pack`] carries no auth providers at all, and a run's definition
+//! snapshot holds no auth provider either (no service, api_call or script has a credential field).
 //!
 //! I7 was once absolute — no clock at all, and `BasicTimePackage` is still excluded for that
 //! reason. Scripts now need real date logic to be useful for transformation, so time enters

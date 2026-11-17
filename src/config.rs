@@ -19,8 +19,9 @@ pub const CREDENTIAL_PREFIX: &str = "A2M_CRED_";
 ///
 /// `client_secret` is a [`Secret`], never a plain `String`: I4 ("a credential has no path to a
 /// `String` that reaches a model-visible surface") applies just as much to this credential as it
-/// does to an upstream `auth_provider`'s, and there is likewise no column anywhere that could
-/// hold it — provider config is environment-only, by design (see this module's own doc).
+/// does to an upstream `auth_provider`'s. Unlike an upstream credential, which may be stored on
+/// its `auth_providers` row, there is no column that could hold this one — provider config is
+/// environment-only, by design (see this module's own doc).
 #[derive(Clone, Debug)]
 pub struct OidcConfig {
     /// Issuer URL, no trailing slash. `{issuer}/.well-known/openid-configuration` is where
