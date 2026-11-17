@@ -157,6 +157,7 @@ pub async fn create_minimal_endpoint(stores: &Stores, owner_id: Uuid, slug: &str
             owner_id,
             slug: slug.parse().unwrap(),
             tag_expr: TagExpr::Has(Tag("unused".parse().unwrap())),
+            internal_tag_expr: None,
             write_ceiling: Access::Read,
             budgets: Budgets::default(),
             instructions: None,

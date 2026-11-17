@@ -142,12 +142,25 @@ pub async fn build_plan(
         .await
         .map_err(|e| ResolveError::Store(e.to_string()))?;
 
+    // Internal api_calls join `calls` like any other — so origins (I2), auth binding (I5) and
+    // the write ceiling all cover them — and are only kept out of `tools` below. A call both
+    // expressions select is exposed: `tag_expr` wins.
     let mut calls = BTreeMap::new();
+    let mut internal: BTreeSet<Slug> = BTreeSet::new();
     for tagged in &all_api_calls {
-        if !eval_tag_expr(&endpoint.tag_expr, &tagged.tags) {
+        let exposed = eval_tag_expr(&endpoint.tag_expr, &tagged.tags);
+        let internal_only = !exposed
+            && endpoint
+                .internal_tag_expr
+                .as_ref()
+                .is_some_and(|e| eval_tag_expr(e, &tagged.tags));
+        if !exposed && !internal_only {
             continue;
         }
         let planned = compile::compile_api_call(stores, owner_id, &tagged.api_call).await?;
+        if internal_only {
+            internal.insert(tagged.api_call.slug.clone());
+        }
         calls.insert(tagged.api_call.slug.clone(), planned);
     }
 
@@ -181,7 +194,13 @@ pub async fn build_plan(
     .await?;
     budgets::assert_write_ceiling(&calls, endpoint.write_ceiling)?;
 
-    let tools = tools::build_tools(&endpoint.aliases, &endpoint.budgets, &calls, &scripts)?;
+    let tools = tools::build_tools(
+        &endpoint.aliases,
+        &endpoint.budgets,
+        &calls,
+        &internal,
+        &scripts,
+    )?;
 
     let digest = digest::compute(
         &endpoint.slug,
@@ -298,6 +317,7 @@ mod tests {
             owner_id,
             slug: "ep-i5-e2e".parse().unwrap(),
             tag_expr: crate::model::TagExpr::Has(Tag("expose".parse().unwrap())),
+            internal_tag_expr: None,
             write_ceiling: crate::model::Access::Read,
             budgets: crate::model::Budgets::default(),
             instructions: None,

@@ -24,8 +24,11 @@ A script is one Rhai expression (or statement sequence) stored as plain text
   slug it actually names. This is I1's declarative half: a script can only ever reach the api_calls
   it declared here, intersected with what the endpoint that exposes it actually selects
   (`EndpointPlan::callable_by`). An alias absent from this map, or naming an api_call the endpoint
-  doesn't expose, is not a permissions error the script can catch and route around — it can never
-  reach `dispatch` at all.
+  doesn't select, is not a permissions error the script can catch and route around — it can never
+  reach `dispatch` at all. "Selects" means the endpoint's `tag_expr` **or** its optional
+  `internal_tag_expr`: an api_call picked only by the latter is reachable from the endpoint's
+  scripts but is not a tool of its own, so a consuming agent cannot call it directly and bypass
+  the script's validation. Either way it is still bounded by the endpoint's `write_ceiling`.
 - **`budgets`** — a script's own opinion on `max_calls`/`max_bytes`/`wall_clock`/`max_pages`/
   `max_concurrency`, always folded with its endpoint's via `Budgets::fold` (element-wise `min`), so
   a script can only *narrow* what its endpoint allows, never widen it (I6).
@@ -124,7 +127,7 @@ Every element `api_many` returns, and everything `api_try` returns, has this sha
 
   | `kind` | Meaning |
   |---|---|
-  | `not_declared` | The alias isn't in this script's `callable` map, or the endpoint doesn't expose the api_call it names — I1 refusing the call before it ever reaches HTTP. |
+  | `not_declared` | The alias isn't in this script's `callable` map, or the endpoint selects the api_call it names by neither `tag_expr` nor `internal_tag_expr` — I1 refusing the call before it ever reaches HTTP. |
   | `not_an_api_call` | The name resolves to a script, not an api_call (only relevant off the direct-invocation path; a script's own `callable` map can never name another script). |
   | `args` | The arguments failed `schema::bind_args` — a required param missing, a type mismatch, an unknown key, or a value outside `enum_values`. |
   | `bind` | The bound arguments couldn't be assembled into a request (I3's containment check, a header outside the allowlist, a body-assignment failure, ...). |

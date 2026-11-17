@@ -31,6 +31,15 @@ fn pack_endpoint_schema() -> Value {
                     this endpoint exposes, e.g. \"has(read) and not has(deprecated)\". Grammar: \
                     has(tag) | not EXPR | EXPR and EXPR | EXPR or EXPR | (EXPR)."
             },
+            "internal_tag_expr": {
+                "type": ["string", "null"],
+                "description": "Optional second expression, same grammar, selecting api_calls \
+                    this endpoint's scripts may call (each still only through its own \
+                    `callable`) without exposing them as tools: they never appear in tools/list \
+                    and tools/call refuses them. Still bounded by write_ceiling. Selects no \
+                    scripts. An api_call tag_expr also selects stays an ordinary tool. Omit or \
+                    null for none."
+            },
             "write_ceiling": {
                 "enum": ["read", "write"],
                 "default": "read",

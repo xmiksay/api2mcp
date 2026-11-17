@@ -122,6 +122,11 @@ the f13 `deploy` repo (chart `charts/api2mcp`); nothing deployment-specific live
 - **Never run `vue-tsc --noEmit` directly against `web/`.** The project is `composite: true`
   (project references), so a bare `--noEmit` invocation can exit `0` while silently checking
   nothing. Always go through `npm run typecheck` (`vue-tsc -b --force`) or `make lint`.
+- **An endpoint has two tag expressions.** `tag_expr` selects tools; the optional
+  `internal_tag_expr` selects api_calls reachable *only* from the endpoint's scripts (still I1 via
+  `callable`, still under `write_ceiling`). Both land in `EndpointPlan::calls`; only `tools`
+  differs. Anything that walks an endpoint's selection (`resolve`, `pack::export`) must evaluate
+  both.
 - **Slugs are unique per owner, not globally.** `ux_*_owner_slug` on `services`/`auth_providers`/
   `api_calls`/`scripts`/`endpoints` — a lookup or a pack import must always scope by `owner_id`,
   never assume a bare slug is globally unique.

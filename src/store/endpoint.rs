@@ -246,6 +246,7 @@ fn to_active_model(endpoint: &EndpointDef, id: Uuid) -> Result<endpoints::Active
         owner_id: Set(endpoint.owner_id),
         slug: Set(endpoint.slug.as_str().to_owned()),
         tag_expr: Set(tag_expr::to_string(&endpoint.tag_expr)),
+        internal_tag_expr: Set(endpoint.internal_tag_expr.as_ref().map(tag_expr::to_string)),
         write_ceiling: Set(access_to_str(endpoint.write_ceiling).to_owned()),
         budgets: Set(budgets_to_json(&endpoint.budgets)),
         instructions: Set(endpoint.instructions.clone()),
@@ -263,7 +264,13 @@ fn to_model(
         owner_id: row.owner_id,
         slug: parse_slug(&row.slug)?,
         tag_expr: tag_expr::parse(&row.tag_expr)
-            .map_err(|e| StoreError::Malformed(e.to_string()))?,
+            .map_err(|e| StoreError::Malformed(format!("endpoints.tag_expr: {e}")))?,
+        internal_tag_expr: row
+            .internal_tag_expr
+            .as_deref()
+            .map(tag_expr::parse)
+            .transpose()
+            .map_err(|e| StoreError::Malformed(format!("endpoints.internal_tag_expr: {e}")))?,
         write_ceiling: str_to_access(&row.write_ceiling)?,
         budgets: json_to_budgets(&row.budgets)?,
         instructions: row.instructions,

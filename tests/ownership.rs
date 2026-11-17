@@ -83,6 +83,7 @@ fn minimal_endpoint(owner_id: Uuid, name: &str) -> EndpointDef {
         owner_id,
         slug: slug(name),
         tag_expr: TagExpr::Has(tag("unused")),
+        internal_tag_expr: None,
         write_ceiling: Access::Read,
         budgets: Budgets::default(),
         instructions: None,

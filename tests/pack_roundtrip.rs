@@ -82,6 +82,7 @@ async fn seed_minimal(stores: &Stores, owner_id: Uuid, suffix: &str) -> Result<S
         owner_id,
         slug: slug(&format!("ep-{suffix}")),
         tag_expr: TagExpr::Has(tag("expose")),
+        internal_tag_expr: None,
         write_ceiling: Access::Read,
         budgets: Budgets::default(),
         instructions: None,
@@ -272,6 +273,7 @@ fn validation_reports_multiple_independent_failures_at_once() {
             "ep-bad".to_owned(),
             api2mcp::pack::PackEndpoint {
                 tag_expr: "has(".to_owned(), // failure #2: malformed tag_expr
+                internal_tag_expr: None,
                 write_ceiling: "read".to_owned(),
                 budgets: Default::default(),
                 instructions: None,

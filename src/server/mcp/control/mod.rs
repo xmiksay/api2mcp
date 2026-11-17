@@ -83,7 +83,10 @@ optional response projection. This is what actually becomes an MCP tool.
 - **endpoint** — a `tag_expr` (e.g. `has(read) and not has(deprecated)`) selecting which \
 api_calls/scripts are exposed as tools at `/mcp/{that endpoint's slug}`, plus a write ceiling and \
 a budget. A tool becomes visible on an endpoint purely by tag membership — tag an api_call or \
-script, then write (or reuse) a `tag_expr` that matches it.
+script, then write (or reuse) a `tag_expr` that matches it. An endpoint's optional \
+`internal_tag_expr` selects api_calls its scripts may call without exposing them as tools — \
+use it for the raw building blocks a script composes, so a consuming agent cannot call them \
+directly and bypass the script.
 
 ## Narrowing what a caller sees
 

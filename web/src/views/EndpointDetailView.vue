@@ -71,6 +71,9 @@ function targetLink(t: PackEndpointTarget): { to: string; label: string } {
     <DetailSection title="selection">
       <dl>
         <FieldRow label="tag expression" mono>{{ endpoint.tag_expr }}</FieldRow>
+        <FieldRow v-if="endpoint.internal_tag_expr" label="internal tag expression" mono>
+          {{ endpoint.internal_tag_expr }}
+        </FieldRow>
         <FieldRow label="write ceiling">
           <StatusPill :label="endpoint.write_ceiling" :tone="accessTone(endpoint.write_ceiling)" />
         </FieldRow>

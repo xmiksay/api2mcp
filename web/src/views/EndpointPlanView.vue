@@ -66,6 +66,18 @@ onMounted(load);
       </p>
     </DetailSection>
 
+    <DetailSection v-if="plan.internal_calls.length > 0" :title="`script-only api_calls (${plan.internal_calls.length})`">
+      <p class="mb-3 text-xs text-ink-dim">
+        Selected by the internal tag expression: reachable from this endpoint's scripts, never
+        listed by tools/list or callable directly.
+      </p>
+      <ul class="flex flex-col gap-1">
+        <li v-for="call in plan.internal_calls" :key="call" class="font-mono text-xs">
+          <RouterLink :to="`/api-calls/${call}`" class="text-read hover:underline">{{ call }}</RouterLink>
+        </li>
+      </ul>
+    </DetailSection>
+
     <DetailSection :title="`tools (${plan.tools.length})`">
       <p v-if="plan.tools.length === 0" class="text-xs text-ink-faint italic">
         this endpoint's tag expression currently selects nothing

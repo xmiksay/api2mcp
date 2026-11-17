@@ -15,6 +15,9 @@ pub struct Model {
     pub owner_id: Uuid,
     pub slug: String,
     pub tag_expr: String,
+    /// Optional second expression: api_calls it selects are reachable from this endpoint's
+    /// scripts (I1) but are never listed or callable as tools. `NULL` means none.
+    pub internal_tag_expr: Option<String>,
     /// `read` | `write`.
     pub write_ceiling: String,
     #[sea_orm(column_type = "JsonBinary")]

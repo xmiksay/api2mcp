@@ -54,8 +54,9 @@ pub enum ConvertError {
     Cardinality(String),
     #[error("json pointer {0:?}: {1}")]
     Pointer(String, String),
-    #[error("tag_expr {0:?}: {1}")]
-    TagExprParse(String, String),
+    /// `(field, parse error)` — the error already quotes the offending input.
+    #[error("{0}: {1}")]
+    TagExprParse(&'static str, String),
 }
 
 pub(crate) fn parse_slug(s: &str) -> Result<Slug, ConvertError> {

@@ -18,6 +18,7 @@ import BudgetsEditor from "@/components/form/BudgetsEditor.vue";
 import AliasEditor from "@/components/form/AliasEditor.vue";
 import { checkboxClass, fieldClass, ghostButtonClass, primaryButtonClass, textareaClass } from "@/lib/formStyle";
 import { slugError } from "@/lib/slug";
+import { endpointPayload } from "@/lib/endpointForm";
 
 const props = defineProps<{ mode: "create" | "edit"; slug?: string }>();
 const router = useRouter();
@@ -61,10 +62,10 @@ async function submit(): Promise<void> {
   errors.value = [];
   try {
     if (props.mode === "create") {
-      await store.create(slugInput.value, form.value);
+      await store.create(slugInput.value, endpointPayload(form.value));
       router.push(`/endpoints/${slugInput.value}`);
     } else if (props.slug) {
-      await store.update(props.slug, form.value);
+      await store.update(props.slug, endpointPayload(form.value));
       router.push(`/endpoints/${props.slug}`);
     }
   } catch (e) {
@@ -96,6 +97,13 @@ async function submit(): Promise<void> {
 
           <FormField label="tag expression" required help="Boolean expression over api_call/script tags, e.g. has(demo) and not has(deprecated).">
             <input v-model="form.tag_expr" :class="fieldClass + ' font-mono'" placeholder="has(demo)" />
+          </FormField>
+
+          <FormField
+            label="internal tag expression"
+            help="Optional. api_calls it selects are callable by this endpoint's scripts (through their callable list) but are not exposed as tools. Still bounded by the write ceiling. Leave empty for none."
+          >
+            <input v-model="form.internal_tag_expr" :class="fieldClass + ' font-mono'" placeholder="has(raw)" />
           </FormField>
 
           <div class="grid grid-cols-2 gap-4">

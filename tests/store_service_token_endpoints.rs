@@ -26,6 +26,7 @@ fn minimal_endpoint(owner_id: uuid::Uuid, name: &str) -> EndpointDef {
         // which is fine: these tests only need the endpoint row and its id to exist, never a
         // working plan.
         tag_expr: TagExpr::Has(api2mcp::model::Tag(slug("unused-tag"))),
+        internal_tag_expr: None,
         write_ceiling: Access::Read,
         budgets: Budgets::default(),
         instructions: None,

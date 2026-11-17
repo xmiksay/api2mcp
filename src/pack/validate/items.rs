@@ -173,13 +173,19 @@ pub(super) fn validate_endpoint(
     slug: &str,
     endpoint: &PackEndpoint,
 ) {
-    if let Err(e) = crate::resolve::tag_expr::parse(&endpoint.tag_expr) {
-        // `TagExprError`'s own `Display` already reads "endpoints.tag_expr {input:?}: ...", so
-        // this doesn't re-wrap it with a second "tag_expr {:?}:" prefix.
-        errors.push(ValidationError::Endpoint {
-            slug: slug.to_owned(),
-            message: e.to_string(),
-        });
+    let exprs = [
+        ("tag_expr", Some(&endpoint.tag_expr)),
+        ("internal_tag_expr", endpoint.internal_tag_expr.as_ref()),
+    ];
+    for (field, expr) in exprs {
+        if let Some(expr) = expr
+            && let Err(e) = crate::resolve::tag_expr::parse(expr)
+        {
+            errors.push(ValidationError::Endpoint {
+                slug: slug.to_owned(),
+                message: format!("{field}: {e}"),
+            });
+        }
     }
     if endpoint.write_ceiling != "read" && endpoint.write_ceiling != "write" {
         errors.push(ValidationError::Endpoint {
