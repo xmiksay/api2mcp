@@ -67,7 +67,8 @@ MCP control plane cannot see auth providers at all.
 from an api_call (`PackApiCall` has no `auth_provider` field; `Pack` has no `auth_providers` map,
 and `#[serde(deny_unknown_fields)]` rejects one from an older pack outright rather than silently
 ignoring it). Importing a pack never creates or touches a credential; a provider is wired up
-afterwards, per service, directly through `/api/auth_providers` or the CLI.
+afterwards, per service, through `/api/auth_providers` (the web UI's auth-provider screens) — a
+signed-in session is the only way to create, change or delete one; there is no CLI command for it.
 
 **Every definition is owned.** `owner_id` sits on `services`, `auth_providers`, `api_calls`,
 `scripts`, `endpoints`, `runs` and `service_tokens`. Slugs are unique **per owner**
