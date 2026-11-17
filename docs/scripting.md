@@ -34,6 +34,9 @@ A script is one Rhai expression (or statement sequence) stored as plain text
   ```
 
   A typo is still caught: `labesl` is not a declared param, so it fails compilation.
+
+  An MCP caller of the script must **omit** an optional param to leave it out — sending an
+  explicit `null` is a type error (`args`), exactly as it is for an api_call's params.
 - **`callable`** — a map from the alias a script uses inside `api(alias, ...)` to the `api_call`
   slug it actually names. This is I1's declarative half: a script can only ever reach the api_calls
   it declared here, intersected with what the endpoint that exposes it actually selects
@@ -78,12 +81,14 @@ let item = api("get", #{ "id": "3" });
 
 - `name` — the alias declared in this script's `callable` map.
 - `args` — a Rhai object map (`#{...}`) of the target api_call's own parameters. A `()` value for
-  an **optional** param means "omitted" — the key is dropped before validation, so the param's
-  `default` (if any) applies and nothing is sent for it. That lets a script forward its own
-  possibly-omitted params, or fields copied from an upstream response, without a "drop unit
-  values" pass first: `api("update", #{ id: id, labels: labels })`. A `()` for a **required**
-  param is still an `args` error, and so is any key the api_call doesn't declare. The same holds
-  for every element of `api_many`'s list and for `api_try`.
+  a param the caller may leave out — an **optional** one, or any param with a `default` — means
+  "omitted": the key is dropped before validation, so the `default` (if any) applies, otherwise
+  nothing is sent for it. That lets a script forward its own possibly-omitted params, or fields
+  copied from an upstream response, without a "drop unit values" pass first:
+  `api("update", #{ id: id, labels: labels })`. A `()` for a **required** param with no
+  `default` is still an `args` error, and so is any key the api_call doesn't declare. The same
+  holds for every element of `api_many`'s list and for `api_try`. This applies to a script's
+  arguments only — a direct MCP caller's explicit `null` is still a type error.
 - Returns the api_call's projected value directly on success.
 - **Throws a catchable exception** (`try`/`catch`-able) on any per-item failure. The thrown value
   is the [error object](#the-per-item-result-shape) itself — a map with at least `kind`,

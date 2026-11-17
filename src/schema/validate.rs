@@ -100,20 +100,24 @@ pub fn bind_args(
     Ok(bound)
 }
 
-/// Drops every top-level `null` naming an *optional* declared param, so a script's `()` (which
-/// marshals to `null`) reads as "omitted" rather than failing coercion — without this, a script
-/// building an args map from an upstream response needs its own "drop unit values" pass before
-/// every `api()`. A `null` for a required param, or under a name no param declares, is kept for
+/// Drops every top-level `null` naming a declared param the caller may leave out — one that is
+/// optional, or that has a `default` — so a script's `()` (which marshals to `null`) reads exactly
+/// as omission would: the default applies, or nothing is sent. Without this, a script building an
+/// args map from an upstream response needs its own "drop unit values" pass before every `api()`.
+/// A `null` for a required param with no default, or under a name no param declares, is kept for
 /// [`bind_args`] to reject exactly as before.
 pub fn omit_null_optionals(params: &[Param], args: &Value) -> Value {
     let Some(obj) = args.as_object() else {
         return args.clone();
     };
+    let omittable = |name: &str| {
+        params
+            .iter()
+            .any(|p| p.name == name && (!p.required || p.default.is_some()))
+    };
     let kept = obj
         .iter()
-        .filter(|(name, value)| {
-            !(value.is_null() && params.iter().any(|p| &p.name == *name && !p.required))
-        })
+        .filter(|(name, value)| !(value.is_null() && omittable(name)))
         .map(|(name, value)| (name.clone(), value.clone()))
         .collect();
     Value::Object(kept)
@@ -256,6 +260,17 @@ mod tests {
                 got: "null"
             }
         );
+    }
+
+    #[test]
+    fn omit_null_optionals_treats_a_required_param_with_a_default_as_omittable() {
+        let mut p = param("limit", ParamType::Integer, true, 0);
+        p.default = Some(json!(20));
+        let params = vec![p];
+        let cleaned = omit_null_optionals(&params, &json!({"limit": null}));
+        assert_eq!(cleaned, json!({}));
+        let bound = bind_args(&params, &cleaned).unwrap();
+        assert_eq!(bound.get("limit"), Some(&json!(20)));
     }
 
     #[test]
