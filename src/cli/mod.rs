@@ -1,7 +1,9 @@
 //! The `api2mcp` command line.
 //!
 //! Subcommands are the local-process entry points for everything an agent must never be able to
-//! do: importing definitions, minting tokens, binding an auth provider to an origin (I5).
+//! do: importing definitions, minting and revoking tokens, managing users, running migrations.
+//! Auth providers (the I5 origin binding) are deliberately absent: they are created and changed
+//! only through a signed-in session, `server::api::auth_providers`.
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};

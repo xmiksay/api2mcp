@@ -1,7 +1,8 @@
 //! `endpoint_auth_providers` — I5's human-set join: which auth providers an endpoint is
-//! permitted to bind to. No MCP tool or write route touches this table; only
-//! `pack/import.rs` and the `cli` write it (`store::auth_provider`'s write methods are
-//! `pub(crate)` with exactly those two callers).
+//! permitted to bind to. Written only through `store::endpoint`, by a human: the
+//! `/api/endpoints` routes or a pack import (`api2mcp import`, `POST /api/packs/import`). The
+//! control-plane MCP `endpoint.*` tools cannot choose it — they pin it empty on create and
+//! preserve the existing set on update.
 
 use sea_orm::entity::prelude::*;
 

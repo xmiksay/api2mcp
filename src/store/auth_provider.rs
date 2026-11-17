@@ -4,8 +4,9 @@
 //! is wired behind the [`crate::server::identity::Caller`] extractor, which only ever resolves
 //! from a session cookie (never an `Authorization` bearer token, see that extractor's own doc),
 //! so a service token cannot construct a `Caller` at all and therefore cannot reach this
-//! module's write surface regardless of its scopes. `pack::import` and `cli` are this crate's
-//! other two humans-in-the-loop; no MCP tool reaches these methods under any caller.
+//! module's write surface regardless of its scopes. That route is the only non-test caller of
+//! the write methods: `pack::import` never touches auth providers (a pack carries none), the
+//! `cli` only reads them, and no MCP tool reaches these methods under any caller.
 //!
 //! The DB's `kind` CHECK allows three values (`header`, `bearer`,
 //! `oauth2_client_credentials`) but [`crate::model::AuthKind`] has two variants: `header`
@@ -117,10 +118,9 @@ impl AuthProviderStore {
         Ok(out)
     }
 
-    /// I5: a human (via `pack::import`, `cli`, or an admin-session request handled by
-    /// `server::api::auth_providers`) is the only caller that may bind a credential to an
-    /// origin — see this module's own doc for why that's true structurally, not just by
-    /// convention. `provider.owner_id` must already equal the owner of `provider.service_slug`'s
+    /// I5: a human (a signed-in session request handled by `server::api::auth_providers`) is the
+    /// only caller that may bind a credential to an origin — see this module's own doc for why
+    /// that's true structurally, not just by convention. `provider.owner_id` must already equal the owner of `provider.service_slug`'s
     /// service — resolving the service scoped to that same owner is what enforces "cannot attach
     /// a credential to someone else's service" rather than merely documenting it.
     pub(crate) async fn create(&self, provider: &AuthProvider) -> Result<(), StoreError> {
