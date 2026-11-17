@@ -40,33 +40,35 @@ pub struct UrlTemplate {
 #[derive(Debug, Clone, PartialEq, Eq, Error, Serialize)]
 #[serde(tag = "error", rename_all = "snake_case")]
 pub enum TemplateError {
-    #[error("template {0:?} must start with '/'")]
-    NotAbsolute(String),
-    #[error("template {0:?} must not start with '//'")]
-    DoubleSlashStart(String),
-    #[error("template {0:?} must not contain '?' or '#'")]
-    ContainsQueryOrFragment(String),
-    #[error("template {0:?} must not contain a scheme separator '://'")]
-    ContainsSchemeSeparator(String),
-    #[error("segment {0:?} mixes literal text with a placeholder, or is a malformed placeholder")]
-    MixedSegment(String),
-    #[error("segment {0:?} is a '.' or '..' dot-segment")]
-    DotSegment(String),
+    #[error("template {template:?} must start with '/'")]
+    NotAbsolute { template: String },
+    #[error("template {template:?} must not start with '//'")]
+    DoubleSlashStart { template: String },
+    #[error("template {template:?} must not contain '?' or '#'")]
+    ContainsQueryOrFragment { template: String },
+    #[error("template {template:?} must not contain a scheme separator '://'")]
+    ContainsSchemeSeparator { template: String },
+    #[error(
+        "segment {segment:?} mixes literal text with a placeholder, or is a malformed placeholder"
+    )]
+    MixedSegment { segment: String },
+    #[error("segment {segment:?} is a '.' or '..' dot-segment")]
+    DotSegment { segment: String },
     #[error("template contains an empty path segment")]
     EmptySegment,
-    #[error("placeholder {0:?} is declared more than once")]
-    DuplicatePlaceholder(String),
-    #[error("literal segment {0:?} contains a malformed percent-encoding")]
-    MalformedPercentEncoding(String),
+    #[error("placeholder {placeholder:?} is declared more than once")]
+    DuplicatePlaceholder { placeholder: String },
+    #[error("literal segment {segment:?} contains a malformed percent-encoding")]
+    MalformedPercentEncoding { segment: String },
 
-    #[error("no value supplied for placeholder {0:?}")]
-    MissingValue(String),
-    #[error("value for placeholder {0:?} is empty")]
-    EmptyValue(String),
-    #[error("value for placeholder {0:?} is exactly '.' or '..'")]
-    DotValue(String),
-    #[error("value for placeholder {0:?} contains a control character")]
-    ControlCharacter(String),
+    #[error("no value supplied for placeholder {placeholder:?}")]
+    MissingValue { placeholder: String },
+    #[error("value for placeholder {placeholder:?} is empty")]
+    EmptyValue { placeholder: String },
+    #[error("value for placeholder {placeholder:?} is exactly '.' or '..'")]
+    DotValue { placeholder: String },
+    #[error("value for placeholder {placeholder:?} contains a control character")]
+    ControlCharacter { placeholder: String },
 }
 
 /// Unreserved characters per RFC 3986 §2.3 (`ALPHA / DIGIT / "-" / "." / "_" / "~"`) are the only
@@ -84,16 +86,24 @@ impl UrlTemplate {
     /// rejection list.
     pub fn parse(template: &str) -> Result<UrlTemplate, TemplateError> {
         if !template.starts_with('/') {
-            return Err(TemplateError::NotAbsolute(template.to_owned()));
+            return Err(TemplateError::NotAbsolute {
+                template: template.to_owned(),
+            });
         }
         if template.starts_with("//") {
-            return Err(TemplateError::DoubleSlashStart(template.to_owned()));
+            return Err(TemplateError::DoubleSlashStart {
+                template: template.to_owned(),
+            });
         }
         if template.contains('?') || template.contains('#') {
-            return Err(TemplateError::ContainsQueryOrFragment(template.to_owned()));
+            return Err(TemplateError::ContainsQueryOrFragment {
+                template: template.to_owned(),
+            });
         }
         if template.contains("://") {
-            return Err(TemplateError::ContainsSchemeSeparator(template.to_owned()));
+            return Err(TemplateError::ContainsSchemeSeparator {
+                template: template.to_owned(),
+            });
         }
         if template == "/" {
             return Ok(UrlTemplate {
@@ -111,7 +121,9 @@ impl UrlTemplate {
             if let Segment::Placeholder(name) = &segment
                 && !seen.insert(name.clone())
             {
-                return Err(TemplateError::DuplicatePlaceholder(name.clone()));
+                return Err(TemplateError::DuplicatePlaceholder {
+                    placeholder: name.clone(),
+                });
             }
             segments.push(segment);
         }
@@ -139,7 +151,9 @@ impl UrlTemplate {
                 Segment::Placeholder(name) => {
                     let value = values
                         .get(name)
-                        .ok_or_else(|| TemplateError::MissingValue(name.clone()))?;
+                        .ok_or_else(|| TemplateError::MissingValue {
+                            placeholder: name.clone(),
+                        })?;
                     validate_value(name, value)?;
                     out.extend(utf8_percent_encode(value, UNRESERVED_ENCODE_SET));
                 }
@@ -154,15 +168,23 @@ fn parse_segment(raw: &str) -> Result<Segment, TemplateError> {
         let inner = raw.strip_prefix('{').and_then(|s| s.strip_suffix('}'));
         let name = match inner {
             Some(name) if !name.is_empty() && !name.contains(['{', '}']) => name,
-            _ => return Err(TemplateError::MixedSegment(raw.to_owned())),
+            _ => {
+                return Err(TemplateError::MixedSegment {
+                    segment: raw.to_owned(),
+                });
+            }
         };
         if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-            return Err(TemplateError::MixedSegment(raw.to_owned()));
+            return Err(TemplateError::MixedSegment {
+                segment: raw.to_owned(),
+            });
         }
         return Ok(Segment::Placeholder(name.to_owned()));
     }
     if raw == "." || raw == ".." {
-        return Err(TemplateError::DotSegment(raw.to_owned()));
+        return Err(TemplateError::DotSegment {
+            segment: raw.to_owned(),
+        });
     }
     validate_percent_encoding(raw)?;
     Ok(Segment::Literal(raw.to_owned()))
@@ -177,7 +199,9 @@ fn validate_percent_encoding(s: &str) -> Result<(), TemplateError> {
                 .get(i + 1..i + 3)
                 .is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit));
             if !valid {
-                return Err(TemplateError::MalformedPercentEncoding(s.to_owned()));
+                return Err(TemplateError::MalformedPercentEncoding {
+                    segment: s.to_owned(),
+                });
             }
             i += 3;
         } else {
@@ -199,13 +223,19 @@ fn validate_percent_encoding(s: &str) -> Result<(), TemplateError> {
 /// then normalise the segment away.
 fn validate_value(name: &str, value: &str) -> Result<(), TemplateError> {
     if value.is_empty() {
-        return Err(TemplateError::EmptyValue(name.to_owned()));
+        return Err(TemplateError::EmptyValue {
+            placeholder: name.to_owned(),
+        });
     }
     if value == "." || value == ".." {
-        return Err(TemplateError::DotValue(name.to_owned()));
+        return Err(TemplateError::DotValue {
+            placeholder: name.to_owned(),
+        });
     }
     if value.chars().any(is_control_char) {
-        return Err(TemplateError::ControlCharacter(name.to_owned()));
+        return Err(TemplateError::ControlCharacter {
+            placeholder: name.to_owned(),
+        });
     }
     Ok(())
 }

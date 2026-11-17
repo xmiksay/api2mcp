@@ -225,3 +225,23 @@ fn budget_trip_classification_matches_the_two_axes_that_can_smuggle_in_as_per_it
     }));
     assert_eq!(ordinary.budget_trip(), None);
 }
+
+#[test]
+fn http_status_detail_truncates_on_a_char_boundary() {
+    // 511 ASCII bytes, then a 2-byte 'é' straddling the 512-byte cap: a byte-index truncate
+    // would panic here.
+    let body = format!("{}é tail", "a".repeat(511));
+    let page = CallResponse {
+        status: ::http::StatusCode::BAD_REQUEST,
+        headers: ::http::HeaderMap::new(),
+        url: "https://api.example.test/x".parse().unwrap(),
+        body: body.into_bytes(),
+    };
+    match http_status_error(&page) {
+        DispatchError::HttpStatus { status, detail, .. } => {
+            assert_eq!(status, 400);
+            assert_eq!(detail, format!("{}\u{2026}", "a".repeat(511)));
+        }
+        other => panic!("expected HttpStatus, got {other:?}"),
+    }
+}
