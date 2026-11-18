@@ -294,42 +294,64 @@ async fn control_plane_test_tools_default_a_missing_args_to_an_empty_object() ->
         assert!(!is_error(&created), "{tool}: {created:?}");
     }
 
-    // Neither `args` key is sent at all — issue #10.
-    let api_call = rpc(
-        &h.router,
-        &h.control_token,
-        "/mcp",
-        call_tool(
-            10,
-            "api_call.test",
-            json!({"slug": "get-one", "endpoint": "ep-t"}),
-        ),
-    )
-    .await;
-    assert!(!is_error(&api_call), "got {api_call:?}");
-    assert_eq!(
-        tool_json(&api_call)["status"],
-        json!("ok"),
-        "got {api_call:?}"
-    );
+    // Issue #10: an absent or `null` `args` runs as `{}`; a non-object is still a binding error.
+    let cases = [
+        ("absent", None, true),
+        ("null", Some(json!(null)), true),
+        ("string", Some(json!("x")), false),
+        ("array", Some(json!([])), false),
+    ];
+    for (id, (case, args, accepted)) in (10..).zip(cases) {
+        let mut api_call_req = json!({"slug": "get-one", "endpoint": "ep-t"});
+        let mut script_req = json!({"slug": "hello", "endpoint": "ep-t"});
+        if let Some(args) = args {
+            api_call_req["args"] = args.clone();
+            script_req["args"] = args;
+        }
 
-    let script = rpc(
-        &h.router,
-        &h.control_token,
-        "/mcp",
-        call_tool(
-            11,
-            "script.test",
-            json!({"slug": "hello", "endpoint": "ep-t"}),
-        ),
-    )
-    .await;
-    assert!(!is_error(&script), "got {script:?}");
-    assert_eq!(
-        tool_json(&script)["value"],
-        json!({"hello": "world"}),
-        "got {script:?}"
-    );
+        let resp = rpc(
+            &h.router,
+            &h.control_token,
+            "/mcp",
+            call_tool(id, "api_call.test", api_call_req),
+        )
+        .await;
+        let api_call = tool_json(&resp);
+        if accepted {
+            assert_eq!(api_call["status"], json!("ok"), "{case}: {resp:?}");
+        } else {
+            assert_eq!(api_call["status"], json!("error"), "{case}: {resp:?}");
+            assert!(
+                api_call["error"]
+                    .as_str()
+                    .is_some_and(|e| e.contains("must be a JSON object")),
+                "{case}: {resp:?}"
+            );
+        }
+
+        let resp = rpc(
+            &h.router,
+            &h.control_token,
+            "/mcp",
+            call_tool(id + 100, "script.test", script_req),
+        )
+        .await;
+        let script = tool_json(&resp);
+        if accepted {
+            assert_eq!(
+                script["value"],
+                json!({"hello": "world"}),
+                "{case}: {resp:?}"
+            );
+        } else {
+            assert!(
+                script["failure"]["message"]
+                    .as_str()
+                    .is_some_and(|m| m.contains("must be a JSON object")),
+                "{case}: {resp:?}"
+            );
+        }
+    }
 
     h.db.teardown().await
 }
