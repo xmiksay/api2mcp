@@ -142,7 +142,7 @@ pub(super) fn descriptors() -> Vec<Value> {
                     "args": {
                         "type": "object",
                         "description": "Arguments for the api_call's own model-visible params, \
-                            as tools/call would send them."
+                            as tools/call would send them. Optional; omitted means {}."
                     }
                 },
                 "required": ["slug", "endpoint"]
@@ -214,6 +214,16 @@ async fn test(state: &AppState, owner_id: Uuid, a: TestArgs) -> ToolOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_args_are_optional_in_the_input_schema() {
+        let d = descriptors()
+            .into_iter()
+            .find(|d| d["name"] == json!("api_call.test"))
+            .expect("api_call.test descriptor");
+        let required = d["inputSchema"]["required"].as_array().expect("required");
+        assert!(!required.contains(&json!("args")), "got {required:?}");
+    }
 
     #[test]
     fn no_descriptor_mentions_auth_provider() {

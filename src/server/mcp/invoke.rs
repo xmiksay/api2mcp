@@ -71,7 +71,13 @@ pub async fn dispatch(
                 .and_then(Value::as_str)
                 .ok_or(DispatchError::MissingToolName)?
                 .to_owned();
-            let inner_args = arguments.get("args").cloned().unwrap_or_else(|| json!({}));
+            // A model filling in `invoke` often writes `"args": null` for a param-less tool; that
+            // means "no arguments", same as leaving it out.
+            let inner_args = arguments
+                .get("args")
+                .filter(|v| !v.is_null())
+                .cloned()
+                .unwrap_or_else(|| json!({}));
             run_named_tool(
                 executor,
                 plan,

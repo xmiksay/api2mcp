@@ -146,3 +146,72 @@ async fn invoke_dispatches_to_the_same_tool_as_a_direct_call() -> Result<()> {
 
     h.db.teardown().await
 }
+
+#[tokio::test]
+async fn tools_call_without_arguments_binds_as_an_empty_object() -> Result<()> {
+    let Some(h) = setup().await? else {
+        return Ok(());
+    };
+
+    // `arguments` is optional in MCP `tools/call`: a param-less script and an api_call whose
+    // only param is optional must both run without it.
+    for (id, name) in [(1, "list-items"), (2, "item-summary")] {
+        let resp = rpc(
+            &h.router,
+            &h.token,
+            "/mcp/demo",
+            req(id, "tools/call", Some(json!({"name": name}))),
+        )
+        .await;
+        assert!(resp["error"].is_null(), "{name}: {resp:?}");
+        assert!(resp["result"]["isError"].is_null(), "{name}: {resp:?}");
+    }
+
+    h.db.teardown().await
+}
+
+#[tokio::test]
+async fn invoke_treats_a_null_or_absent_args_as_an_empty_object() -> Result<()> {
+    let Some(h) = setup().await? else {
+        return Ok(());
+    };
+
+    let cases = [
+        ("absent", json!({"tool_name": "list-items"})),
+        ("null", json!({"tool_name": "list-items", "args": null})),
+    ];
+    for (id, (case, arguments)) in (1..).zip(cases) {
+        let resp = rpc(
+            &h.router,
+            &h.token,
+            "/mcp/demo",
+            req(
+                id,
+                "tools/call",
+                Some(json!({"name": "invoke", "arguments": arguments})),
+            ),
+        )
+        .await;
+        assert!(resp["error"].is_null(), "{case}: {resp:?}");
+        assert!(resp["result"]["isError"].is_null(), "{case}: {resp:?}");
+    }
+
+    // A present non-object is still a tool failure, not silently replaced.
+    let resp = rpc(
+        &h.router,
+        &h.token,
+        "/mcp/demo",
+        req(
+            3,
+            "tools/call",
+            Some(json!({
+                "name": "invoke",
+                "arguments": {"tool_name": "list-items", "args": "x"}
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(resp["result"]["isError"], json!(true), "got {resp:?}");
+
+    h.db.teardown().await
+}

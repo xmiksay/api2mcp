@@ -258,3 +258,100 @@ async fn control_plane_access_does_not_grant_data_plane_access_not_separately_gr
 
     h.db.teardown().await
 }
+
+#[tokio::test]
+async fn control_plane_test_tools_default_a_missing_args_to_an_empty_object() -> Result<()> {
+    let Some(h) = setup().await? else {
+        return Ok(());
+    };
+    h.fixture.set(
+        "/items/1",
+        Behavior::Json(json!({"id": "1", "title": "One"})),
+    );
+    let defs = [
+        (
+            "service.create",
+            service_body("svc-t", &h.fixture.base_url()),
+        ),
+        (
+            "api_call.create",
+            api_call_body("get-one", "svc-t", "/items/1", &["t"]),
+        ),
+        (
+            "script.create",
+            json!({"slug": "hello", "source": "#{ \"hello\": \"world\" }", "tags": ["t"]}),
+        ),
+        ("endpoint.create", endpoint_body("ep-t", "has(t)")),
+    ];
+    for (id, (tool, body)) in (1..).zip(defs) {
+        let created = rpc(
+            &h.router,
+            &h.control_token,
+            "/mcp",
+            call_tool(id, tool, body),
+        )
+        .await;
+        assert!(!is_error(&created), "{tool}: {created:?}");
+    }
+
+    // Issue #10: an absent or `null` `args` runs as `{}`; a non-object is still a binding error.
+    let cases = [
+        ("absent", None, true),
+        ("null", Some(json!(null)), true),
+        ("string", Some(json!("x")), false),
+        ("array", Some(json!([])), false),
+    ];
+    for (id, (case, args, accepted)) in (10..).zip(cases) {
+        let mut api_call_req = json!({"slug": "get-one", "endpoint": "ep-t"});
+        let mut script_req = json!({"slug": "hello", "endpoint": "ep-t"});
+        if let Some(args) = args {
+            api_call_req["args"] = args.clone();
+            script_req["args"] = args;
+        }
+
+        let resp = rpc(
+            &h.router,
+            &h.control_token,
+            "/mcp",
+            call_tool(id, "api_call.test", api_call_req),
+        )
+        .await;
+        let api_call = tool_json(&resp);
+        if accepted {
+            assert_eq!(api_call["status"], json!("ok"), "{case}: {resp:?}");
+        } else {
+            assert_eq!(api_call["status"], json!("error"), "{case}: {resp:?}");
+            assert!(
+                api_call["error"]
+                    .as_str()
+                    .is_some_and(|e| e.contains("must be a JSON object")),
+                "{case}: {resp:?}"
+            );
+        }
+
+        let resp = rpc(
+            &h.router,
+            &h.control_token,
+            "/mcp",
+            call_tool(id + 100, "script.test", script_req),
+        )
+        .await;
+        let script = tool_json(&resp);
+        if accepted {
+            assert_eq!(
+                script["value"],
+                json!({"hello": "world"}),
+                "{case}: {resp:?}"
+            );
+        } else {
+            assert!(
+                script["failure"]["message"]
+                    .as_str()
+                    .is_some_and(|m| m.contains("must be a JSON object")),
+                "{case}: {resp:?}"
+            );
+        }
+    }
+
+    h.db.teardown().await
+}

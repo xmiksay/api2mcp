@@ -117,7 +117,8 @@ pub(super) fn descriptors() -> Vec<Value> {
                     },
                     "args": {
                         "type": "object",
-                        "description": "Arguments for the script's own model-visible params."
+                        "description": "Arguments for the script's own model-visible params. \
+                            Optional; omitted means {}."
                     }
                 },
                 "required": ["slug", "endpoint"]
@@ -186,6 +187,16 @@ async fn test(state: &AppState, owner_id: Uuid, a: TestArgs) -> ToolOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_args_are_optional_in_the_input_schema() {
+        let d = descriptors()
+            .into_iter()
+            .find(|d| d["name"] == json!("script.test"))
+            .expect("script.test descriptor");
+        let required = d["inputSchema"]["required"].as_array().expect("required");
+        assert!(!required.contains(&json!("args")), "got {required:?}");
+    }
 
     #[test]
     fn every_descriptor_has_a_name_description_and_input_schema() {
