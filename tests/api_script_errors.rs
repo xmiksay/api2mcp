@@ -107,12 +107,12 @@ async fn seed(h: &Harness, fixture: &Fixture, source: &str, budgets: Budgets) ->
     Ok(())
 }
 
-async fn run_probe(h: &Harness) -> Value {
+async fn run_probe(h: &Harness, include_raw: Value) -> Value {
     let (status, body) = admin(
         h,
         Method::POST,
         "/api/scripts/probe/test",
-        Some(json!({"args": {}, "endpoint": "ep"})),
+        Some(json!({"args": {}, "endpoint": "ep", "include_raw": include_raw})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "body: {body:?}");
@@ -140,7 +140,7 @@ async fn a_caught_api_error_is_the_typed_object_with_kind_and_status() -> Result
     "#;
     seed(&h, &fixture, source, Budgets::default()).await?;
 
-    let body = run_probe(&h).await;
+    let body = run_probe(&h, json!(false)).await;
     assert!(body["failure"].is_null(), "body: {body:?}");
     let value = &body["value"];
     let unauthorized = &value["unauthorized"];
@@ -195,7 +195,8 @@ async fn calls_refused_before_any_request_are_listed_with_their_error() -> Resul
     };
     seed(&h, &fixture, source, budgets).await?;
 
-    let body = run_probe(&h).await;
+    // `include_raw: null` is accepted and means false.
+    let body = run_probe(&h, Value::Null).await;
     assert!(body["failure"].is_null(), "body: {body:?}");
     let value = &body["value"];
     assert_eq!(value["bad_args"]["kind"], json!("args"));
@@ -213,7 +214,8 @@ async fn calls_refused_before_any_request_are_listed_with_their_error() -> Resul
         assert_eq!(c["api_call_slug"], json!("get-item"));
         assert_eq!(c["service_slug"], json!("svc"));
         assert_eq!(c["error"]["kind"], json!(kind));
-        assert!(c["status_code"].is_null() && c["raw"].is_null(), "{c:?}");
+        assert!(c["status_code"].is_null(), "{c:?}");
+        assert!(c.get("raw").is_none(), "raw is absent by default: {c:?}");
         assert!(c["response_bytes"].is_null());
     }
     assert_eq!(calls[1]["status_code"], json!(200));
@@ -223,6 +225,14 @@ async fn calls_refused_before_any_request_are_listed_with_their_error() -> Resul
         1,
         "only the valid in-budget call reached HTTP"
     );
+
+    // With include_raw, a refused call's `raw` is an explicit `null`, not absent.
+    let body = run_probe(&h, json!(true)).await;
+    let calls = body["calls"].as_array().expect("calls array");
+    for i in [0, 2] {
+        assert_eq!(calls[i].get("raw"), Some(&Value::Null), "{:?}", calls[i]);
+    }
+    assert_eq!(calls[1]["raw"], json!({"id": "1"}));
 
     h.db.teardown().await
 }
@@ -244,7 +254,7 @@ async fn an_uncaught_api_error_keeps_its_call_and_names_the_kind() -> Result<()>
     )
     .await?;
 
-    let body = run_probe(&h).await;
+    let body = run_probe(&h, json!(false)).await;
     let failure = &body["failure"];
     assert_eq!(failure["kind"], json!("runtime"));
     let message = failure["message"].as_str().expect("message");

@@ -114,7 +114,9 @@ pub struct ApiCallTestResult {
     /// The value after the api_call's own projection (if any) was applied — what a real MCP
     /// caller would see.
     pub projected: Option<Value>,
+    /// From the last page of a paginated call, like `raw`.
     pub status_code: Option<u16>,
+    /// The sum over *every* page's body, so it can exceed the size of `raw` (last page only).
     pub response_bytes: Option<u64>,
     /// The upstream's own response body for this call, straight from the audit row —
     /// unprojected, so an author can see exactly what a projection kept or dropped. Outer
@@ -191,6 +193,8 @@ pub struct ScriptCallView {
     pub seq: i32,
     pub api_call_slug: String,
     pub service_slug: String,
+    /// `status_code` and `raw` come from the last page of a paginated call; `response_bytes` is
+    /// the sum over every page's body (`runtime::recorder`).
     pub status_code: Option<u16>,
     pub response_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]

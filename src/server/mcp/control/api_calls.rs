@@ -79,7 +79,7 @@ struct TestArgs {
     #[serde(default)]
     args: Value,
     #[serde(default)]
-    include_raw: bool,
+    include_raw: Option<bool>,
 }
 
 pub(super) fn descriptors() -> Vec<Value> {
@@ -214,7 +214,7 @@ async fn test(state: &AppState, owner_id: Uuid, a: TestArgs) -> ToolOutcome {
         &endpoint_slug,
         &api_call_slug,
         a.args,
-        a.include_raw,
+        a.include_raw.unwrap_or(false),
         &caller,
     )
     .await

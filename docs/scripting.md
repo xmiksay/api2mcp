@@ -404,8 +404,11 @@ order, **even when the script then failed**. Each carries `status_code` and `res
 a response came back, and `error` (the error object above) when the item failed. The redacted
 `raw` upstream body is **opt-in**: send `"include_raw": true` in the request body (or as the
 `script.test` control-plane tool argument) to get it; by default the field is absent, since a
-script paging through many responses can return megabytes of raw bodies for a small result. An
-item refused before any HTTP request — bad arguments, or the run's `max_calls` budget — is listed
-too, with its `error` set and `status_code`/`response_bytes` (and `raw`, when included) `null`. (A thrown
+script paging through many responses can return megabytes of raw bodies for a small result. The
+control-plane `run.get` takes the same flag with the same default. For a paginated call,
+`status_code` and `raw` describe the last page while `response_bytes` is the sum over every page's
+body. An item refused before any HTTP request — bad arguments, or the run's `max_calls` budget —
+is listed too, with its `error` set and `status_code`/`response_bytes` (and `raw`, when included)
+`null`. (A thrown
 `not_declared`/`batch_too_large` is not a call and is not listed; it is the `failure` or the
 caught exception.)

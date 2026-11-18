@@ -28,7 +28,7 @@ function statusTone(code: number | null): "ok" | "error" | "neutral" {
 <template>
   <ol v-if="calls.length > 0" class="flex flex-col gap-2">
     <li v-for="call in calls" :key="call.seq" class="border border-border">
-      <button type="button" class="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-surface-raised" @click="toggle(call.seq)">
+      <button type="button" class="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-surface-raised" @click="call.raw !== undefined && toggle(call.seq)">
         <span class="w-8 shrink-0 text-xs text-ink-faint">#{{ call.seq }}</span>
         <span class="shrink-0 font-medium text-ink">{{ call.api_call_slug }}</span>
         <span class="shrink-0 text-xs text-ink-faint">via {{ call.service_slug }}</span>

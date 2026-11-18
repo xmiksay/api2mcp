@@ -158,11 +158,13 @@ pub(crate) struct RunCallView {
     error: Option<String>,
     /// The upstream's own response body, straight from the audit row — see `test_run`'s module
     /// doc for the same "raw vs. projected" reasoning applied to the run log's own history, not
-    /// just a fresh test run.
-    raw: Option<Value>,
+    /// just a fresh test run. Outer `None` (field absent) when the caller left raw bodies out —
+    /// only `run.get` on the control plane does; the SPA's `GET /api/runs/{id}` always includes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw: Option<Option<Value>>,
 }
 
-pub(crate) fn call_view(c: &RunCall) -> RunCallView {
+pub(crate) fn call_view(c: &RunCall, include_raw: bool) -> RunCallView {
     RunCallView {
         seq: c.seq,
         api_call_slug: c.api_call_slug.as_str().to_owned(),
@@ -174,7 +176,7 @@ pub(crate) fn call_view(c: &RunCall) -> RunCallView {
         response_bytes: c.response_bytes,
         response_truncated: c.response_truncated,
         error: c.error.clone(),
-        raw: c.response_body.clone(),
+        raw: include_raw.then(|| c.response_body.clone()),
     }
 }
 
@@ -214,6 +216,7 @@ pub(crate) async fn get_for_owner(
     state: &AppState,
     owner_id: Uuid,
     id: Uuid,
+    include_raw: bool,
 ) -> Result<RunDetailView, ApiError> {
     let (detail, calls) = state
         .stores()
@@ -235,7 +238,7 @@ pub(crate) async fn get_for_owner(
         errors: detail.errors,
         budget_snapshot: detail.budget_snapshot,
         timings: detail.timings,
-        calls: calls.iter().map(call_view).collect(),
+        calls: calls.iter().map(|c| call_view(c, include_raw)).collect(),
     })
 }
 
@@ -244,5 +247,5 @@ async fn get_one(
     caller: Caller,
     Path(id): Path<Uuid>,
 ) -> Result<Json<RunDetailView>, ApiError> {
-    Ok(Json(get_for_owner(&state, caller.id, id).await?))
+    Ok(Json(get_for_owner(&state, caller.id, id, true).await?))
 }

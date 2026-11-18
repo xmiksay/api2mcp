@@ -56,7 +56,7 @@ struct TestArgs {
     #[serde(default)]
     args: Value,
     #[serde(default)]
-    include_raw: bool,
+    include_raw: Option<bool>,
 }
 
 pub(super) fn descriptors() -> Vec<Value> {
@@ -102,10 +102,10 @@ pub(super) fn descriptors() -> Vec<Value> {
             "name": "script.test",
             "description": "Run a script for real, through a named endpoint that exposes it, \
                 and return its result plus every upstream call it made along the way (status \
-                code and response size; raw response bodies only with include_raw) or, on failure, a structured error with line/column \
-                and a source snippet when the engine has one. A failed call carries the same \
-                {kind, message, status} error object the script saw — also for a call refused \
-                before any request (bad arguments, call budget). Use this before considering \
+                code and response size; raw response bodies only with include_raw) or, on \
+                failure, a structured error with line/column and a source snippet when the \
+                engine has one. A failed call carries the same {kind, message, status} error \
+                object the script saw — also for a call refused before any request (bad arguments, call budget). Use this before considering \
                 any script definition done.",
             "inputSchema": {
                 "type": "object",
@@ -184,7 +184,7 @@ async fn test(state: &AppState, owner_id: Uuid, a: TestArgs) -> ToolOutcome {
         &endpoint_slug,
         &script_slug,
         a.args,
-        a.include_raw,
+        a.include_raw.unwrap_or(false),
         &caller,
     )
     .await

@@ -13,6 +13,7 @@ use crate::server::state::AppState;
 use crate::store::RunFilter;
 
 use super::ToolOutcome;
+use super::schema::include_raw_schema;
 use super::support::{api_error_outcome, ok_value, outcome_of, parse_args};
 
 #[derive(Deserialize, Default)]
@@ -26,6 +27,8 @@ struct RunListArgs {
 #[derive(Deserialize)]
 struct RunGetArgs {
     id: Uuid,
+    #[serde(default)]
+    include_raw: Option<bool>,
 }
 
 pub(super) fn descriptors() -> Vec<Value> {
@@ -56,11 +59,15 @@ pub(super) fn descriptors() -> Vec<Value> {
         json!({
             "name": "run.get",
             "description": "Full detail for one run by id: the compiled definition it ran from, \
-                every upstream call it made (with raw response bodies), and its budget snapshot \
-                — everything run.list's summary leaves out.",
+                every upstream call it made (status code and response size; raw response bodies \
+                only with include_raw), and its budget snapshot — everything run.list's summary \
+                leaves out.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"id": {"type": "string", "description": "Run id (a UUID)."}},
+                "properties": {
+                    "id": {"type": "string", "description": "Run id (a UUID)."},
+                    "include_raw": include_raw_schema()
+                },
                 "required": ["id"]
             }
         }),
@@ -85,7 +92,9 @@ pub(super) async fn dispatch(
             Err(o) => o,
         },
         "run.get" => match parse_args::<RunGetArgs>(args) {
-            Ok(a) => outcome_of(runs::get_for_owner(state, owner_id, a.id).await),
+            Ok(a) => outcome_of(
+                runs::get_for_owner(state, owner_id, a.id, a.include_raw.unwrap_or(false)).await,
+            ),
             Err(o) => o,
         },
         "tag.list" => match state.stores().tag().list().await {

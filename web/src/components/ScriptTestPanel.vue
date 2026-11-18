@@ -88,7 +88,7 @@ async function run(): Promise<void> {
 
         <div>
           <div class="mb-1 text-[10px] tracking-[0.15em] text-ink-faint uppercase">upstream calls (input order)</div>
-          <ScriptCallBreakdown :calls="result.calls" />
+          <ScriptCallBreakdown :key="result.run_id" :calls="result.calls" />
         </div>
       </div>
     </template>

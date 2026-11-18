@@ -182,7 +182,7 @@ struct TestBody {
     args: Value,
     endpoint: String,
     #[serde(default)]
-    include_raw: bool,
+    include_raw: Option<bool>,
 }
 
 async fn test(
@@ -198,7 +198,7 @@ async fn test(
         &endpoint_slug,
         &script_slug,
         body.args,
-        body.include_raw,
+        body.include_raw.unwrap_or(false),
         &caller,
     )
     .await?;
