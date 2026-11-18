@@ -6,7 +6,13 @@
 //! the SSRF guard, redaction and the audit record all apply exactly as they do for a real MCP
 //! `tools/call`. Its return value only ever carries the *projected* result, though, so
 //! [`run_api_call_test`] re-reads the run's own persisted `run_calls` row afterwards to recover
-//! the raw upstream response body — see that function's doc.
+//! the upstream status, size and raw response body — see that function's doc.
+//!
+//! Both routes take an `include_raw` flag, default `false`: a script paging through a month of
+//! events can return megabytes of raw bodies for a kilobyte-sized result, more than an MCP client
+//! can usefully show. Off, every `raw` field is *absent* from the JSON (not `null`) while each
+//! call's `status_code`/`response_bytes` stay; on, `raw` is present, `null` only when the run
+//! recorded no body. The persisted run is identical either way — this only shapes the response.
 //!
 //! The script path cannot go through `Executor::run_tool` unmodified: a script failure's line,
 //! column and source snippet ([`ScriptFailure`], `script::errors`) are exactly what
@@ -25,6 +31,7 @@
 //! Both paths persist exactly one `runs` row, same as any other tool call — a test run is a real
 //! run.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -36,13 +43,14 @@ use crate::model::Slug;
 use crate::resolve::plan::{PlannedTool, ToolTarget};
 use crate::resolve::{EndpointPlan, ResolveError};
 use crate::runtime::budget::BudgetMeter;
-use crate::runtime::dispatch::{AuthProviders, DispatchContext};
+use crate::runtime::dispatch::{self, AuthProviders, DispatchContext};
 use crate::runtime::fanout::ConcurrencyLimits;
+use crate::runtime::partial::BatchEntry;
 use crate::runtime::recorder::{RunRecord, record};
 use crate::runtime::{Executor, RunStatusView};
 use crate::script::{RunScriptError, ScriptFailure};
 use crate::server::state::AppState;
-use crate::store::{RunCallerKind, RunStatus, Stores};
+use crate::store::{RunCall, RunCallerKind, RunStatus, Stores};
 
 use super::{ApiError, Caller};
 
@@ -106,9 +114,15 @@ pub struct ApiCallTestResult {
     /// The value after the api_call's own projection (if any) was applied — what a real MCP
     /// caller would see.
     pub projected: Option<Value>,
+    /// From the last page of a paginated call, like `raw`.
+    pub status_code: Option<u16>,
+    /// The sum over *every* page's body, so it can exceed the size of `raw` (last page only).
+    pub response_bytes: Option<u64>,
     /// The upstream's own response body for this call, straight from the audit row —
-    /// unprojected, so an author can see exactly what a projection kept or dropped.
-    pub raw: Option<Value>,
+    /// unprojected, so an author can see exactly what a projection kept or dropped. Outer
+    /// `None` (field absent) when `include_raw` was off; see this module's doc.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw: Option<Option<Value>>,
     pub error: Option<String>,
 }
 
@@ -120,6 +134,7 @@ pub async fn run_api_call_test(
     endpoint_slug: &Slug,
     api_call_slug: &Slug,
     args: Value,
+    include_raw: bool,
     caller: &Caller,
 ) -> Result<ApiCallTestResult, ApiError> {
     let plan = resolve_plan(state, caller.id, endpoint_slug).await?;
@@ -143,15 +158,15 @@ pub async fn run_api_call_test(
         .await
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
-    let raw = last_run_call(&state.stores(), caller.id, result.run_id)
-        .await?
-        .and_then(|c| c.response_body);
+    let call = last_run_call(&state.stores(), caller.id, result.run_id).await?;
 
     Ok(ApiCallTestResult {
         run_id: result.run_id,
         status: result.status,
         projected: result.value,
-        raw,
+        status_code: call.as_ref().and_then(|c| c.status_code),
+        response_bytes: call.as_ref().and_then(|c| c.response_bytes),
+        raw: include_raw.then(|| call.and_then(|c| c.response_body)),
         error: result.error,
     })
 }
@@ -169,14 +184,24 @@ async fn last_run_call(
     Ok(found.and_then(|(_, calls)| calls.into_iter().next_back()))
 }
 
+/// One `api()`/`api_many()`/`api_try()` item the script made. A call refused before any HTTP
+/// request (argument validation, the run's call budget) has no `run_calls` row, so it is listed
+/// from the run's in-memory entries instead — `status_code`/`response_bytes`/`raw` all `None`,
+/// `error` set. `raw` is absent altogether when `include_raw` was off (see this module's doc).
 #[derive(Debug, Serialize)]
 pub struct ScriptCallView {
     pub seq: i32,
     pub api_call_slug: String,
     pub service_slug: String,
+    /// `status_code` and `raw` come from the last page of a paginated call; `response_bytes` is
+    /// the sum over every page's body (`runtime::recorder`).
     pub status_code: Option<u16>,
     pub response_bytes: Option<u64>,
-    pub raw: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw: Option<Option<Value>>,
+    /// The same tagged `{kind, message, status, ...}` object the script itself saw
+    /// (`runtime::error_object`); `None` for a successful call.
+    pub error: Option<Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -185,7 +210,8 @@ pub struct ScriptTestResult {
     pub status: RunStatusView,
     /// The script's own returned value — `None` exactly when `failure` is `Some`.
     pub value: Option<Value>,
-    /// Every upstream call the script made, in input order (`run_calls.seq`).
+    /// Every call the script made, in input order (`run_calls.seq`) — including ones refused
+    /// before reaching the upstream, and kept when the script itself then failed.
     pub calls: Vec<ScriptCallView>,
     /// Present on failure: kind, message, and — when the engine had a `rhai::Position` for it —
     /// line, column and a source snippet with a caret. See `script::errors::ScriptFailure`.
@@ -201,6 +227,7 @@ pub async fn run_script_test(
     endpoint_slug: &Slug,
     script_slug: &Slug,
     args: Value,
+    include_raw: bool,
     caller: &Caller,
 ) -> Result<ScriptTestResult, ApiError> {
     let plan = resolve_plan(state, caller.id, endpoint_slug).await?;
@@ -230,7 +257,7 @@ pub async fn run_script_test(
     let limits = ConcurrencyLimits::build(&plan, tool.budgets.max_concurrency);
     let meter = BudgetMeter::new(tool.budgets);
 
-    let outcome = crate::script::run_script(
+    let run = crate::script::run_script(
         &plan,
         &ctx,
         &limits,
@@ -241,9 +268,9 @@ pub async fn run_script_test(
     )
     .await;
 
-    let (status, output_redacted, entries) = match &outcome {
-        Ok(run) => (RunStatus::Ok, Some(run.value.clone()), run.calls.clone()),
-        Err(_) => (RunStatus::Error, None, Vec::new()),
+    let (status, output_redacted) = match &run.outcome {
+        Ok(value) => (RunStatus::Ok, Some(value.clone())),
+        Err(_) => (RunStatus::Error, None),
     };
 
     let run_id = record(
@@ -257,7 +284,7 @@ pub async fn run_script_test(
             args,
             output_redacted,
             status,
-            entries: &entries,
+            entries: &run.calls,
             meter: &meter,
             elapsed: Some(started.elapsed()),
         },
@@ -265,14 +292,18 @@ pub async fn run_script_test(
     .await
     .map_err(ApiError::from_store)?;
 
-    let calls = script_call_views(&stores, caller.id, run_id).await?;
+    let mut calls =
+        script_call_views(&stores, &plan, script_slug, caller.id, run_id, &run.calls).await?;
+    if !include_raw {
+        strip_raw(&mut calls);
+    }
     let status_view = to_status_view(status);
 
-    Ok(match outcome {
-        Ok(run) => ScriptTestResult {
+    Ok(match run.outcome {
+        Ok(value) => ScriptTestResult {
             run_id,
             status: status_view,
-            value: Some(run.value),
+            value: Some(value),
             calls,
             failure: None,
         },
@@ -293,26 +324,72 @@ fn to_script_failure(err: RunScriptError) -> ScriptFailure {
     }
 }
 
+/// Walks the run's entries (the script's own call order) and enriches each with its persisted
+/// `run_calls` row when there is one — the row is what holds the redacted response body.
 async fn script_call_views(
     stores: &Stores,
+    plan: &EndpointPlan,
+    script_slug: &Slug,
     owner_id: Uuid,
     run_id: Uuid,
+    entries: &[BatchEntry],
 ) -> Result<Vec<ScriptCallView>, ApiError> {
     let found = stores
         .run()
         .get(owner_id, run_id)
         .await
         .map_err(ApiError::from_store)?;
-    let calls = found.map(|(_, calls)| calls).unwrap_or_default();
-    Ok(calls
+    let mut rows: BTreeMap<i32, RunCall> = found
+        .map(|(_, calls)| calls)
+        .unwrap_or_default()
         .into_iter()
-        .map(|c| ScriptCallView {
-            seq: c.seq,
-            api_call_slug: c.api_call_slug.as_str().to_owned(),
-            service_slug: c.service_slug.as_str().to_owned(),
-            status_code: c.status_code,
-            response_bytes: c.response_bytes,
-            raw: c.response_body,
+        .map(|c| (c.seq, c))
+        .collect();
+    Ok(entries
+        .iter()
+        .map(|entry| {
+            let seq = entry.index as i32;
+            let error = entry.outcome.error_object();
+            match rows.remove(&seq) {
+                Some(c) => ScriptCallView {
+                    seq,
+                    api_call_slug: c.api_call_slug.as_str().to_owned(),
+                    service_slug: c.service_slug.as_str().to_owned(),
+                    status_code: c.status_code,
+                    response_bytes: c.response_bytes,
+                    raw: Some(c.response_body),
+                    error,
+                },
+                None => {
+                    // An entry only exists once the bridge already resolved its alias, so this
+                    // lookup cannot miss; the alias itself is the fallback if it ever did.
+                    let planned = dispatch::resolve(plan, Some(script_slug), &entry.name).ok();
+                    ScriptCallView {
+                        seq,
+                        api_call_slug: planned.map_or_else(
+                            || entry.name.clone(),
+                            |p| p.api_call.slug.as_str().to_owned(),
+                        ),
+                        service_slug: planned
+                            .map(|p| p.service.slug.as_str().to_owned())
+                            .unwrap_or_default(),
+                        status_code: None,
+                        response_bytes: None,
+                        raw: Some(None),
+                        error,
+                    }
+                }
+            }
         })
         .collect())
 }
+
+fn strip_raw(calls: &mut [ScriptCallView]) {
+    for call in calls {
+        call.raw = None;
+    }
+}
+
+#[cfg(test)]
+#[path = "test_run_tests.rs"]
+mod tests;

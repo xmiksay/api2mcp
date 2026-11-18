@@ -172,11 +172,28 @@ async fn api_call_test_run_returns_raw_and_projected_side_by_side_and_writes_a_r
     assert_eq!(status, StatusCode::OK, "body: {body:?}");
     assert_eq!(body["status"], json!("ok"));
     assert_eq!(body["projected"], json!({"id": "1", "title": "One"}));
+    // Raw bodies are opt-in (#9); status and size are always reported.
+    assert!(
+        body.get("raw").is_none(),
+        "raw must be absent by default: {body:?}"
+    );
+    assert_eq!(body["status_code"], json!(200));
+    assert!(body["response_bytes"].as_u64().is_some_and(|n| n > 0));
+    let run_id = body["run_id"].as_str().expect("run_id present");
+
+    let (status, body) = admin(
+        &h,
+        Method::POST,
+        "/api/api_calls/get-item/test",
+        Some(json!({"args": {"id": "1"}, "endpoint": "ep-test-run", "include_raw": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {body:?}");
+    assert_eq!(body["projected"], json!({"id": "1", "title": "One"}));
     assert_eq!(
         body["raw"],
         json!({"id": "1", "title": "One", "internal_note": "dropped by projection"})
     );
-    let run_id = body["run_id"].as_str().expect("run_id present");
 
     let (summary, calls) = h
         .stores
@@ -281,7 +298,25 @@ async fn script_test_run_reports_the_per_call_breakdown_in_input_order() -> Resu
     assert_eq!(calls[0]["api_call_slug"], json!("list-items"));
     assert_eq!(calls[1]["api_call_slug"], json!("get-item"));
     assert_eq!(calls[0]["status_code"], json!(200));
-    assert!(calls[0]["raw"].is_object());
+    assert!(calls[0]["response_bytes"].as_u64().is_some_and(|n| n > 0));
+    assert!(
+        calls[0].get("raw").is_none(),
+        "raw must be absent by default: {calls:?}"
+    );
+
+    let (status, body) = admin(
+        &h,
+        Method::POST,
+        "/api/scripts/item-summary/test",
+        Some(json!({"args": {}, "endpoint": "ep-script-run", "include_raw": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {body:?}");
+    assert_eq!(
+        body["calls"][0]["raw"],
+        json!({"items": [{"id": "1", "title": "One"}]})
+    );
+    assert_eq!(body["calls"][1]["raw"], json!({"id": "1", "title": "One"}));
 
     h.db.teardown().await
 }

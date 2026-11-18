@@ -65,9 +65,27 @@ let item = api("get", #{ "id": "3" });
 - `name` — the alias declared in this script's `callable` map.
 - `args` — a Rhai object map (`#{...}`) of the target api_call's own parameters.
 - Returns the api_call's projected value directly on success.
-- **Throws a catchable exception** (`try`/`catch`-able) carrying the failure message on any
-  per-item failure. This is the one function of the three that throws — reach for it when a single
-  failed call should abort the script, exactly like an unhandled exception in any other language.
+- **Throws a catchable exception** (`try`/`catch`-able) on any per-item failure. The thrown value
+  is the [error object](#the-per-item-result-shape) itself — a map with at least `kind`,
+  `message` and `status` — not a string. This is the one function of the three that throws — reach
+  for it when a single failed call should abort the script, exactly like an unhandled exception in
+  any other language.
+
+```rhai
+let item = ();
+try {
+    item = api("get", #{ "id": "3" });
+} catch (e) {
+    if e.status == 404 { item = (); }                     // not found
+    else if e.status == 401 || e.status == 403 { throw e; } // unauthorized: give up
+    else if e.status == 429 { item = #{ "retry": true }; }  // upstream rate limit
+    else if e.kind == "args" { throw e.message; }          // our own bad arguments
+    else { throw e; }
+}
+```
+
+Note that Rhai's `try`/`catch` is a statement, not an expression — assign inside the blocks. Left
+uncaught, the script fails with kind `runtime` and a message showing the whole map.
 
 ### `api_many(name, args_list)` — a batch, never throws
 
@@ -84,7 +102,7 @@ let results = api_many("get", [#{ "id": "1" }, #{ "id": "2" }, #{ "id": "3" }]);
 - **Never throws for a per-item outcome.** A failed item is a result object with `ok: false`, not
   an exception — the whole point of `api_many` is that one bad item doesn't abort the batch.
 - Capped at 500 items per call (`script::bridge::MAX_BATCH`) — a script-authoring limit, refused
-  outright (a catchable error) rather than silently truncated.
+  outright (a catchable error, `kind: "batch_too_large"`) rather than silently truncated.
 
 ### `api_try(name, args)` — one call, never throws
 
@@ -115,17 +133,22 @@ Every element `api_many` returns, and everything `api_try` returns, has this sha
   batch). Always present, `ok` or not.
 - **`value`** — present iff `ok` is `true`: the api_call's projected result, exactly as an MCP
   caller would see it.
-- **`error`** — present iff `ok` is `false`. It is an **object**, not a string, always carrying a
-  `kind` tag (plus `message`, and extra fields for some kinds) so a script can branch on the
-  failure category instead of pattern-matching prose. This is the same tagged shape
-  `runtime::dispatch::DispatchError`'s `Serialize` impl produces and a run's own persisted
-  `errors[]` column uses — a script's view of a failure and the audit record of it can never
-  disagree. `error.kind` is one of:
+- **`error`** — present iff `ok` is `false`. It is an **object**, not a string, always carrying
+  `kind`, `message` and `status` (plus extra fields for some kinds) so a script can branch on the
+  failure category instead of pattern-matching prose. `status` is the upstream's HTTP status when a
+  response came back (`http_status`, and also `response_not_json`/`projection`, which had a
+  response) and `()` otherwise — it is always present, so `e.status == 404` never trips
+  `set_fail_on_invalid_map_property` on a non-HTTP failure. `message` is redacted; no credential
+  or URL userinfo ever reaches it (I4). This is the same object `api()` throws, a run's persisted
+  `errors[]` column records, and `POST /api/scripts/{slug}/test` (MCP `script.test`) returns as
+  each call's `error` — built in one place (`runtime::error_object`), so a script's view of a
+  failure and the audit record of it can never disagree. `error.kind` is one of:
 
   | `kind` | Meaning |
   |---|---|
-  | `not_declared` | The alias isn't in this script's `callable` map, or the endpoint doesn't expose the api_call it names — I1 refusing the call before it ever reaches HTTP. |
+  | `not_declared` | The alias isn't in this script's `callable` map, or the endpoint doesn't expose the api_call it names — I1 refusing the call before it ever reaches HTTP. A script-authoring bug, so it is **thrown by all three functions** (even `api_try`/`api_many`) rather than returned as a per-item result. |
   | `not_an_api_call` | The name resolves to a script, not an api_call (only relevant off the direct-invocation path; a script's own `callable` map can never name another script). |
+  | `batch_too_large` | An `api_many` batch over `MAX_BATCH`; thrown, like `not_declared`, and nothing in the batch is attempted. |
   | `args` | The arguments failed `schema::bind_args` — a required param missing, a type mismatch, an unknown key, or a value outside `enum_values`. |
   | `bind` | The bound arguments couldn't be assembled into a request (I3's containment check, a header outside the allowlist, a body-assignment failure, ...). |
   | `send` | *This one request's own* transport failure: DNS/SSRF guard rejection, connection failure, **this request's own timeout** (either its api_call/service's configured `timeout_ms`, or the run's overall deadline expiring while it was in flight), or **this request's own pagination page-cap trip**. Still an ordinary, catchable per-item error — see the note below for when it isn't. |
@@ -375,3 +398,17 @@ or a panic in the engine all come back as the same shape: a `kind`
 `line`, `column`, and a source snippet with a `^` caret under the offending column. `api2mcp script
 run` prints this to stderr; `POST /api/scripts/{slug}/test` returns it in the response body as
 `failure`.
+
+The same response's `calls` lists every `api`/`api_many`/`api_try` item the script made, in input
+order, **even when the script then failed**. Each carries `status_code` and `response_bytes` when
+a response came back, and `error` (the error object above) when the item failed. The redacted
+`raw` upstream body is **opt-in**: send `"include_raw": true` in the request body (or as the
+`script.test` control-plane tool argument) to get it; by default the field is absent, since a
+script paging through many responses can return megabytes of raw bodies for a small result. The
+control-plane `run.get` takes the same flag with the same default. For a paginated call,
+`status_code` and `raw` describe the last page while `response_bytes` is the sum over every page's
+body. An item refused before any HTTP request — bad arguments, or the run's `max_calls` budget —
+is listed too, with its `error` set and `status_code`/`response_bytes` (and `raw`, when included)
+`null`. (A thrown
+`not_declared`/`batch_too_large` is not a call and is not listed; it is the `failure` or the
+caught exception.)

@@ -12,6 +12,7 @@ import ArgsForm from "@/components/form/ArgsForm.vue";
 import JsonViewer from "@/components/JsonViewer.vue";
 import StatusPill from "@/components/StatusPill.vue";
 import ValidationErrors from "@/components/form/ValidationErrors.vue";
+import IncludeRawToggle from "@/components/IncludeRawToggle.vue";
 import ScriptFailureView from "@/components/ScriptFailureView.vue";
 import ScriptCallBreakdown from "@/components/ScriptCallBreakdown.vue";
 
@@ -20,6 +21,7 @@ const props = defineProps<{ script: ScriptView; exposures: ToolExposure[] }>();
 const endpointSlug = ref(props.exposures[0]?.endpointSlug ?? "");
 const argsForm = ref<InstanceType<typeof ArgsForm> | null>(null);
 const running = ref(false);
+const includeRaw = ref(false);
 const requestErrors = ref<string[] | null>(null);
 const result = ref<ScriptTestResult | null>(null);
 
@@ -30,7 +32,12 @@ async function run(): Promise<void> {
   running.value = true;
   requestErrors.value = null;
   try {
-    result.value = await scriptsApi.test(props.script.slug, endpointSlug.value, argsForm.value.args);
+    result.value = await scriptsApi.test(
+      props.script.slug,
+      endpointSlug.value,
+      argsForm.value.args,
+      includeRaw.value,
+    );
   } catch (e) {
     requestErrors.value = e instanceof ApiError ? e.messages : ["request failed"];
   } finally {
@@ -57,6 +64,8 @@ async function run(): Promise<void> {
 
       <ArgsForm ref="argsForm" :params="script.params" />
 
+      <IncludeRawToggle v-model="includeRaw" />
+
       <ValidationErrors v-if="requestErrors" :errors="requestErrors" />
 
       <button type="button" :disabled="!canRun" :class="primaryButtonClass + ' self-start'" @click="run">
@@ -79,7 +88,7 @@ async function run(): Promise<void> {
 
         <div>
           <div class="mb-1 text-[10px] tracking-[0.15em] text-ink-faint uppercase">upstream calls (input order)</div>
-          <ScriptCallBreakdown :calls="result.calls" />
+          <ScriptCallBreakdown :key="result.run_id" :calls="result.calls" />
         </div>
       </div>
     </template>

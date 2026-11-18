@@ -19,7 +19,8 @@ use crate::server::state::AppState;
 
 use super::ToolOutcome;
 use super::schema::{
-    pagination_schema, params_array_schema, projection_schema, slug_schema, tags_schema, with_slug,
+    include_raw_schema, pagination_schema, params_array_schema, projection_schema, slug_schema,
+    tags_schema, with_slug,
 };
 use super::support::{SlugArgs, api_error_outcome, outcome_of, parse_args};
 
@@ -78,6 +79,8 @@ struct TestArgs {
     endpoint: String,
     #[serde(default)]
     args: Value,
+    #[serde(default)]
+    include_raw: Option<bool>,
 }
 
 pub(super) fn descriptors() -> Vec<Value> {
@@ -126,8 +129,9 @@ pub(super) fn descriptors() -> Vec<Value> {
         json!({
             "name": "api_call.test",
             "description": "Run an api_call for real against its live upstream, through a named \
-                endpoint that exposes it, and return both the raw upstream response and (if the \
-                api_call has a projection) the projected shape a caller would actually see. Use \
+                endpoint that exposes it, and return the projected shape a caller would actually \
+                see, the upstream status code and response size, and — with include_raw — the \
+                raw upstream response body, to compare against the projection. Use \
                 this before considering any api_call definition done, and again after any change \
                 to its params, projection or service.",
             "inputSchema": {
@@ -143,7 +147,8 @@ pub(super) fn descriptors() -> Vec<Value> {
                         "type": "object",
                         "description": "Arguments for the api_call's own model-visible params, \
                             as tools/call would send them."
-                    }
+                    },
+                    "include_raw": include_raw_schema()
                 },
                 "required": ["slug", "endpoint"]
             }
@@ -205,7 +210,16 @@ async fn test(state: &AppState, owner_id: Uuid, a: TestArgs) -> ToolOutcome {
         return ToolOutcome::error(format!("invalid api_call slug {:?}", a.slug));
     };
     let caller = synthetic_caller(owner_id);
-    match run_api_call_test(state, &endpoint_slug, &api_call_slug, a.args, &caller).await {
+    match run_api_call_test(
+        state,
+        &endpoint_slug,
+        &api_call_slug,
+        a.args,
+        a.include_raw.unwrap_or(false),
+        &caller,
+    )
+    .await
+    {
         Ok(result) => super::support::ok_value(result),
         Err(err) => api_error_outcome(err),
     }

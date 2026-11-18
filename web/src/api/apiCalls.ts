@@ -13,6 +13,6 @@ export const apiCallsApi = {
     api.put(`/api/api_calls/${encodeURIComponent(slug)}`, def),
   remove: (slug: string): Promise<void> => api.delete(`/api/api_calls/${encodeURIComponent(slug)}`),
   // Seam for the next agent's test panel.
-  test: (slug: string, endpoint: string, args: unknown): Promise<ApiCallTestResult> =>
-    api.post(`/api/api_calls/${encodeURIComponent(slug)}/test`, { endpoint, args }),
+  test: (slug: string, endpoint: string, args: unknown, includeRaw = false): Promise<ApiCallTestResult> =>
+    api.post(`/api/api_calls/${encodeURIComponent(slug)}/test`, { endpoint, args, include_raw: includeRaw }),
 };

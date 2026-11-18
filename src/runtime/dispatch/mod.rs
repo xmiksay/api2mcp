@@ -163,11 +163,13 @@ pub async fn dispatch(
     let request_headers = request.headers.clone();
     let request_body = request.body.clone();
 
-    let client = ctx
-        .pool
-        .client_for(&planned.service)
-        .await
-        .map_err(|e| DispatchError::Client(e.to_string()))?;
+    let client =
+        ctx.pool
+            .client_for(&planned.service)
+            .await
+            .map_err(|e| DispatchError::Client {
+                message: e.to_string(),
+            })?;
 
     let auth = ctx.auth.get(&planned.service.slug);
 

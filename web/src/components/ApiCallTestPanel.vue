@@ -8,17 +8,20 @@ import { apiCallsApi, ApiError } from "@/api";
 import type { ApiCallTestResult, ApiCallView } from "@/api";
 import type { ToolExposure } from "@/composables/useToolExposure";
 import { runStatusTone } from "@/lib/tone";
+import { formatBytes } from "@/lib/format";
 import { fieldClass, primaryButtonClass } from "@/lib/formStyle";
 import ArgsForm from "@/components/form/ArgsForm.vue";
 import JsonViewer from "@/components/JsonViewer.vue";
 import StatusPill from "@/components/StatusPill.vue";
 import ValidationErrors from "@/components/form/ValidationErrors.vue";
+import IncludeRawToggle from "@/components/IncludeRawToggle.vue";
 
 const props = defineProps<{ apiCall: ApiCallView; exposures: ToolExposure[] }>();
 
 const endpointSlug = ref(props.exposures[0]?.endpointSlug ?? "");
 const argsForm = ref<InstanceType<typeof ArgsForm> | null>(null);
 const running = ref(false);
+const includeRaw = ref(false);
 const requestErrors = ref<string[] | null>(null);
 const result = ref<ApiCallTestResult | null>(null);
 
@@ -29,7 +32,12 @@ async function run(): Promise<void> {
   running.value = true;
   requestErrors.value = null;
   try {
-    result.value = await apiCallsApi.test(props.apiCall.slug, endpointSlug.value, argsForm.value.args);
+    result.value = await apiCallsApi.test(
+      props.apiCall.slug,
+      endpointSlug.value,
+      argsForm.value.args,
+      includeRaw.value,
+    );
   } catch (e) {
     requestErrors.value = e instanceof ApiError ? e.messages : ["request failed"];
   } finally {
@@ -56,6 +64,8 @@ async function run(): Promise<void> {
 
       <ArgsForm ref="argsForm" :params="apiCall.params" />
 
+      <IncludeRawToggle v-model="includeRaw" />
+
       <ValidationErrors v-if="requestErrors" :errors="requestErrors" />
 
       <button type="button" :disabled="!canRun" :class="primaryButtonClass + ' self-start'" @click="run">
@@ -68,12 +78,15 @@ async function run(): Promise<void> {
           <RouterLink :to="`/runs/${result.run_id}`" class="text-xs text-read hover:underline">
             view run {{ result.run_id }}
           </RouterLink>
+          <span v-if="result.status_code !== null" class="text-xs text-ink-dim">HTTP {{ result.status_code }}</span>
+          <span class="text-xs text-ink-dim">{{ formatBytes(result.response_bytes) }}</span>
           <span v-if="result.error" class="text-xs text-ink-dim">{{ result.error }}</span>
         </div>
         <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div>
             <div class="mb-1 text-[10px] tracking-[0.15em] text-ink-faint uppercase">raw upstream response</div>
-            <JsonViewer :value="result.raw" null-label="no response body recorded" />
+            <JsonViewer v-if="result.raw !== undefined" :value="result.raw" null-label="no response body recorded" />
+            <p v-else class="text-xs text-ink-faint italic">not requested — tick "include raw" and re-run</p>
           </div>
           <div>
             <div class="mb-1 text-[10px] tracking-[0.15em] text-ink-faint uppercase">projected result</div>
