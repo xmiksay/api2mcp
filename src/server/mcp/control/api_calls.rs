@@ -136,8 +136,10 @@ pub(super) fn descriptors() -> Vec<Value> {
                     "slug": slug_schema("api_call"),
                     "endpoint": {
                         "type": "string",
-                        "description": "Slug of an endpoint whose tag_expr already selects this \
-                            api_call."
+                        "description": "Slug of an endpoint that exposes this api_call as a tool: \
+                            its tag_expr selects it and its internal_tag_expr does not. An \
+                            internal api_call cannot be tested directly; exercise it through \
+                            script.test on a script that calls it."
                     },
                     "args": {
                         "type": "object",

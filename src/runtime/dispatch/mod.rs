@@ -6,7 +6,7 @@
 //! Name resolution has two shapes:
 //! - `caller_script = Some(script)`: `name` is the alias a script used inside `api()`/`api_many()`,
 //!   resolved through `plan.callable_by[script]` — a name absent from that map can never reach
-//!   HTTP, whether because the script never declared it or because this endpoint doesn't expose
+//!   HTTP, whether because the script never declared it or because this endpoint doesn't select
 //!   it (I1's data structure is `EndpointPlan::callable_by` itself; this module only reads it).
 //! - `caller_script = None`: the caller is a directly-invoked tool, so `name` is resolved against
 //!   the plan's own tool set (`EndpointPlan::tool`), which additionally applies endpoint aliasing.

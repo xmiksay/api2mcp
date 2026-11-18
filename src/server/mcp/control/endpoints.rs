@@ -100,8 +100,8 @@ pub(super) fn descriptors() -> Vec<Value> {
             "name": "endpoint.update",
             "description": "Replace an existing endpoint's definition. Takes effect immediately \
                 for every consumer of /mcp/{slug}. This is a full replace, not a patch: any \
-                field you omit (internal_tag_expr included) is reset to its default, so \
-                omitting internal_tag_expr clears it.",
+                field of this schema you omit is reset to its default, so omitting \
+                internal_tag_expr clears it.",
             "inputSchema": create_schema
         }),
         json!({

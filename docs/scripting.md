@@ -43,7 +43,7 @@ routed only to `tracing::debug!` (never into a model's context or a run's audit 
 These are the **only** three functions that can ever reach HTTP, and even they don't directly —
 each marshals its arguments, sends a message across an internal channel to the async side, and
 blocks for a JSON reply. The actual I1 enforcement (checking the alias against what this script
-declared and this endpoint exposes) happens on that async side, in `runtime::dispatch::resolve` —
+declared and this endpoint selects) happens on that async side, in `runtime::dispatch::resolve` —
 one place to audit, and it's the same place that resolves the call for every other caller (the
 CLI, a directly-invoked tool), not a second check that could drift from it.
 

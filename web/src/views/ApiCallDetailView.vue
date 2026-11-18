@@ -137,7 +137,8 @@ async function remove(): Promise<void> {
     <DetailSection title="exposed as a tool on">
       <LoadingState v-if="exposureLoading && exposures.length === 0" label="resolving endpoint plans" />
       <p v-else-if="exposures.length === 0" class="text-xs text-ink-faint italic">
-        no enabled endpoint currently selects this api_call
+        no enabled endpoint currently exposes this api_call as a tool — an endpoint's scripts may
+        still reach it through its internal tag expression
       </p>
       <div v-else class="flex flex-col gap-4">
         <div v-for="exp in exposures" :key="exp.endpointSlug + exp.tool.name" class="border border-border p-3">

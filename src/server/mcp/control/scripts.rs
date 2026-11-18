@@ -32,7 +32,8 @@ fn pack_script_schema() -> Value {
                 "additionalProperties": {"type": "string"},
                 "description": "alias (as used in the script's own api()/api_many() calls) -> \
                     api_call slug. Only api_calls listed here, and also selected by the exposing \
-                    endpoint's tag_expr, are ever reachable from this script."
+                    endpoint's tag_expr or internal_tag_expr, are ever reachable from this \
+                    script."
             },
             "budgets": budgets_schema(),
             "description": {

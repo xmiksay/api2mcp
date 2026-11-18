@@ -77,8 +77,9 @@ pub struct EndpointPlan {
     pub write_ceiling: Access,
     pub instructions: Option<String>,
 
-    /// One [`PlannedTool`] per selected api_call and script — see [`super::build_plan`] for
-    /// tool-name resolution (alias-or-slug) and the uniqueness check.
+    /// One [`PlannedTool`] per selected script and per selected api_call that is not internal —
+    /// see [`super::build_plan`] for tool-name resolution (alias-or-slug) and the uniqueness
+    /// check.
     pub tools: Vec<PlannedTool>,
 
     /// The endpoint's own tag-expression selection of api_calls — `tag_expr`'s plus
@@ -98,7 +99,7 @@ pub struct EndpointPlan {
     /// (`ScriptDef::callable`) with [`Self::calls`]'s keys. `runtime::dispatch` (a later
     /// chunk) resolves every script-initiated call through exactly this map; a name absent
     /// from it can never reach HTTP, whether because the script never declared it or because
-    /// this endpoint doesn't expose it.
+    /// this endpoint doesn't select it.
     pub callable_by: BTreeMap<Slug, BTreeMap<String, Slug>>,
 
     /// The statically computed reachable-origin set (I2) — every origin any selected
