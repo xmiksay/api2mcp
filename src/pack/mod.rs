@@ -39,6 +39,7 @@
 mod convert;
 pub mod export;
 pub mod import;
+mod import_guard;
 pub mod validate;
 // `pub(crate)`, not private: `server::api::auth_providers` reuses `looks_like_credential`
 // directly for its own live pre-write check, now that a pack carries no auth providers for

@@ -220,7 +220,9 @@ write path, and pushes the entire audit burden onto the run log.
   auth binding (I5) and `write_ceiling` all cover them, and a script's `callable` can reach them
   (I1) — but get no `PlannedTool`: they are absent from `tools/list` and `tools/call`/`invoke`
   answer them like an unknown tool. The internal expression wins: a call it selects is never a
-  tool even if `tag_expr` also selects it (fails closed), and an alias naming one is rejected.
+  tool even if `tag_expr` also selects it (fails closed), and an alias naming one is rejected —
+  on write, at plan build, and by `pack::import` when a pack's tags would create one on a stored
+  endpoint outside the pack.
   Per endpoint
   rather than per api_call, because the same building block can be a raw tool on one endpoint and
   hidden behind a script on another. `GET /api/endpoints/{slug}/plan` lists them as

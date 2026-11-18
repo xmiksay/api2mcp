@@ -49,6 +49,9 @@ pub enum ImportError {
     Convert(#[from] super::ConvertError),
     #[error("{0}")]
     Store(String),
+    /// See [`super::import_guard`]. One entry per offending alias, so a pack author sees them all.
+    #[error("refusing to import, nothing was written: {}", .0.join("; "))]
+    StoredAliasConflict(Vec<String>),
 }
 
 impl From<StoreError> for ImportError {
@@ -95,13 +98,20 @@ impl ImportReport {
 /// simply creates that user's own separate copy instead of colliding with it. `dry_run = true`
 /// performs every read needed to classify each row as create/update/unchanged, but calls no store
 /// write method at all — see the module doc for why that (not a rolled-back transaction) is what
-/// makes `--dry-run` write nothing.
+/// makes `--dry-run` write nothing. A pack that would break a stored endpoint's alias is refused
+/// up front in both modes (see [`super::import_guard`]).
 pub async fn import(
     stores: &Stores,
     pack: &Pack,
     dry_run: bool,
     owner_id: Uuid,
 ) -> Result<ImportReport, ImportError> {
+    let stored = stores.endpoint().list_all(owner_id).await?;
+    let conflicts = super::import_guard::stored_alias_conflicts(&stored, pack)?;
+    if !conflicts.is_empty() {
+        return Err(ImportError::StoredAliasConflict(conflicts));
+    }
+
     let mut report = ImportReport::default();
 
     for (slug_str, svc) in &pack.services {
